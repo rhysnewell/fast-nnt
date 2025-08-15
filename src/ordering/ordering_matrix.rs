@@ -3,7 +3,7 @@ use ndarray::{s, Array1, Array2, Axis};
 use rayon::prelude::*;
 
 #[derive(Debug, Clone)]
-pub struct NeighborNetResult {
+pub struct NeighbourNetResult {
     pub ordering: Vec<usize>, // circular order in terms of original taxa indices (0-based)
 }
 
@@ -347,8 +347,8 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
     ord.into_iter().next().unwrap_or_default()
 }
 
-pub fn neighbor_net_ordering(x: &Matrix) -> NeighborNetResult {
-    NeighborNetResult {
+pub fn neighbor_net_ordering(x: &Matrix) -> NeighbourNetResult {
+    NeighbourNetResult {
         ordering: get_ordering_nn(x),
     }
 }

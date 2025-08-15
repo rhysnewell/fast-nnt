@@ -1,4 +1,4 @@
-use ndarray::{Array2, Axis};
+use ndarray::Array2;
 use petgraph::graph::{Graph, NodeIndex};
 use petgraph::Undirected;
 use rayon::prelude::*;
@@ -18,12 +18,16 @@ impl Component {
             second: None,
         }
     }
+
+
     fn pair(a: usize, b: usize) -> Self {
         Self {
             first: a,
             second: Some(b),
         }
     }
+
+
     fn size(&self) -> usize {
         if self.second.is_some() {
             2
@@ -31,12 +35,16 @@ impl Component {
             1
         }
     }
+
+
     fn values(&self) -> [usize; 2] {
         match self.second {
             Some(b) => [self.first, b],
             None => [self.first, 0], // second unused
         }
     }
+
+
     fn other(&self, p: usize) -> usize {
         match self.second {
             Some(b) => {
@@ -45,6 +53,7 @@ impl Component {
             None => panic!("other() called on singleton"),
         }
     }
+
     fn first(&self) -> usize { self.first }
     fn second(&self) -> usize { self.second.expect("not a pair") }
     fn is_singleton(&self) -> bool { self.second.is_none() }
@@ -122,7 +131,6 @@ pub fn compute_ordering(dist: &Array2<f64>) -> Vec<usize> {
                     let other = components[i];
                     for &r in other.values().iter() {
                         if r == 0 { continue; } // skip unused
-                        // "if (r != p && r != q && r != qb)" is superfluous, but keep semantics
                         if r != p && r != q && r != qb {
                             d[[p, r]] = (2.0 * d[[p, r]] + d[[q, r]]) / 3.0;
                             d[[r, p]] = d[[p, r]];
@@ -291,7 +299,7 @@ fn select_closest_1_vs_2(ip: usize, iq: usize, d: &Array2<f64>, components: &[Co
         q2_r += avg_d_p_comp(d, q2, (other.first, other.second));
     }
 
-    let mm1 = (m as f64 - 1.0);
+    let mm1 = m as f64 - 1.0;
     let q1p_adj = mm1 * d[[q1, p]] - q1_r - p_r;
     let q2p_adj = mm1 * d[[q2, p]] - q2_r - p_r;
 

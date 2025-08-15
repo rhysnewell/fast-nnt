@@ -1,0 +1,39 @@
+
+use clap::{crate_name, crate_version, Parser};
+
+use fast_nnt::{cli::{ProgramArgs, ProgramSubcommand}, neighbour_net::neighbour_net::NeighbourNet, set_log_level};
+use log::{error, info};
+
+
+
+fn main() {
+    let app = ProgramArgs::parse();
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(app.threads)
+        .build_global()
+        .unwrap();
+
+    set_log_level(&app, true, crate_name!(), crate_version!());
+    info!("{} v{}", crate_name!(), crate_version!());
+    info!("Rayon threads: {}", rayon::current_num_threads());
+
+    // Dispatch subcommands
+    let result = match app.subcommand {
+        ProgramSubcommand::NeighborNet(args) => {
+            let runner = NeighbourNet::new(app.output_directory, args);
+            runner.run()
+        }
+        // If you have more subcommands, add them here. The wildcard keeps this exhaustive.
+        #[allow(unreachable_patterns)]
+        other => {
+            error!("Subcommand not implemented: {:?}", other);
+            Err(anyhow::anyhow!("unsupported subcommand"))
+        }
+    };
+
+    if let Err(err) = result {
+        error!("{:#}", err);
+        std::process::exit(1);
+    }
+}
