@@ -1,9 +1,9 @@
+use anyhow::Result;
 use clap::Args;
 use fixedbitset::FixedBitSet;
 use ndarray::Array2;
 use rayon::prelude::*;
 use std::time::{Duration, Instant};
-use anyhow::Result;
 
 use crate::splits::asplit::ASplit; // <-- adjust path if needed
 
@@ -24,7 +24,6 @@ impl Scratch {
         }
     }
 }
-
 
 pub trait Progress {
     fn check_for_cancel(&self) -> Result<()>;
@@ -58,7 +57,7 @@ impl Default for NNLSParams {
     fn default() -> Self {
         Self {
             cutoff: 1e-4,
-            proj_grad_bound: 1e-5,          // will be reset from ‖Aᵀ d‖ below
+            proj_grad_bound: 1e-5, // will be reset from ‖Aᵀ d‖ below
             max_iterations: usize::MAX,
             max_time_ms: u64::MAX,
             cgnr_iterations: 5000,
@@ -207,7 +206,7 @@ pub fn compute_use_1d(
 /* ===================== Active-Set + CGNR ===================== */
 
 fn active_set_method(
-    x: &mut [f64],            // feasible (x >= 0)
+    x: &mut [f64], // feasible (x >= 0)
     d: &[f64],
     n: usize,
     params: &mut NNLSParams,
@@ -266,9 +265,11 @@ fn active_set_method(
         eval_gradient(x, d, p, r, n); // p := grad
 
         // project gradient
-        p.par_iter_mut()
-            .zip(x.par_iter())
-            .for_each(|(gi, &xi)| if xi == 0.0 { *gi = gi.min(0.0) });
+        p.par_iter_mut().zip(x.par_iter()).for_each(|(gi, &xi)| {
+            if xi == 0.0 {
+                *gi = gi.min(0.0)
+            }
+        });
 
         let pg = l2_sq(p);
         if pg < params.proj_grad_bound {
@@ -408,8 +409,7 @@ fn calc_atx(x: &[f64], y: &mut [f64], n: usize) {
     for k in 3..=(n - 1) {
         s_index = k - 1;
         for i in 1..=(n - k) {
-            y[s_index] = y[s_index - 1]
-                + y[s_index + n - i - 1]
+            y[s_index] = y[s_index - 1] + y[s_index + n - i - 1]
                 - y[s_index + n - i - 2]
                 - 2.0 * x[s_index - 1];
             s_index += n - i;
@@ -459,7 +459,12 @@ fn cgnr(
     started: Instant,
     max_time_ms: u64,
 ) -> Result<usize> {
-    let (p, r, z, w) = (&mut scratch.p, &mut scratch.r, &mut scratch.z, &mut scratch.w);
+    let (p, r, z, w) = (
+        &mut scratch.p,
+        &mut scratch.r,
+        &mut scratch.z,
+        &mut scratch.w,
+    );
 
     zero_negative_entries(x);
 
@@ -473,7 +478,11 @@ fn cgnr(
     calc_atx(r, z, n);
     z.par_iter_mut()
         .zip(active_set.par_iter())
-        .for_each(|(zi, &a)| if a { *zi = 0.0 });
+        .for_each(|(zi, &a)| {
+            if a {
+                *zi = 0.0
+            }
+        });
 
     p.par_iter_mut().zip(z.par_iter()).for_each(|(pi, &zi)| {
         *pi = zi;
@@ -500,7 +509,11 @@ fn cgnr(
         calc_atx(r, z, n);
         z.par_iter_mut()
             .zip(active_set.par_iter())
-            .for_each(|(zi, &a)| if a { *zi = 0.0 });
+            .for_each(|(zi, &a)| {
+                if a {
+                    *zi = 0.0
+                }
+            });
 
         let ztz_new = l2_sq(z);
         if ztz_new < tol {
@@ -617,12 +630,20 @@ mod tests {
         let npairs = n * (n - 1) / 2;
         let mut grad = vec![0.0; npairs];
         let mut resid = vec![0.0; npairs];
-        eval_gradient(&weights.x, &y_pairs_from_matrix(&cycle, &distances), &mut grad, &mut resid, n);
+        eval_gradient(
+            &weights.x,
+            &y_pairs_from_matrix(&cycle, &distances),
+            &mut grad,
+            &mut resid,
+            n,
+        );
 
         // Project
-        grad.iter_mut()
-            .zip(weights.x.iter())
-            .for_each(|(g, &xi)| if xi == 0.0 { *g = g.min(0.0) });
+        grad.iter_mut().zip(weights.x.iter()).for_each(|(g, &xi)| {
+            if xi == 0.0 {
+                *g = g.min(0.0)
+            }
+        });
 
         let pg = l2_sq(&grad);
         assert!(pg < params.proj_grad_bound * 10.0); // loose but indicative

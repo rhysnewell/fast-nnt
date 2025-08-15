@@ -23,10 +23,7 @@ impl BiPartition {
         let ca = cardinality(&a);
         let cb = cardinality(&b);
         if ca == 0 || cb == 0 {
-            eprintln!(
-                "Internal error: A.size()={}, B.size()={}",
-                ca, cb
-            );
+            eprintln!("Internal error: A.size()={}, B.size()={}", ca, cb);
         }
         let a_first = first_set_at_or_after(&a, 1).unwrap_or(usize::MAX);
         let b_first = first_set_at_or_after(&b, 1).unwrap_or(usize::MAX);
@@ -65,7 +62,11 @@ impl BiPartition {
 
     /// The part that does *not* contain `t` (1-based).
     pub fn part_not_containing(&self, t: usize) -> &FixedBitSet {
-        if !self.a.contains(t) { &self.a } else { &self.b }
+        if !self.a.contains(t) {
+            &self.a
+        } else {
+            &self.b
+        }
     }
 
     /// The smaller part; on tie, the one whose first set bit (≥1) is smaller.
@@ -117,17 +118,15 @@ impl BiPartition {
         let (a2, b2) = (&s2.a, &s2.b);
         let (a3, b3) = (&s3.a, &s3.b);
 
-        let bad1 =
-            intersects3(a1, a2, a3)
-                && intersects3(a1, b2, b3)
-                && intersects3(b1, a2, b3)
-                && intersects3(b1, b2, a3);
+        let bad1 = intersects3(a1, a2, a3)
+            && intersects3(a1, b2, b3)
+            && intersects3(b1, a2, b3)
+            && intersects3(b1, b2, a3);
 
-        let bad2 =
-            intersects3(b1, b2, b3)
-                && intersects3(b1, a2, a3)
-                && intersects3(a1, b2, a3)
-                && intersects3(a1, a2, b3);
+        let bad2 = intersects3(b1, b2, b3)
+            && intersects3(b1, a2, a3)
+            && intersects3(a1, b2, a3)
+            && intersects3(a1, a2, b3);
 
         !(bad1 || bad2)
     }
@@ -189,13 +188,24 @@ impl Display for BiPartition {
             let mut first = true;
             let mut s = String::new();
             for i in bs.ones() {
-                if i == 0 { continue; } // ignore 0 to keep 1-based view
-                if !first { s.push(','); } else { first = false; }
+                if i == 0 {
+                    continue;
+                } // ignore 0 to keep 1-based view
+                if !first {
+                    s.push(',');
+                } else {
+                    first = false;
+                }
                 s.push_str(&i.to_string());
             }
             s
         }
-        write!(f, "{{{}}} | {{{}}}", part_to_string(&self.a), part_to_string(&self.b))
+        write!(
+            f,
+            "{{{}}} | {{{}}}",
+            part_to_string(&self.a),
+            part_to_string(&self.b)
+        )
     }
 }
 
@@ -228,9 +238,15 @@ fn bitset_eq(a: &FixedBitSet, b: &FixedBitSet) -> bool {
 
 fn intersects(a: &FixedBitSet, b: &FixedBitSet) -> bool {
     // Scan the smaller set’s ones and test membership in the other.
-    let (small, big) = if a.ones().size_hint().0 <= b.ones().size_hint().0 { (a, b) } else { (b, a) };
+    let (small, big) = if a.ones().size_hint().0 <= b.ones().size_hint().0 {
+        (a, b)
+    } else {
+        (b, a)
+    };
     for i in small.ones() {
-        if i == 0 { continue; }
+        if i == 0 {
+            continue;
+        }
         if big.contains(i) {
             return true;
         }
@@ -253,7 +269,9 @@ fn intersects3(a: &FixedBitSet, b: &FixedBitSet, c: &FixedBitSet) -> bool {
         _ => (c, a, b),
     };
     for i in small.ones() {
-        if i == 0 { continue; }
+        if i == 0 {
+            continue;
+        }
         if other1.contains(i) && other2.contains(i) {
             return true;
         }

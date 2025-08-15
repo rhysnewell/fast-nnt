@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, Args};
+use clap::{Args, Parser, Subcommand};
 
 use crate::weights::active_set_weights::NNLSParams;
 
@@ -7,14 +7,32 @@ use crate::weights::active_set_weights::NNLSParams;
 pub struct ProgramArgs {
     #[command(subcommand)]
     pub subcommand: ProgramSubcommand,
-    #[arg(short, long, default_value = "1", global = true, help = "Number of threads to use.")]
+    #[arg(
+        short,
+        long,
+        default_value = "1",
+        global = true,
+        help = "Number of threads to use."
+    )]
     pub threads: usize,
-    #[arg(short, long, default_value = "false", conflicts_with = "quiet", global = true)]
+    #[arg(
+        short,
+        long,
+        default_value = "false",
+        conflicts_with = "quiet",
+        global = true
+    )]
     pub verbose: bool,
-    #[arg(short, long, default_value = "false", conflicts_with = "verbose", global = true)]
+    #[arg(
+        short,
+        long,
+        default_value = "false",
+        conflicts_with = "verbose",
+        global = true
+    )]
     pub quiet: bool,
     #[arg(
-        short = 'o',
+        short = 'd',
         long,
         default_value = "output",
         global = true,
@@ -25,7 +43,10 @@ pub struct ProgramArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum ProgramSubcommand {
-    #[clap(name = "neighbour_net", about = "Run the SplitsTree NeighborNet algorithm")]
+    #[clap(
+        name = "neighbour_net",
+        about = "Run the SplitsTree NeighborNet algorithm"
+    )]
     NeighborNet(NeighborNetArgs),
 }
 
@@ -34,6 +55,13 @@ pub struct NeighborNetArgs {
     /// Input distance matrix file path
     #[arg(short, long, help = "Input distance matrix file path", required = true)]
     pub input: String,
+    #[arg(
+        short,
+        long,
+        help = "Output prefix for result files",
+        default_value = "output"
+    )]
+    pub output_prefix: String,
     #[clap(flatten)]
     pub nnls_params: NNLSParams,
 }

@@ -5,19 +5,21 @@ use log::LevelFilter;
 
 use crate::cli::ProgramArgs;
 
+pub mod algorithms;
 pub mod cli;
+pub mod data;
 pub mod neighbour_net;
+pub mod nexus;
 pub mod ordering;
+pub mod phylo;
 pub mod splits;
-pub mod weights;
 pub mod utils;
-
+pub mod weights;
 
 #[macro_use]
 extern crate log;
 #[macro_use]
 extern crate anyhow;
-
 
 pub fn set_log_level(matches: &ProgramArgs, is_last: bool, program_name: &str, version: &str) {
     let mut log_level = LevelFilter::Info;

@@ -1,6 +1,6 @@
 use ndarray::Array2;
-use petgraph::graph::{Graph, NodeIndex};
 use petgraph::Undirected;
+use petgraph::graph::{Graph, NodeIndex};
 use rayon::prelude::*;
 use std::collections::HashSet;
 
@@ -19,7 +19,6 @@ impl Component {
         }
     }
 
-
     fn pair(a: usize, b: usize) -> Self {
         Self {
             first: a,
@@ -27,15 +26,9 @@ impl Component {
         }
     }
 
-
     fn size(&self) -> usize {
-        if self.second.is_some() {
-            2
-        } else {
-            1
-        }
+        if self.second.is_some() { 2 } else { 1 }
     }
-
 
     fn values(&self) -> [usize; 2] {
         match self.second {
@@ -44,19 +37,28 @@ impl Component {
         }
     }
 
-
     fn other(&self, p: usize) -> usize {
         match self.second {
             Some(b) => {
-                if p == self.first { b } else { self.first }
+                if p == self.first {
+                    b
+                } else {
+                    self.first
+                }
             }
             None => panic!("other() called on singleton"),
         }
     }
 
-    fn first(&self) -> usize { self.first }
-    fn second(&self) -> usize { self.second.expect("not a pair") }
-    fn is_singleton(&self) -> bool { self.second.is_none() }
+    fn first(&self) -> usize {
+        self.first
+    }
+    fn second(&self) -> usize {
+        self.second.expect("not a pair")
+    }
+    fn is_singleton(&self) -> bool {
+        self.second.is_none()
+    }
 }
 
 /// Computes the circular ordering using the 2023 NeighborNet cycle algorithm.
@@ -90,8 +92,6 @@ pub fn compute_ordering(dist: &Array2<f64>) -> Vec<usize> {
             d[[i, j]] = dist[[i - 1, j - 1]];
         }
     }
-
-
 
     let mut components: Vec<Component> = (1..=n_tax).map(Component::singleton).collect();
 
@@ -130,7 +130,9 @@ pub fn compute_ordering(dist: &Array2<f64>) -> Vec<usize> {
                 if i != ip && i != iq {
                     let other = components[i];
                     for &r in other.values().iter() {
-                        if r == 0 { continue; } // skip unused
+                        if r == 0 {
+                            continue;
+                        } // skip unused
                         if r != p && r != q && r != qb {
                             d[[p, r]] = (2.0 * d[[p, r]] + d[[q, r]]) / 3.0;
                             d[[r, p]] = d[[p, r]];
@@ -152,14 +154,17 @@ pub fn compute_ordering(dist: &Array2<f64>) -> Vec<usize> {
             let pb = p_comp.other(p);
             let qb = q_comp.other(q);
 
-            d[[pb, qb]] = (d[[pb, p]] + d[[pb, q]] + d[[pb, qb]] + d[[p, q]] + d[[p, qb]] + d[[q, qb]]) / 6.0;
+            d[[pb, qb]] =
+                (d[[pb, p]] + d[[pb, q]] + d[[pb, qb]] + d[[p, q]] + d[[p, qb]] + d[[q, qb]]) / 6.0;
             d[[qb, pb]] = d[[pb, qb]];
 
             for i in 0..components.len() {
                 if i != ip && i != iq {
                     let other = components[i];
                     for &r in other.values().iter() {
-                        if r == 0 { continue; }
+                        if r == 0 {
+                            continue;
+                        }
                         if r != p && r != q && r != pb && r != qb {
                             let pb_r = d[[pb, r]] / 2.0 + d[[p, r]] / 3.0 + d[[q, r]] / 6.0;
                             let qb_r = d[[p, r]] / 6.0 + d[[q, r]] / 3.0 + d[[qb, r]] / 2.0;
@@ -214,7 +219,7 @@ fn avg_d_comp_comp(d: &Array2<f64>, p: (usize, Option<usize>), q: (usize, Option
     let (p1, p2) = (p.0, p.1);
     let (q1, q2) = (q.0, q.1);
     match (p2, q2) {
-        (None, None) => d[[p1, q1]], // 1x1
+        (None, None) => d[[p1, q1]],                           // 1x1
         (None, Some(qb)) => (d[[p1, q1]] + d[[p1, qb]]) / 2.0, // 1x2
         (Some(pb), None) => (d[[p1, q1]] + d[[pb, q1]]) / 2.0, // 2x1
         (Some(pb), Some(qb)) => {
@@ -401,11 +406,7 @@ mod tests {
     #[test]
     fn small_triangle() {
         // 3 taxa — returns [0,1,2,3]
-        let d = arr2(&[
-            [0.0, 1.0, 2.0],
-            [1.0, 0.0, 1.5],
-            [2.0, 1.5, 0.0],
-        ]);
+        let d = arr2(&[[0.0, 1.0, 2.0], [1.0, 0.0, 1.5], [2.0, 1.5, 0.0]]);
         let ord = compute_ordering(&d);
         assert_eq!(ord, vec![0, 1, 2, 3]);
     }

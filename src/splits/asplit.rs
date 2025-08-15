@@ -8,10 +8,10 @@ use std::hash::{Hash, Hasher};
 /// Indices are 1-based (bit 0 is ignored), just like the Java code.
 #[derive(Debug, Clone)]
 pub struct ASplit {
-    base: BiPartition,
-    weight: f64,
-    confidence: f64,
-    label: Option<String>,
+    pub base: BiPartition,
+    pub weight: f64,
+    pub confidence: f64,
+    pub label: Option<String>,
 }
 
 impl ASplit {
@@ -28,14 +28,30 @@ impl ASplit {
     }
 
     /// ASplit(A,B, weight, confidence)
-    pub fn new_with_weight_conf(a: FixedBitSet, b: FixedBitSet, weight: f64, confidence: f64) -> Self {
+    pub fn new_with_weight_conf(
+        a: FixedBitSet,
+        b: FixedBitSet,
+        weight: f64,
+        confidence: f64,
+    ) -> Self {
         Self::new_full(a, b, weight, confidence, None)
     }
 
     /// ASplit(A,B, weight, confidence, label)
-    pub fn new_full(a: FixedBitSet, b: FixedBitSet, weight: f64, confidence: f64, label: Option<String>) -> Self {
+    pub fn new_full(
+        a: FixedBitSet,
+        b: FixedBitSet,
+        weight: f64,
+        confidence: f64,
+        label: Option<String>,
+    ) -> Self {
         let base = BiPartition::new(a, b);
-        Self { base, weight, confidence, label }
+        Self {
+            base,
+            weight,
+            confidence,
+            label,
+        }
     }
 
     /* -------- constructors: A, ntax variants (B is complement of A in 1..=ntax) -------- */
@@ -48,42 +64,89 @@ impl ASplit {
         Self::from_a_ntax_full(a, ntax, weight, -1.0, None)
     }
 
-    pub fn from_a_ntax_with_weight_conf(a: FixedBitSet, ntax: usize, weight: f64, confidence: f64) -> Self {
+    pub fn from_a_ntax_with_weight_conf(
+        a: FixedBitSet,
+        ntax: usize,
+        weight: f64,
+        confidence: f64,
+    ) -> Self {
         Self::from_a_ntax_full(a, ntax, weight, confidence, None)
     }
 
-    pub fn from_a_ntax_full(a: FixedBitSet, ntax: usize, weight: f64, confidence: f64, label: Option<String>) -> Self {
+    pub fn from_a_ntax_full(
+        a: FixedBitSet,
+        ntax: usize,
+        weight: f64,
+        confidence: f64,
+        label: Option<String>,
+    ) -> Self {
         let b = complement_1_based(&a, ntax);
         Self::new_full(a, b, weight, confidence, label)
     }
 
     /// Copy constructor (like Java).
     pub fn from_other(src: &ASplit) -> Self {
-        Self::new_full(src.get_a().clone(), src.get_b().clone(), src.weight, src.confidence, src.label.clone())
+        Self::new_full(
+            src.get_a().clone(),
+            src.get_b().clone(),
+            src.weight,
+            src.confidence,
+            src.label.clone(),
+        )
     }
 
     /* -------- getters / setters -------- */
 
-    pub fn get_weight(&self) -> f64 { self.weight }
-    pub fn set_weight(&mut self, w: f64) { self.weight = w; }
+    pub fn get_weight(&self) -> f64 {
+        self.weight
+    }
+    pub fn set_weight(&mut self, w: f64) {
+        self.weight = w;
+    }
 
-    pub fn get_confidence(&self) -> f64 { self.confidence }
-    pub fn set_confidence(&mut self, c: f64) { self.confidence = c; }
+    pub fn get_confidence(&self) -> f64 {
+        self.confidence
+    }
+    pub fn set_confidence(&mut self, c: f64) {
+        self.confidence = c;
+    }
 
-    pub fn get_label(&self) -> Option<&str> { self.label.as_deref() }
-    pub fn set_label<S: Into<String>>(&mut self, s: S) { self.label = Some(s.into()); }
+    pub fn get_label(&self) -> Option<&str> {
+        self.label.as_deref()
+    }
+    pub fn set_label<S: Into<String>>(&mut self, s: S) {
+        self.label = Some(s.into());
+    }
 
     /* -------- BiPartition delegation -------- */
 
-    pub fn get_a(&self) -> &FixedBitSet { self.base.get_a() }
-    pub fn get_b(&self) -> &FixedBitSet { self.base.get_b() }
-    pub fn ntax(&self) -> usize { self.base.ntax() }
-    pub fn size(&self) -> usize { self.base.size() }
-    pub fn part_containing(&self, t: usize) -> &FixedBitSet { self.base.part_containing(t) }
-    pub fn part_not_containing(&self, t: usize) -> &FixedBitSet { self.base.part_not_containing(t) }
-    pub fn smaller_part(&self) -> &FixedBitSet { self.base.smaller_part() }
-    pub fn is_trivial(&self) -> bool { self.base.is_trivial() }
-    pub fn separates(&self, a: usize, b: usize) -> bool { self.base.separates(a, b) }
+    pub fn get_a(&self) -> &FixedBitSet {
+        self.base.get_a()
+    }
+    pub fn get_b(&self) -> &FixedBitSet {
+        self.base.get_b()
+    }
+    pub fn ntax(&self) -> usize {
+        self.base.ntax()
+    }
+    pub fn size(&self) -> usize {
+        self.base.size()
+    }
+    pub fn part_containing(&self, t: usize) -> &FixedBitSet {
+        self.base.part_containing(t)
+    }
+    pub fn part_not_containing(&self, t: usize) -> &FixedBitSet {
+        self.base.part_not_containing(t)
+    }
+    pub fn smaller_part(&self) -> &FixedBitSet {
+        self.base.smaller_part()
+    }
+    pub fn is_trivial(&self) -> bool {
+        self.base.is_trivial()
+    }
+    pub fn separates(&self, a: usize, b: usize) -> bool {
+        self.base.separates(a, b)
+    }
 
     /// Union of A and B (i.e., the full taxon set present in this split).
     pub fn get_all_taxa(&self) -> FixedBitSet {
@@ -91,7 +154,9 @@ impl ASplit {
     }
 
     /// Access the underlying `BiPartition`.
-    pub fn base(&self) -> &BiPartition { &self.base }
+    pub fn base(&self) -> &BiPartition {
+        &self.base
+    }
 }
 
 /* -------- Equality / Hash / Display -------- */
@@ -135,10 +200,14 @@ fn same_bits_1based(a: &FixedBitSet, b: &FixedBitSet) -> bool {
     seen.union_with(a);
     seen.union_with(b);
     for i in seen.ones() {
-        if i == 0 { continue; }
+        if i == 0 {
+            continue;
+        }
         let ai = a.contains(i);
         let bi = b.contains(i);
-        if ai != bi { return false; }
+        if ai != bi {
+            return false;
+        }
     }
     true
 }
@@ -160,6 +229,31 @@ fn union_1_based(a: &FixedBitSet, b: &FixedBitSet) -> FixedBitSet {
     out.union_with(a);
     out.union_with(b);
     out
+}
+
+/* ---------------- Minimal adapter over your split type ---------------- */
+
+/// If your ASplit stores weight/confidence differently, adapt here.
+/// We assume ASplit provides:
+///  - fn weight(&self) -> f64
+///  - fn size(&self) -> usize
+///  - fn smaller_part(&self) -> &FixedBitSet
+pub trait ASplitView {
+    fn weight(&self) -> f64;
+    fn size(&self) -> usize;
+    fn smaller_part(&self) -> &fixedbitset::FixedBitSet;
+    fn get_part_not_containing(&self, taxon: usize) -> &fixedbitset::FixedBitSet;
+    fn get_part_containing(&self, taxon: usize) -> &fixedbitset::FixedBitSet;
+    fn ntax(&self) -> usize;
+}
+
+impl ASplitView for ASplit {
+    fn weight(&self) -> f64 { self.weight() }
+    fn size(&self) -> usize { self.size() }
+    fn smaller_part(&self) -> &fixedbitset::FixedBitSet { self.smaller_part() }
+    fn get_part_not_containing(&self, t: usize) -> &fixedbitset::FixedBitSet { self.get_part_not_containing(t) }
+    fn get_part_containing(&self, t: usize) -> &fixedbitset::FixedBitSet { self.get_part_containing(t) }
+    fn ntax(&self) -> usize { self.ntax() }
 }
 
 /* -------- tests -------- */
@@ -187,7 +281,13 @@ mod tests {
             assert!(all.contains(i));
         }
         // new_full
-        let _s2 = ASplit::new_full(a.clone(), bs_from(&[1, 3, 5], 5), 2.5, 0.7, Some("X".into()));
+        let _s2 = ASplit::new_full(
+            a.clone(),
+            bs_from(&[1, 3, 5], 5),
+            2.5,
+            0.7,
+            Some("X".into()),
+        );
     }
 
     #[test]

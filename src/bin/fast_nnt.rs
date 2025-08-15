@@ -1,10 +1,11 @@
+use clap::{Parser, crate_name, crate_version};
 
-use clap::{crate_name, crate_version, Parser};
-
-use fast_nnt::{cli::{ProgramArgs, ProgramSubcommand}, neighbour_net::neighbour_net::NeighbourNet, set_log_level};
+use fast_nnt::{
+    cli::{ProgramArgs, ProgramSubcommand},
+    neighbour_net::neighbour_net::NeighbourNet,
+    set_log_level,
+};
 use log::{error, info};
-
-
 
 fn main() {
     let app = ProgramArgs::parse();
@@ -15,7 +16,6 @@ fn main() {
         .unwrap();
 
     set_log_level(&app, true, crate_name!(), crate_version!());
-    info!("{} v{}", crate_name!(), crate_version!());
     info!("Rayon threads: {}", rayon::current_num_threads());
 
     // Dispatch subcommands

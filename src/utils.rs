@@ -1,4 +1,4 @@
-use crate::splits::asplit::ASplit;          // adjust path if needed
+use crate::splits::asplit::ASplit; // adjust path if needed
 use fixedbitset::FixedBitSet;
 use ndarray::Array2;
 use rayon::prelude::*;
@@ -24,10 +24,14 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
             let b: &FixedBitSet = s.get_b();
 
             for i1 in a.ones() {
-                if i1 == 0 || i1 > n { continue; }
+                if i1 == 0 || i1 > n {
+                    continue;
+                }
                 let ii = i1 - 1; // 0-based
                 for j1 in b.ones() {
-                    if j1 == 0 || j1 > n { continue; }
+                    if j1 == 0 || j1 > n {
+                        continue;
+                    }
                     let jj = j1 - 1;
                     m[[ii, jj]] += w;
                     m[[jj, ii]] += w; // symmetric
@@ -35,10 +39,13 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
             }
             m
         })
-        .reduce(|| Array2::<f64>::zeros((n, n)), |mut acc, m| {
-            acc.zip_mut_with(&m, |a, b| *a += *b);
-            acc
-        });
+        .reduce(
+            || Array2::<f64>::zeros((n, n)),
+            |mut acc, m| {
+                acc.zip_mut_with(&m, |a, b| *a += *b);
+                acc
+            },
+        );
 
     // Sum over the upper triangle (i<j) in parallel
     let (sum_diff_sq, sum_d_sq) = (0..n - 1)
@@ -66,7 +73,6 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
     fit as f32
 }
 
-
 #[cfg(test)]
 mod lsq_tests {
     use super::*;
@@ -89,10 +95,14 @@ mod lsq_tests {
             let a = s.get_a();
             let b = s.get_b();
             for i1 in a.ones() {
-                if i1 == 0 || i1 > n { continue; }
+                if i1 == 0 || i1 > n {
+                    continue;
+                }
                 let ii = i1 - 1;
                 for j1 in b.ones() {
-                    if j1 == 0 || j1 > n { continue; }
+                    if j1 == 0 || j1 > n {
+                        continue;
+                    }
                     let jj = j1 - 1;
                     d[[ii, jj]] += w;
                     d[[jj, ii]] += w;
@@ -137,6 +147,9 @@ mod lsq_tests {
         }
 
         let fit = compute_least_squares_fit(&d, &splits);
-        assert!(fit < 100.0 && fit > 0.0, "fit should drop below 100, got {fit}");
+        assert!(
+            fit < 100.0 && fit > 0.0,
+            "fit should drop below 100, got {fit}"
+        );
     }
 }

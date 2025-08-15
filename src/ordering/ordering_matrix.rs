@@ -1,5 +1,4 @@
-
-use ndarray::{s, Array1, Array2, Axis};
+use ndarray::{Array1, Array2, Axis, s};
 use rayon::prelude::*;
 
 #[derive(Debug, Clone)]
@@ -25,7 +24,8 @@ fn mean_between_sets(d: &Matrix, a: &[usize], b: &[usize]) -> f64 {
 fn update_dm(dm: &mut Matrix, d: &Matrix, cl: &Vec<Vec<usize>>, j: usize) {
     let l = cl.len();
     // Compute all means to cluster j in parallel, then assign
-    let col_vals: Vec<f64> = (0..l).into_par_iter()
+    let col_vals: Vec<f64> = (0..l)
+        .into_par_iter()
         .map(|i| mean_between_sets(d, &cl[i], &cl[j]))
         .collect();
 
@@ -104,26 +104,22 @@ fn remove_row_col(m: &Matrix, idx: usize) -> Matrix {
     let mut out = Array2::<f64>::zeros((n - 1, n - 1));
     // Top-left block
     if idx > 0 {
-        out
-            .slice_mut(s![0..idx, 0..idx])
+        out.slice_mut(s![0..idx, 0..idx])
             .assign(&m.slice(s![0..idx, 0..idx]));
     }
     // Top-right block
     if idx + 1 < n {
-        out
-            .slice_mut(s![0..idx, idx..])
+        out.slice_mut(s![0..idx, idx..])
             .assign(&m.slice(s![0..idx, (idx + 1)..]));
     }
     // Bottom-left block
     if idx + 1 < n {
-        out
-            .slice_mut(s![idx.., 0..idx])
+        out.slice_mut(s![idx.., 0..idx])
             .assign(&m.slice(s![(idx + 1).., 0..idx]));
     }
     // Bottom-right block
     if idx + 1 < n {
-        out
-            .slice_mut(s![idx.., idx..])
+        out.slice_mut(s![idx.., idx..])
             .assign(&m.slice(s![(idx + 1).., (idx + 1)..]));
     }
     out
