@@ -33,7 +33,7 @@ impl NeighbourNet {
             .load_distance_matrix(&self.args.input)
             .context("loading distance matrix")?;
         let n = distance_matrix.nrows();
-        info!("Loaded distance matrix: {}×{}", n, n);
+        info!("Loaded distance matrix: {}x{}", n, n);
 
         // 2) Compute NeighborNet cycle (1-based with leading 0)
         let t_cycle = Instant::now();

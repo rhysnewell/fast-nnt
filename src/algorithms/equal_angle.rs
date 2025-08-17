@@ -210,7 +210,7 @@ fn remove_temporary_trivial_edges(g: &mut PhyloSplitsGraph) {
         if let Some((u, v)) = g.base.graph.edge_endpoints(e) {
             // choose leaf node (degree 1) to delete; move its taxa to the other node
             let du = g.base.graph.neighbors(u).count();
-            let dv = g.base.graph.neighbors(v).count();
+            let _dv = g.base.graph.neighbors(v).count();
             let (leaf, keep) = if du == 1 { (u, v) } else { (v, u) };
             if let Some(list) = g.base.node2taxa().expect("No taxa mapping").get(&leaf).cloned() {
                 for t in list { g.base.add_taxon(keep, t); }

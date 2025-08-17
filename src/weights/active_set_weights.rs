@@ -74,6 +74,12 @@ pub struct SplitWeights {
     pub x: Vec<f64>,
 }
 
+impl PartialEq for SplitWeights {
+    fn eq(&self, other: &Self) -> bool {
+        self.x == other.x
+    }
+}
+
 /// Public API: return **ASplit**s directly (wired).
 ///
 /// - `cycle`: NeighborNet circular order (1-based with leading `0` sentinel)
@@ -133,39 +139,26 @@ pub fn compute_use_1d(
     // Threshold from ||Aᵀ d||.
     let mut a_t_d = vec![0.0; npairs];
     calc_atx(&d, &mut a_t_d, n);
-    let norm_atd = l2_sq(&a_t_d).sqrt();
+    let norm_atd = sum_array_squared(&a_t_d, n).sqrt();
     params.proj_grad_bound = (1e-4 * norm_atd).powi(2);
 
-    // Start with unconstrained CGNR (no actives), then active-set if negatives appear.
-    let start = Instant::now();
+    // var x = new double[npairs]; //array of split weights
+    // calcAinv_y(d, x, n); //Compute unconstrained solution
+    // var minVal = minArray(x);
     let mut x = vec![0.0; npairs];
-    {
-        let mut scratch = Scratch::new(npairs); // p, r, z, w
-        let all_false = vec![false; npairs];
-        cgnr(
-            &mut x,
-            &d,
-            &all_false,
-            n,
-            params.cgnr_iterations.max(npairs),
-            (params.proj_grad_bound * 0.5).min(params.cgnr_tolerance),
-            &mut scratch,
-            progress,
-            start,
-            params.max_time_ms,
-        )?;
-    }
-
-    if x.iter().copied().fold(f64::INFINITY, f64::min) < 0.0 {
+    calc_ainv_y(&d, &mut x, n);
+    let min_val = x.iter().copied().fold(f64::INFINITY, f64::min);
+    if min_val < 0.0 {
+        let start = Instant::now();
         zero_negative_entries(&mut x);
         let mut active = vec![false; npairs];
         get_active_entries(&x, &mut active);
-
+    
         let mut scratch = Scratch::new(npairs); // p, r, z, w
         let mut splits_idx = vec![0usize; npairs];
         let mut order_idx: Vec<usize> = (0..npairs).collect();
         let mut vals = vec![0.0; npairs];
-
+    
         active_set_method(
             &mut x,
             &d,
@@ -179,6 +172,7 @@ pub fn compute_use_1d(
             progress,
             start,
         )?;
+
     }
 
     // Build ASplit-compatible pairs: (bitset A, weight)
@@ -260,6 +254,7 @@ fn active_set_method(
             }
         }
 
+        x.copy_from_slice(&xstar);
         // projected gradient check at current x
         let (p, r) = (&mut scratch.p, &mut scratch.r);
         eval_gradient(x, d, p, r, n); // p := grad
@@ -271,7 +266,7 @@ fn active_set_method(
             }
         });
 
-        let pg = l2_sq(p);
+        let pg = sum_array_squared(p, n);
         if pg < params.proj_grad_bound {
             return Ok(());
         }
@@ -417,6 +412,84 @@ fn calc_atx(x: &[f64], y: &mut [f64], n: usize) {
     }
 }
 
+/// Compute x from y for size `n` using the same index arithmetic as the Java version.
+/// - `y.len()` and `x.len()` must both be n*(n-1)/2 (upper triangle packed vector).
+pub fn calc_ainv_y(y: &[f64], x: &mut [f64], n: usize) {
+    assert!(n >= 2, "n must be >= 2");
+    let m = n * (n - 1) / 2;
+    assert_eq!(y.len(), m, "y must have length n*(n-1)/2");
+    assert_eq!(x.len(), m, "x must have length n*(n-1)/2");
+
+    // --- First row (i = 1 in the paper/code comments) ---
+    // x[0] = (y[n-2] + y[0] - y[2n-4]) / 2
+    {
+        let t1 = y[n - 2] + y[0];
+        let t2 = t1 - y[2 * n - 4];
+        x[0] = t2 / 2.0;
+    }
+
+    // d_index starts at (2,n) in the original comments => 2n-4 in 0-based packed vector
+    let mut d_index: isize = (2 * n - 4) as isize;
+
+    // for j = 3..=n:
+    // x[j-2] = (y[d_index] + y[j-2] - y[j-3] - y[d_index + n - j]) / 2
+    for j in 3..=n {
+        let j_i = j as isize;
+        let n_i = n as isize;
+
+        let t1 = y[usize::try_from(d_index).unwrap()] + y[j - 2];
+        let t2 = t1 - y[j - 3];
+        let t3 = t2 - y[usize::try_from(d_index + n_i - j_i).unwrap()];
+        x[j - 2] = t3 / 2.0;
+
+        d_index += n_i - j_i;
+    }
+
+    // x[n-2] = (y[n-2] + y[last] - y[n-3]) / 2
+    {
+        let t1 = y[n - 2] + y[y.len() - 1];
+        let t2 = t1 - y[n - 3];
+        x[n - 2] = t2 / 2.0;
+    }
+
+    // --- Remaining rows (i = 2..=n-1) ---
+    // s_index = (2n - i) * (i - 1) / 2   (0-based packed start index for row i)
+    for i in 2..=(n - 1) {
+        let i_i = i as isize;
+        let n_i = n as isize;
+
+        let mut s_index: isize = ((2 * n_i - i_i) * (i_i - 1)) / 2;
+
+        // x[i][i+1]
+        // x[s_index] = (y[s_index + i - n - 1] + y[s_index] - y[s_index + i - n]) / 2
+        {
+            let a = y[usize::try_from(s_index + i_i - n_i - 1).unwrap()];
+            let b = y[usize::try_from(s_index).unwrap()];
+            let c = y[usize::try_from(s_index + i_i - n_i).unwrap()];
+            let t1 = a + b;
+            let t2 = t1 - c;
+            x[usize::try_from(s_index).unwrap()] = t2 / 2.0;
+        }
+        s_index += 1;
+
+        // for j = i+2..=n:
+        // x[s_index] = (y[s_index + i - n - 1] + y[s_index] - y[s_index - 1] - y[s_index + i - n]) / 2
+        for _j in (i + 2)..=n {
+            let a = y[usize::try_from(s_index + i_i - n_i - 1).unwrap()];
+            let b = y[usize::try_from(s_index).unwrap()];
+            let c = y[usize::try_from(s_index - 1).unwrap()];
+            let d = y[usize::try_from(s_index + i_i - n_i).unwrap()];
+            let t1 = a + b;
+            let t2 = t1 - c;
+            let t3 = t2 - d;
+            x[usize::try_from(s_index).unwrap()] = t3 / 2.0;
+
+            s_index += 1;
+        }
+    }
+}
+
+
 /* ===================== Gradient & CGNR (rayon-accelerated) ===================== */
 
 fn eval_gradient(x: &[f64], d: &[f64], gradient: &mut [f64], residual: &mut [f64], n: usize) {
@@ -442,10 +515,35 @@ fn zero_negative_entries(x: &mut [f64]) {
     });
 }
 
-#[inline]
-fn l2_sq(v: &[f64]) -> f64 {
-    v.par_iter().map(|&t| t * t).sum()
+/// Sum of squares over a packed upper-triangular vector `x` (i<j) for an n×n matrix.
+/// Mirrors the Java implementation's iteration and accumulation order.
+pub fn sum_array_squared(x: &[f64], n: usize) -> f64 {
+    let expected = n * (n - 1) / 2;
+    assert!(
+        x.len() == expected,
+        "x must have length n*(n-1)/2 (got {}, expected {})",
+        x.len(),
+        expected
+    );
+
+    let mut total = 0.0f64;
+    let mut index = 0usize;
+
+    // Java loops i=1..=n, j=i+1..=n over the packed upper triangle.
+    for i in 1..=n {
+        let mut s_i = 0.0f64;
+        for _j in (i + 1)..=n {
+            let x_ij = x[index];
+            s_i += x_ij * x_ij;
+            index += 1;
+        }
+        // Sum each row separately, then add (matches Java's numeric stability choice)
+        total += s_i;
+    }
+
+    total
 }
+
 
 fn cgnr(
     x: &mut [f64],
@@ -488,13 +586,13 @@ fn cgnr(
         *pi = zi;
     });
 
-    let mut ztz = l2_sq(z);
+    let mut ztz = sum_array_squared(z, n);
     let mut k = 0usize;
 
     while k < max_iters && ztz >= tol {
         // w = A p
         calc_ax(p, w, n);
-        let denom = l2_sq(w).max(1e-30);
+        let denom = sum_array_squared(w, n).max(1e-30);
         let alpha = ztz / denom;
 
         // x += alpha p; r -= alpha w
@@ -515,7 +613,7 @@ fn cgnr(
                 }
             });
 
-        let ztz_new = l2_sq(z);
+        let ztz_new = sum_array_squared(z, n);
         if ztz_new < tol {
             k += 1;
             break;
@@ -556,7 +654,7 @@ fn pair_idx(i: usize, j: usize, n: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::Array2;
+    use ndarray::{arr2, Array2};
 
     fn build_pairs_from_fn(n: usize, f: impl Fn(usize, usize) -> f64) -> Vec<f64> {
         let mut x = vec![0.0; n * (n - 1) / 2];
@@ -645,7 +743,7 @@ mod tests {
             }
         });
 
-        let pg = l2_sq(&grad);
+        let pg = sum_array_squared(&grad, n);
         assert!(pg < params.proj_grad_bound * 10.0); // loose but indicative
     }
 
@@ -660,5 +758,154 @@ mod tests {
             }
         }
         d
+    }
+
+    #[test]
+    fn test_calc_atx_smoke_10_1() {
+        let n = 10;
+        let n_pairs = n * (n - 1) / 2;
+        let mut atx = vec![0.0; n_pairs];
+        let cycle = vec![0, 1, 5, 7, 9, 3, 8, 4, 2, 10, 6];
+        let distances = arr2(&[
+            [0.0,5.0,12.0,7.0,3.0,9.0,11.0,6.0,4.0,10.0],
+            [5.0,0.0,8.0,2.0,14.0,5.0,13.0,7.0,12.0,1.0],
+            [12.0,8.0,0.0,4.0,9.0,3.0,8.0,2.0,5.0,6.0],
+            [7.0,2.0,4.0,0.0,11.0,7.0,10.0,4.0,6.0,9.0],
+            [3.0,14.0,9.0,11.0,0.0,8.0,1.0,13.0,2.0,7.0],
+            [9.0,5.0,3.0,7.0,8.0,0.0,12.0,5.0,3.0,4.0],
+            [11.0,13.0,8.0,10.0,1.0,12.0,0.0,6.0,2.0,8.0],
+            [6.0,7.0,2.0,4.0,13.0,5.0,6.0,0.0,9.0,7.0],
+            [4.0,12.0,5.0,6.0,2.0,3.0,2.0,9.0,0.0,5.0],
+            [10.0,1.0,6.0,9.0,7.0,4.0,8.0,7.0,5.0,0.0],
+        ]);
+
+        let mut d = vec![0.0; n_pairs];
+        let mut index = 0;
+        for i in 1..=n {
+            for j in (i + 1)..=n {
+                d[index] = distances[[cycle[i] - 1, cycle[j] - 1]];
+                index += 1;
+            }
+        }
+
+        calc_atx(&d, &mut atx, n);
+
+        let exp = vec![
+            67.0, 129.0, 176.0, 208.0, 197.0, 184.0, 160.0, 105.0, 
+            56.0, 68.0, 137.0, 177.0, 190.0, 189.0, 179.0, 134.0, 
+            105.0, 71.0, 115.0, 146.0, 171.0, 183.0, 166.0, 151.0, 
+            48.0, 95.0, 132.0, 164.0, 173.0, 174.0, 57.0, 112.0, 
+            156.0, 189.0, 200.0, 59.0, 111.0, 160.0, 183.0, 60.0, 
+            123.0, 160.0, 67.0, 122.0, 57.0
+        ];
+
+        compare_float_array(&atx, &exp, 1e-8);
+        // let norm_atd = sqrt(sumArraySquared(Atd, n));
+        let norm_atx = sum_array_squared(&atx, n).sqrt();
+        assert_eq!(norm_atx, 959.9874999186187);
+        let mut params = NNLSParams::default();
+        params.proj_grad_bound = (1e-4 * norm_atx).powi(2);
+
+        let mut x_exp = vec![2.0, 2.0, 1.0, 4.0, -4.0, -0.5, 0.0, 3.0, 1.5, -3.5, 4.0, -0.5, 5.0, -1.5, 2.5, -6.0, 1.0, 0.5, -0.5, -3.0, 3.0, 0.0, 1.0, 1.5, -0.5, 3.0, -3.5, 1.5, -1.0, -3.0, -1.0, 2.5, -1.0, 2.5, -0.5, 1.0, -0.5, 1.0, 0.5, -0.5, 3.5, 0.0, -3.0, 3.0, 0.0];
+        let mut d_exp = vec![3.0, 11.0, 4.0, 12.0, 6.0, 7.0, 5.0, 10.0, 9.0, 1.0, 2.0, 9.0, 13.0, 11.0, 14.0, 7.0, 8.0, 2.0, 8.0, 6.0, 10.0, 13.0, 8.0, 12.0, 5.0, 9.0, 6.0, 12.0, 5.0, 3.0, 2.0, 4.0, 8.0, 6.0, 3.0, 4.0, 7.0, 7.0, 5.0, 2.0, 9.0, 7.0, 1.0, 5.0, 4.0];
+
+        let mut x = vec![0.0; n_pairs];
+        calc_ainv_y(&d, &mut x, n);
+        let min_val = x.iter().copied().fold(f64::INFINITY, f64::min);
+
+        assert_eq!(min_val, -6.0);
+        compare_float_array(&x, &x_exp, 1e-8);
+        compare_float_array(&d, &d_exp, 1e-8);
+
+
+        let start = Instant::now();
+        zero_negative_entries(&mut x);
+        let mut active = vec![false; n_pairs];
+        get_active_entries(&x, &mut active);
+
+        let mut scratch = Scratch::new(n_pairs); // p, r, z, w
+        let mut splits_idx = vec![0usize; n_pairs];
+        let mut order_idx: Vec<usize> = (0..n_pairs).collect();
+        let mut vals = vec![0.0; n_pairs];
+
+        active_set_method(
+            &mut x,
+            &d,
+            n,
+            &mut params,
+            &mut active,
+            &mut scratch,
+            &mut splits_idx,
+            &mut order_idx,
+            &mut vals,
+            None,
+            start,
+        ).expect("active set method failed");
+
+        x_exp = vec![1.3724245430681956, 1.3454752556293355, 0.0, 2.012589097140714, 0.0, 0.0, 0.432648565932274, 0.0, 1.2912946058459376, 0.0, 1.7933838153171087, 0.7711228988729982, 1.0043842023776657, 0.0, 0.0, 0.0, 0.0, 0.8997353824936709, 0.0, 0.0, 0.0, 0.6914161425268539, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.24973217871606335, 0.9249564751107247, 0.5594817784033412, 0.6432103250072205, 0.0, 0.7511706061796792, 0.0, 0.0, 0.0, 0.06892851867483342, 1.9992119883544948, 0.0, 0.0, 1.889915657808208, 0.0];
+        d_exp = vec![3.0, 11.0, 4.0, 12.0, 6.0, 7.0, 5.0, 10.0, 9.0, 1.0, 2.0, 9.0, 13.0, 11.0, 14.0, 7.0, 8.0, 2.0, 8.0, 6.0, 10.0, 13.0, 8.0, 12.0, 5.0, 9.0, 6.0, 12.0, 5.0, 3.0, 2.0, 4.0, 8.0, 6.0, 3.0, 4.0, 7.0, 7.0, 5.0, 2.0, 9.0, 7.0, 1.0, 5.0, 4.0];
+        compare_float_array(&x, &x_exp, 1e-8);
+        compare_float_array(&d, &d_exp, 1e-8);
+    }
+
+    #[test]
+    fn smoke_5_1() {
+        let d = arr2(&[
+            [0.0, 5.0, 9.0, 9.0, 8.0],
+            [5.0, 0.0, 10.0, 10.0, 9.0],
+            [9.0, 10.0, 0.0, 8.0, 7.0],
+            [9.0, 10.0, 8.0, 0.0, 3.0],
+            [8.0, 9.0, 7.0, 3.0, 0.0],
+        ]);
+        let ord = vec![0, 1, 2, 5, 4, 3];
+        let mut params = NNLSParams::default();
+        let progress = None; // No progress tracking in this test
+        let (_unused, pairs) = compute_use_1d(&ord, &d, &mut params, progress).expect("NNLS solve");
+
+        assert_eq!(pairs.len(), 7);
+        let weights = pairs.iter().map(|(_, w)| *w).collect::<Vec<f64>>();
+        let expected_weights = vec![2.0, 3.0, 4.0, 3.0, 1.0, 2.0, 2.0];
+        compare_float_array(&weights, &expected_weights, 1e-8);
+    }
+
+    #[test]
+    fn smoke_10_1() {
+        let d = arr2(&[
+            [0.0,5.0,12.0,7.0,3.0,9.0,11.0,6.0,4.0,10.0],
+            [5.0,0.0,8.0,2.0,14.0,5.0,13.0,7.0,12.0,1.0],
+            [12.0,8.0,0.0,4.0,9.0,3.0,8.0,2.0,5.0,6.0],
+            [7.0,2.0,4.0,0.0,11.0,7.0,10.0,4.0,6.0,9.0],
+            [3.0,14.0,9.0,11.0,0.0,8.0,1.0,13.0,2.0,7.0],
+            [9.0,5.0,3.0,7.0,8.0,0.0,12.0,5.0,3.0,4.0],
+            [11.0,13.0,8.0,10.0,1.0,12.0,0.0,6.0,2.0,8.0],
+            [6.0,7.0,2.0,4.0,13.0,5.0,6.0,0.0,9.0,7.0],
+            [4.0,12.0,5.0,6.0,2.0,3.0,2.0,9.0,0.0,5.0],
+            [10.0,1.0,6.0,9.0,7.0,4.0,8.0,7.0,5.0,0.0],
+        ]);
+
+        let ord = vec![0, 1, 5, 7, 9, 3, 8, 4, 2, 10, 6];
+        let mut params = NNLSParams::default();
+        let progress = None; // No progress tracking in this test
+
+
+        let (_unused, pairs) = compute_use_1d(&ord, &d, &mut params, progress).expect("NNLS solve");
+
+        assert_eq!(pairs.len(), 22);
+        let weights = pairs.iter().map(|(_, w)| *w).collect::<Vec<f64>>();
+        let expected_weights = vec![
+            1.3724245430681956, 1.3454752556293355, 2.012589097140714, 0.432648565932274, 
+            1.2912946058459376, 0.0, 1.7933838153171087, 0.7711228988729982, 1.0043842023776657, 
+            0.8997353824936709, 0.6914161425268539, 0.0, 0.24973217871606335, 0.9249564751107247, 
+            0.5594817784033412, 0.6432103250072205, 0.7511706061796792, 0.06892851867483342, 
+            1.9992119883544948, 0.0, 1.889915657808208, 0.0
+        ];
+        compare_float_array(&weights, &expected_weights, 1e-8);
+    }
+
+    fn compare_float_array(arr1: &[f64], arr2: &[f64], eps: f64) {
+        assert_eq!(arr1.len(), arr2.len());
+        for (a, b) in arr1.iter().zip(arr2.iter()) {
+            assert!((*a - *b).abs() < eps, "got {}, wanted {}", a, b);
+        }
     }
 }

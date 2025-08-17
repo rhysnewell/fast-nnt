@@ -18,8 +18,6 @@ pub mod weights;
 
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate anyhow;
 
 pub fn set_log_level(matches: &ProgramArgs, is_last: bool, program_name: &str, version: &str) {
     let mut log_level = LevelFilter::Info;

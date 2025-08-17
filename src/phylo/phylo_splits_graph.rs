@@ -224,7 +224,7 @@ impl PhyloSplitsGraph {
             };
 
             // collect current incident edges of w (so we can mutate the graph safely)
-            let mut w_incident: Vec<EdgeIndex> =
+            let w_incident: Vec<EdgeIndex> =
                 self.base.graph.edges(w).map(|er| er.id()).collect();
 
             for f in w_incident.iter().copied() {
