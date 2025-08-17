@@ -1,6 +1,6 @@
+use anyhow::Result;
 use petgraph::Undirected;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, StableGraph};
-use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
 
 /// Default values (as in Java version)
@@ -81,9 +81,9 @@ impl PhyloGraph {
         self.graph.node_weight(v).and_then(|nd| nd.label.as_deref())
     }
 
-    pub fn new_edge(&mut self, u: NodeIndex, v: NodeIndex) -> Result<EdgeIndex, &'static str> {
+    pub fn new_edge(&mut self, u: NodeIndex, v: NodeIndex) -> Result<EdgeIndex> {
         if u == v {
-            return Err("Illegal self-edge");
+            return Err(anyhow::anyhow!("Illegal self-edge"));
         }
         Ok(self.graph.add_edge(u, v, EdgeData::default()))
     }
@@ -93,9 +93,9 @@ impl PhyloGraph {
         u: NodeIndex,
         v: NodeIndex,
         label: S,
-    ) -> Result<EdgeIndex, &'static str> {
+    ) -> Result<EdgeIndex> {
         if u == v {
-            return Err("Illegal self-edge");
+            return Err(anyhow::anyhow!("Illegal self-edge"));
         }
         Ok(self.graph.add_edge(
             u,

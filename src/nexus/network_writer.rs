@@ -81,6 +81,18 @@ pub fn write_network_block_splits<W: FmtWrite>(
     }
     writeln!(w, ";")?;
 
+    // Example offsets and font to mirror your sample: x=12, y=0, font="Dialog-PLAIN-6"
+    // TODO: Actual label layout calcs
+    write_vlabels_section(
+        &mut w,
+        base,
+        &node_id,
+        taxa_labels_1based,
+        12,    // x
+        0,     // y  (your example varied y; use a fixed default or compute if you wish)
+        Some("Dialog-PLAIN-6"),
+    )?;
+
     // EDGES: "<eid> <u_id> <v_id> s=<splitid> w=<weight>,"
     writeln!(w, "EDGES")?;
     {
@@ -96,6 +108,46 @@ pub fn write_network_block_splits<W: FmtWrite>(
         }
     }
     writeln!(w, "END; [Network]")?;
+    Ok(())
+}
+
+/// Write a VLABELS section for nodes that have taxa (i.e., the leaves).
+/// - `x_off`/`y_off` are the same fixed offsets for every label (matches your example).
+/// - `font` is optional; when `Some`, we append `f='<font>'`.
+pub fn write_vlabels_section<W: FmtWrite>(
+    mut w: W,
+    base: &PhyloGraph,
+    node_id: &BTreeMap<NodeIndex, usize>,
+    taxa_labels_1based: &[String],
+    x_off: i32,
+    y_off: i32,
+    mut font: Option<&str>,
+) -> fmt::Result {
+    writeln!(w, "VLABELS")?;
+
+    // We print labels for nodes that correspond to exactly one taxon
+    // (these are the leaves in our construction).
+    for v in base.graph.node_indices() {
+        // Look up the taxon-mapped label if this node has exactly one taxon
+        if let Some(n2t) = base.node2taxa() {
+            if let Some(list) = n2t.get(&v) {
+                if list.len() == 1 {
+                    let t = list[0];
+                    if t >= 1 && t <= taxa_labels_1based.len() {
+                        let label = &taxa_labels_1based[t - 1];
+                        let id = node_id[&v];
+                        write!(w, "{} '{}' x={} y={}", id, escape_label(label), x_off, y_off)?;
+                        if let Some(f) = font {
+                            write!(w, " f='{}'", f)?;
+                            font = None;
+                        }
+                        writeln!(w, ",")?;
+                    }
+                }
+            }
+        }
+    }
+    writeln!(w, ";")?;
     Ok(())
 }
 

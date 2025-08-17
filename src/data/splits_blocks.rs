@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 
+use anyhow::Result;
 use fixedbitset::FixedBitSet;
 
 use crate::splits::asplit::ASplit;
-use crate::algorithms::equal_angle::{self, SplitsProvider};
+use crate::algorithms::equal_angle::normalize_cycle_1based;
 
 /// Parity with Java enum; keep it simple for now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,9 +115,9 @@ impl SplitsBlock {
     }
 
     /// Set a **1-based** cycle `[0, t1..tn]`. If `normalize=true`, rotate so that `cycle[1]==1`.
-    pub fn set_cycle(&mut self, mut cycle: Vec<usize>, normalize: bool) {
+    pub fn set_cycle(&mut self, mut cycle: Vec<usize>, normalize: bool) -> Result<()> {
         if normalize {
-            cycle = equal_angle::normalize_cycle(&cycle);
+            cycle = normalize_cycle_1based(&cycle)?;
         }
         // sanity: ensure it's a permutation (rough check)
         let mut seen = FixedBitSet::with_capacity(cycle.len() + 1);
@@ -124,11 +125,12 @@ impl SplitsBlock {
             if v >= seen.len() { seen.grow(v + 1); }
             if seen.contains(v) { // duplicate
                 self.cycle = None;
-                return;
+                return Err(anyhow::anyhow!("cycle is not a permutation"));
             }
             seen.insert(v);
         }
         self.cycle = Some(cycle);
+        Ok(())
     }
 
     /// Set from 0-based list `[t1..tn]` (no sentinel). We’ll prepend a 0.
@@ -191,6 +193,11 @@ fn fb_and(a: &FixedBitSet, b: &FixedBitSet) -> FixedBitSet {
 }
 
 /* ---------- Equal-Angle adapter ---------- */
+pub trait SplitsProvider {
+    fn nsplits(&self) -> usize;
+    fn split(&self, id: usize) -> &ASplit;
+    fn cycle(&self) -> Option<&[usize]>;
+}
 
 impl SplitsProvider for SplitsBlock {
     fn nsplits(&self) -> usize { self.nsplits() }
@@ -202,7 +209,7 @@ impl SplitsProvider for SplitsBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::equal_angle::{assign_angles_to_splits, normalize_cycle};
+    use crate::algorithms::equal_angle::{assign_angles_to_splits, normalize_cycle_1based};
     use fixedbitset::FixedBitSet;
 
     fn mk_bitset(ntax: usize, elems: &[usize]) -> FixedBitSet {
@@ -227,7 +234,7 @@ mod tests {
         let ntax = 4;
         // cycle [0,1,2,3,4]
         let mut cycle = vec![0, 1, 2, 3, 4];
-        cycle = normalize_cycle(&cycle);
+        cycle = normalize_cycle_1based(&cycle).expect("valid cycle");
 
         let mut sb = SplitsBlock::new();
         // split {1}|{2,3,4} weight 1.0

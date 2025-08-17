@@ -116,7 +116,7 @@ pub fn write_nexus_all_to_writer<W: Write>(
 
         // quick coordinates (use_weights=true is typical for to-scale)
         debug!("Assigning coordinates to nodes.");
-        let coords = assign_coordinates_to_nodes(true, g, 1, props.network_root_split);
+        let coords = assign_coordinates_to_nodes(true, g, 1, props.network_root_split.unwrap_or(0));
 
         debug!("Writing network block.");
         write_network_block_splits(&mut out, g, &coords, taxa_labels)?;
@@ -224,6 +224,8 @@ pub fn write_splits_block<W: FmtWrite>(
     }
     if format.show_both_sides {
         write!(w, " showBothSides=yes")?;
+    } else {
+        write!(w, " showBothSides=no")?;
     }
     writeln!(w, ";")?;
 
@@ -233,7 +235,7 @@ pub fn write_splits_block<W: FmtWrite>(
     }
 
     // PROPERTIES
-    write!(w, "PROPERTIES fit={}", trim_float(splits_block.fit() as f64, 1))?;
+    write!(w, "PROPERTIES fit={}", trim_float(splits_block.fit() as f64, 2))?;
     match splits_block.compatibility() {
         Compatibility::Compatible      => write!(w, " compatible")?,
         Compatibility::Cyclic          => write!(w, " cyclic")?,

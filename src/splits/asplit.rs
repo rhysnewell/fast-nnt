@@ -242,17 +242,13 @@ pub trait ASplitView {
     fn weight(&self) -> f64;
     fn size(&self) -> usize;
     fn smaller_part(&self) -> &fixedbitset::FixedBitSet;
-    fn get_part_not_containing(&self, taxon: usize) -> &fixedbitset::FixedBitSet;
-    fn get_part_containing(&self, taxon: usize) -> &fixedbitset::FixedBitSet;
     fn ntax(&self) -> usize;
 }
 
 impl ASplitView for ASplit {
-    fn weight(&self) -> f64 { self.weight() }
+    fn weight(&self) -> f64 { self.weight }
     fn size(&self) -> usize { self.size() }
     fn smaller_part(&self) -> &fixedbitset::FixedBitSet { self.smaller_part() }
-    fn get_part_not_containing(&self, t: usize) -> &fixedbitset::FixedBitSet { self.get_part_not_containing(t) }
-    fn get_part_containing(&self, t: usize) -> &fixedbitset::FixedBitSet { self.get_part_containing(t) }
     fn ntax(&self) -> usize { self.ntax() }
 }
 

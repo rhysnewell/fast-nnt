@@ -1,18 +1,17 @@
 use anyhow::{Context, Result, anyhow};
+use fixedbitset::FixedBitSet;
 use log::{debug, info, warn};
 use ndarray::Array2;
 use rayon::prelude::*;
 use serde::Serialize;
-use std::{collections::HashSet, fs, path::Path, time::Instant};
+use std::{fs, path::Path, time::Instant};
 
-use crate::algorithms::equal_angle::{assign_angles_to_edges, assign_angles_to_splits, normalize_cycle};
+use crate::algorithms::equal_angle::{equal_angle_apply, EqualAngleOpts};
 use crate::cli::NeighborNetArgs;
 use crate::data::splits_blocks::{self, SplitsBlock};
-use crate::nexus;
 use crate::nexus::nexus_writer::{write_nexus_all_to_path, NexusProperties};
 use crate::ordering::ordering_graph::compute_ordering;
 use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
-use crate::splits::asplit::ASplit;
 use crate::utils::compute_least_squares_fit;
 use crate::weights::active_set_weights::{NNLSParams, compute_asplits};
 
@@ -52,7 +51,7 @@ impl NeighbourNet {
         let t_nnls = Instant::now();
         let mut params = self.args.nnls_params.clone();
         let splits =
-            compute_asplits(&cycle, &distance_matrix, &mut params, None).context("NNLS solve")?;
+            compute_asplits(&cycle, &distance_matrix, &mut params, None).context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
             "Estimated {} splits (cutoff = {}) in {:.3}s",
@@ -78,7 +77,7 @@ impl NeighbourNet {
         splits_blocks.set_fit(fit);
         // splits_blocks.set_threshold(params.threshold);
         // splits_blocks.set_partial(params.partial);
-        splits_blocks.set_cycle(cycle, true);
+        splits_blocks.set_cycle(cycle, true)?;
         let splits_sec = t_spl.elapsed().as_secs_f64();
         info!("Created splits block with {} splits in {:.3}s", splits_blocks.nsplits(), splits_sec);
 
@@ -87,9 +86,16 @@ impl NeighbourNet {
         let mut graph = PhyloSplitsGraph::new();
         let n_taxa = distance_matrix.nrows();
         // then:
-        let cycle = normalize_cycle(splits_blocks.cycle().expect("Cycle not yet set.")); // ensure cycle[1]==1
-        // let angles_per_split = assign_angles_to_splits(n_taxa, &splits_blocks, &cycle, 360.0);
-        assign_angles_to_edges(n_taxa, &splits_blocks, &cycle, &mut graph, None, 360.0);
+        let cycle = splits_blocks.cycle().expect("Cycle not yet set."); // ensure cycle[1]==1
+        let mut used_splits = FixedBitSet::with_capacity(splits_blocks.nsplits() + 1);
+        equal_angle_apply(
+            EqualAngleOpts::default(),
+            &labels,
+            &splits_blocks,
+            &mut graph,
+            None,
+            &mut used_splits,
+        )?;
         let graph_sec = t_graph.elapsed().as_secs_f64();
         info!("Created phylogenetic splits graph in {:.3}s", graph_sec);
 
