@@ -3,10 +3,11 @@ use clap::Args;
 use fixedbitset::FixedBitSet;
 use ndarray::Array2;
 use rayon::prelude::*;
-use std::time::{Duration, Instant};
+use std::{cmp::max, time::{Duration, Instant}};
 
 use crate::splits::asplit::ASplit; // <-- adjust path if needed
 
+#[derive(Debug)]
 struct Scratch {
     p: Vec<f64>,
     r: Vec<f64>,
@@ -61,13 +62,13 @@ impl Default for NNLSParams {
             max_iterations: usize::MAX,
             max_time_ms: u64::MAX,
             cgnr_iterations: 5000,
-            cgnr_tolerance: 5e-6,
+            cgnr_tolerance: 1e-5 / 2.0,
             active_set_rho: 0.4,
         }
     }
 }
 
-/// Flattened weights (mainly for debugging/validation).
+/// Flattened weights (mainly for printlnging/validation).
 #[derive(Clone, Debug)]
 pub struct SplitWeights {
     /// x[(i,j)] for 1 ≤ i < j ≤ n, flattened by blocks (1,2..n), (2,3..n), ...
@@ -158,7 +159,11 @@ pub fn compute_use_1d(
         let mut splits_idx = vec![0usize; npairs];
         let mut order_idx: Vec<usize> = (0..npairs).collect();
         let mut vals = vec![0.0; npairs];
-    
+
+        params.cgnr_tolerance = params.proj_grad_bound / 2.0;
+        params.cgnr_iterations = max(50, n * (n - 1) / 2);
+        params.active_set_rho = 0.4;
+
         active_set_method(
             &mut x,
             &d,
@@ -215,8 +220,12 @@ fn active_set_method(
     let npairs = x.len();
     let mut xstar = vec![0.0; npairs];
     let mut k_outer = 0usize;
+    debug!("active set {:?}", active);
+    debug!("==============================");
+    debug!("x: {:?}", x);
 
     loop {
+        debug!("Outer Loop {}", k_outer);
         loop {
             xstar.copy_from_slice(x);
 
@@ -232,8 +241,10 @@ fn active_set_method(
                 started,
                 params.max_time_ms,
             )?;
-            k_outer += 1;
 
+
+            k_outer += 1;
+            
             let ok = feasible_move_active_set(
                 x,
                 &xstar,
@@ -241,24 +252,26 @@ fn active_set_method(
                 tmp_splits,
                 idx_sorted,
                 vals,
-                params.active_set_rho,
+                n,
+                params,
             );
-
+            
             if ok && iters < params.cgnr_iterations {
                 break;
             }
             if k_outer > params.max_iterations
-                || started.elapsed() >= Duration::from_millis(params.max_time_ms)
+            || started.elapsed() >= Duration::from_millis(params.max_time_ms)
             {
                 return Ok(());
             }
         }
-
+        
         x.copy_from_slice(&xstar);
         // projected gradient check at current x
         let (p, r) = (&mut scratch.p, &mut scratch.r);
         eval_gradient(x, d, p, r, n); // p := grad
-
+        debug!("=================================================");
+        debug!("Gradient p: {:?}", p);
         // project gradient
         p.par_iter_mut().zip(x.par_iter()).for_each(|(gi, &xi)| {
             if xi == 0.0 {
@@ -286,52 +299,96 @@ fn active_set_method(
     }
 }
 
-/// Move x → x* feasibly. If x* has negatives, move to first boundary and mark a ρ-fraction active.
-fn feasible_move_active_set(
+
+/// Rust port of Java:
+/// feasibleMoveActiveSet(x, xstar, activeSet, splits, indices, vals, n, params)
+///
+/// Returns `true` if no negative entries in `xstar` (so we just copy `xstar -> x`);
+/// otherwise marks some positions active and moves `x` toward `xstar` by `tmin`,
+/// then returns `false`.
+pub fn feasible_move_active_set(
     x: &mut [f64],
     xstar: &[f64],
-    active: &mut [bool],
+    active_set: &mut [bool],
     splits: &mut [usize],
     indices: &mut [usize],
     vals: &mut [f64],
-    rho: f64,
+    n: usize,
+    params: &NNLSParams,
 ) -> bool {
+    let npairs = n * (n - 1) / 2;
+
+    // Basic sanity checks to match Java's expectations
+    assert_eq!(x.len(), npairs, "x len must be n*(n-1)/2");
+    assert_eq!(xstar.len(), npairs, "xstar len must be n*(n-1)/2");
+    assert_eq!(active_set.len(), npairs, "active_set len must be n*(n-1)/2");
+    assert!(
+        splits.len() >= npairs && indices.len() >= npairs && vals.len() >= npairs,
+        "splits/indices/vals must have capacity >= n*(n-1)/2"
+    );
+
+    // Collect candidates where xstar[i] < 0
     let mut count = 0usize;
-    for i in 0..x.len() {
+    for i in 0..npairs {
         if xstar[i] < 0.0 {
-            // t_i = x_i / (x_i - x*_i)
+            // Java: vals[count] = x[i] / (x[i] - xstar[i]);
             vals[count] = x[i] / (x[i] - xstar[i]);
             splits[count] = i;
             indices[count] = count;
             count += 1;
         }
     }
+
     if count == 0 {
+        // Java: copyArray(xstar, x); return true;
         x.copy_from_slice(xstar);
         return true;
     }
 
-    indices[..count].sort_by(|&a, &b| vals[a].partial_cmp(&vals[b]).unwrap());
+    // Sort indices[0..count) by vals[idx] ascending, like Java's Comparator.comparingDouble:
+    // - NaNs sort AFTER numbers
+    // - -0.0 < +0.0
+    indices[..count].sort_by(|&a, &b| {
+        let va = vals[a];
+        let vb = vals[b];
+        match (va.is_nan(), vb.is_nan()) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater, // NaN after numbers
+            (false, true) => std::cmp::Ordering::Less,
+            (false, false) => va.total_cmp(&vb), // IEEE total order: -0.0 < +0.0
+        }
+    });
+
     let tmin = vals[indices[0]];
-    let num_to_make_active = usize::max(1, ((count as f64) * rho).ceil() as usize);
-    for k in 0..num_to_make_active.min(count) {
-        active[splits[indices[k]]] = true;
+
+    // Java: max(1, ceil(count * activeSetRho))
+    let mut num_to_make_active =
+        (f64::from(count as u32) * params.active_set_rho).ceil() as usize;
+    if num_to_make_active < 1 {
+        num_to_make_active = 1;
+    }
+    if num_to_make_active > count {
+        num_to_make_active = count;
     }
 
-    // x := (1 - tmin) x + tmin x*, clamped on active coords
-    x.par_iter_mut()
-        .zip(xstar.par_iter())
-        .zip(active.par_iter())
-        .for_each(|((xi, &xsi), &a)| {
-            if a {
-                *xi = 0.0
-            } else {
-                *xi = (1.0 - tmin) * *xi + tmin * xsi
-            }
-        });
+    // Mark chosen split positions active
+    for i in 0..num_to_make_active {
+        let pos = splits[indices[i]];
+        active_set[pos] = true;
+    }
+
+    // Blend x toward xstar by tmin on non-active; zero-out active
+    for i in 0..npairs {
+        if active_set[i] {
+            x[i] = 0.0;
+        } else {
+            x[i] = (1.0 - tmin) * x[i] + tmin * xstar[i];
+        }
+    }
 
     false
 }
+
 
 /* ===================== Linear ops A and Aᵀ (vector form) ===================== */
 
@@ -574,55 +631,41 @@ fn cgnr(
 
     // z = Aᵀ r; mask actives
     calc_atx(r, z, n);
-    z.par_iter_mut()
-        .zip(active_set.par_iter())
-        .for_each(|(zi, &a)| {
-            if a {
-                *zi = 0.0
-            }
-        });
-
-    p.par_iter_mut().zip(z.par_iter()).for_each(|(pi, &zi)| {
-        *pi = zi;
-    });
+    mask_elements_branchless(z, active_set);
+    p.copy_from_slice(z);
 
     let mut ztz = sum_array_squared(z, n);
-    let mut k = 0usize;
+    let mut k = 1usize;
 
-    while k < max_iters && ztz >= tol {
+    while k <= max_iters && ztz >= tol {
         // w = A p
         calc_ax(p, w, n);
-        let denom = sum_array_squared(w, n).max(1e-30);
+        let denom = sum_array_squared(w, n);
         let alpha = ztz / denom;
 
         // x += alpha p; r -= alpha w
-        x.par_iter_mut()
-            .zip(p.par_iter())
-            .for_each(|(xi, &pi)| *xi += alpha * pi);
-        r.par_iter_mut()
-            .zip(w.par_iter())
-            .for_each(|(ri, &wi)| *ri -= alpha * wi);
+        for i in 0..x.len() {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * w[i];
+        }
 
         // z = Aᵀ r; mask
         calc_atx(r, z, n);
-        z.par_iter_mut()
-            .zip(active_set.par_iter())
-            .for_each(|(zi, &a)| {
-                if a {
-                    *zi = 0.0
-                }
-            });
+        mask_elements_branchless(z, active_set);
 
         let ztz_new = sum_array_squared(z, n);
-        if ztz_new < tol {
-            k += 1;
+        let beta = ztz_new / ztz;
+        if ztz_new < tol || k >= max_iters {
             break;
         }
-        let beta = ztz_new / ztz;
 
-        p.par_iter_mut()
-            .zip(z.par_iter())
-            .for_each(|(pi, &zi)| *pi = zi + beta * *pi);
+        // for (var i = 0; i < p.length; i++) {
+        //     p[i] = z[i] + beta * p[i];
+        // }
+        // ztz = ztz2;
+        for i in 0..p.len() {
+            p[i] = z[i] + beta * p[i];   // correct: z + beta * old_p
+        }
 
         ztz = ztz_new;
         k += 1;
@@ -640,6 +683,12 @@ fn cgnr(
 }
 
 /* ===================== Indexing ===================== */
+pub fn mask_elements_branchless(r: &mut [f64], a: &[bool]) {
+    assert_eq!(r.len(), a.len());
+    for (x, &mask) in r.iter_mut().zip(a.iter()) {
+        *x *= (!mask) as u8 as f64; // true -> 0, false -> 1
+    }
+}
 
 #[inline]
 fn pair_idx(i: usize, j: usize, n: usize) -> usize {
@@ -681,6 +730,48 @@ mod tests {
             }
         }
         d
+    }
+
+    #[test]
+    fn pair_idx_sanity_n5() {
+        let n = 5;
+        // Expected contiguous blocks: (1,2..5)=4, (2,3..5)=3, (3,4..5)=2, (4,5)=1
+        assert_eq!(pair_idx(1,2,n), 0);
+        assert_eq!(pair_idx(1,3,n), 1);
+        assert_eq!(pair_idx(1,4,n), 2);
+        assert_eq!(pair_idx(1,5,n), 3);
+        assert_eq!(pair_idx(2,3,n), 4);
+        assert_eq!(pair_idx(2,4,n), 5);
+        assert_eq!(pair_idx(2,5,n), 6);
+        assert_eq!(pair_idx(3,4,n), 7);
+        assert_eq!(pair_idx(3,5,n), 8);
+        assert_eq!(pair_idx(4,5,n), 9);
+    }
+
+    #[test]
+    fn pair_idx_roundtrip() {
+        // Reconstruct (i,j) by scanning; ensures block starts/lengths line up for general n
+        fn inv(idx: usize, n: usize) -> (usize, usize) {
+            let mut i = 1;
+            let mut base = 0usize;
+            while i < n {
+                let len = n - i;
+                if idx < base + len {
+                    let j = i + 1 + (idx - base);
+                    return (i, j);
+                }
+                base += len;
+                i += 1;
+            }
+            unreachable!()
+        }
+        for n in 2..20 {
+            let total = n * (n - 1) / 2;
+            for idx in 0..total {
+                let (i,j) = inv(idx, n);
+                assert_eq!(pair_idx(i,j,n), idx);
+            }
+        }
     }
 
     #[test]
@@ -900,6 +991,17 @@ mod tests {
             1.9992119883544948, 0.0, 1.889915657808208, 0.0
         ];
         compare_float_array(&weights, &expected_weights, 1e-8);
+    }
+
+    #[test]
+    fn test_calc_ax() {
+        let x = vec![0.08387815223462815, 0.168552547193302, -0.0, 0.2725865087474663, -0.0, -0.0, 0.22820664558236292, -0.0, 0.07308425784060892, -0.0, 0.17730778700107405, 0.27863338881613003, 0.2468579134685847, -0.0, -0.0, -0.0, -0.0, 0.0976830848827301, -0.0, -0.0, -0.0, 0.2643530681213975, -0.0, -0.0, -0.0, -0.0, -0.0, -0.0, -0.0, -0.0, 0.14757998083208332, 0.10660005040749763, 0.23764744206450752, 0.26470104652828064, -0.0, 0.1361962459593511, -0.0, 0.0, -0.0, 0.0, 0.15848309888614887, -0.0, -0.0, 0.15496911033502833, 0.0];
+        let mut y = vec![-0.0005469984750199043, -0.0008175078531115416, -0.00019075688926191675, -0.003992158520172918, -0.0022548516859499726, -0.0011927905553219325, -0.0010935633842476958, -0.0007804106343922194, -0.0005739648424036184, -0.00027050937809163726, -0.0009962639205133004, -0.0005944356671792588, -0.0034345964694969715, -0.002372535338868931, -0.0022733081677946943, -0.001960155417939218, -0.0017537096259506169, -0.000626750963849625, -0.00022492271051558345, -0.003065083512833296, -0.0020030223822052554, -0.0026737439059483312, -0.0023605911560928543, -0.0021541453641042534, 0.0004018282533340416, -0.0024383325489836707, -0.0013762714183556297, -0.0020469929420987056, -0.0017338401922432289, -0.0015273944002546281, 0.007061077971995901, -0.0025919828141187104, -0.0024577237764863004, -0.002978261677074054, -0.0027718158850854532, -0.0008546759798957635, -0.0007204169422633535, -0.0012409548428511067, -0.0010345090508625057, 0.00013425903763241012, -0.0001788937122230671, 2.7552079765533937e-5, -0.0003131527498554772, -0.0008470466652137695, -0.0005338939153582923];
+        let n = 10;
+        calc_ax(&x, &mut y, n);
+
+        let y_exp = vec![0.7866772415204168, 1.3172659417178465, 1.0422750698340424, 1.7927567095977475, 1.534515061256431, 1.4502018637757308, 1.3313771095072173, 0.9081929640927879, 0.8263081115983688, 0.5305887001974297, 0.6102134023157736, 1.917961819711739, 2.1534359983075917, 2.0691228008268916, 1.9502980465583781, 1.5271139011439487, 1.4452290486495294, 0.27499087188380417, 1.5827392892797696, 1.8182134678756223, 1.7339002703949224, 2.1437816523692037, 1.720597506954774, 1.6387126544603547, 1.3077484173959655, 1.543222595991818, 1.458909398511118, 1.868790780485399, 1.4456066350709693, 1.3637217825765497, 0.5306341402600191, 0.6595210435943145, 1.5446973096976109, 1.6509152573397423, 1.569030404845323, 0.4012793952529976, 1.2864556613562939, 1.3926736089984255, 1.310788756504006, 0.8851762661032964, 1.3083604115177259, 1.2264755590233065, 0.4231841454144295, 0.6512375135900668, 0.22805336817563726];
+        compare_float_array(&y, &y_exp, 1e-8);
     }
 
     fn compare_float_array(arr1: &[f64], arr2: &[f64], eps: f64) {
