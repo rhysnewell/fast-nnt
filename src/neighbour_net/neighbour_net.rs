@@ -6,10 +6,10 @@ use rayon::prelude::*;
 use serde::Serialize;
 use std::{fs, path::Path, time::Instant};
 
-use crate::algorithms::equal_angle::{equal_angle_apply, EqualAngleOpts};
+use crate::algorithms::equal_angle::{EqualAngleOpts, equal_angle_apply};
 use crate::cli::NeighborNetArgs;
 use crate::data::splits_blocks::SplitsBlock;
-use crate::nexus::nexus_writer::{write_nexus_all_to_path, NexusProperties};
+use crate::nexus::nexus_writer::{NexusProperties, write_nexus_all_to_path};
 use crate::ordering::ordering_graph::compute_ordering;
 use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
 use crate::utils::compute_least_squares_fit;
@@ -50,8 +50,8 @@ impl NeighbourNet {
         // 3) Active-Set NNLS
         let t_nnls = Instant::now();
         let mut params = self.args.nnls_params.clone();
-        let splits =
-            compute_asplits(&cycle, &distance_matrix, &mut params, None).context("ASplits solved")?;
+        let splits = compute_asplits(&cycle, &distance_matrix, &mut params, None)
+            .context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
             "Estimated {} splits (cutoff = {}) in {:.3}s",
@@ -60,7 +60,6 @@ impl NeighbourNet {
             nnls_sec
         );
 
-        
         // 4) Least-squares fit
         let t_fit = Instant::now();
         let fit = compute_least_squares_fit(&distance_matrix, &splits);
@@ -75,17 +74,19 @@ impl NeighbourNet {
         let mut splits_blocks = SplitsBlock::new();
         splits_blocks.set_splits(splits);
         splits_blocks.set_fit(fit);
-        // splits_blocks.set_threshold(params.threshold);
-        // splits_blocks.set_partial(params.partial);
         splits_blocks.set_cycle(cycle, true)?;
         let splits_sec = t_spl.elapsed().as_secs_f64();
-        info!("Created splits block with {} splits in {:.3}s", splits_blocks.nsplits(), splits_sec);
+        info!(
+            "Created splits block with {} splits in {:.3}s",
+            splits_blocks.nsplits(),
+            splits_sec
+        );
 
         // 6) Create phylogenetic splits graph
         let t_graph = Instant::now();
         let mut graph = PhyloSplitsGraph::new();
         // then:
-        let cycle = splits_blocks.cycle().expect("Cycle not yet set."); // ensure cycle[1]==1
+        let cycle = splits_blocks.cycle().expect("Cycle not yet set.");
         let mut used_splits = FixedBitSet::with_capacity(splits_blocks.nsplits() + 1);
         equal_angle_apply(
             EqualAngleOpts::default(),
@@ -100,8 +101,15 @@ impl NeighbourNet {
 
         // 7) Outputs
         let t_out = Instant::now();
-        self.output_results(&cycle, &labels, &splits_blocks, &distance_matrix, &graph, fit)
-            .context("writing outputs")?;
+        self.output_results(
+            &cycle,
+            &labels,
+            &splits_blocks,
+            &distance_matrix,
+            &graph,
+            fit,
+        )
+        .context("writing outputs")?;
         let out_sec = t_out.elapsed().as_secs_f64();
         info!("Wrote outputs in {:.3}s", out_sec);
 
@@ -288,7 +296,6 @@ impl NeighbourNet {
             distances_triangle_both: true,
         };
 
-
         // NEXUS
         let nexus_path = Path::new(&out_dir).join(format!("{}.nex", self.args.output_prefix));
         write_nexus_all_to_path(
@@ -335,7 +342,8 @@ impl NeighbourNet {
         let npairs = n * (n - 1) / 2;
 
         // split stats
-        let (num_trivial, num_nontrivial, sum_weights) = splits.splits()
+        let (num_trivial, num_nontrivial, sum_weights) = splits
+            .splits()
             .par_bridge()
             .fold(
                 || (0usize, 0usize, 0.0f64),

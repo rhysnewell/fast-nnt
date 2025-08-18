@@ -75,10 +75,10 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
 
 #[cfg(test)]
 mod lsq_tests {
-    use crate::weights::active_set_weights::{compute_asplits, NNLSParams};
+    use crate::weights::active_set_weights::{NNLSParams, compute_asplits};
 
     use super::*;
-    use ndarray::{arr2, Array2};
+    use ndarray::{Array2, arr2};
 
     fn bs_from(indices: &[usize], len: usize) -> FixedBitSet {
         let mut bs = FixedBitSet::with_capacity(len + 1);
@@ -158,24 +158,22 @@ mod lsq_tests {
     #[test]
     fn smoke_10_1() {
         let d = arr2(&[
-            [0.0,5.0,12.0,7.0,3.0,9.0,11.0,6.0,4.0,10.0],
-            [5.0,0.0,8.0,2.0,14.0,5.0,13.0,7.0,12.0,1.0],
-            [12.0,8.0,0.0,4.0,9.0,3.0,8.0,2.0,5.0,6.0],
-            [7.0,2.0,4.0,0.0,11.0,7.0,10.0,4.0,6.0,9.0],
-            [3.0,14.0,9.0,11.0,0.0,8.0,1.0,13.0,2.0,7.0],
-            [9.0,5.0,3.0,7.0,8.0,0.0,12.0,5.0,3.0,4.0],
-            [11.0,13.0,8.0,10.0,1.0,12.0,0.0,6.0,2.0,8.0],
-            [6.0,7.0,2.0,4.0,13.0,5.0,6.0,0.0,9.0,7.0],
-            [4.0,12.0,5.0,6.0,2.0,3.0,2.0,9.0,0.0,5.0],
-            [10.0,1.0,6.0,9.0,7.0,4.0,8.0,7.0,5.0,0.0],
+            [0.0, 5.0, 12.0, 7.0, 3.0, 9.0, 11.0, 6.0, 4.0, 10.0],
+            [5.0, 0.0, 8.0, 2.0, 14.0, 5.0, 13.0, 7.0, 12.0, 1.0],
+            [12.0, 8.0, 0.0, 4.0, 9.0, 3.0, 8.0, 2.0, 5.0, 6.0],
+            [7.0, 2.0, 4.0, 0.0, 11.0, 7.0, 10.0, 4.0, 6.0, 9.0],
+            [3.0, 14.0, 9.0, 11.0, 0.0, 8.0, 1.0, 13.0, 2.0, 7.0],
+            [9.0, 5.0, 3.0, 7.0, 8.0, 0.0, 12.0, 5.0, 3.0, 4.0],
+            [11.0, 13.0, 8.0, 10.0, 1.0, 12.0, 0.0, 6.0, 2.0, 8.0],
+            [6.0, 7.0, 2.0, 4.0, 13.0, 5.0, 6.0, 0.0, 9.0, 7.0],
+            [4.0, 12.0, 5.0, 6.0, 2.0, 3.0, 2.0, 9.0, 0.0, 5.0],
+            [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
         ]);
 
         let ord = vec![0, 1, 5, 7, 9, 3, 8, 4, 2, 10, 6];
         let mut params = NNLSParams::default();
 
-        let splits =
-            compute_asplits(&ord, &d, &mut params, None)
-                .expect("ASplits solved");
+        let splits = compute_asplits(&ord, &d, &mut params, None).expect("ASplits solved");
         let fit = compute_least_squares_fit(&d, &splits);
 
         println!("Fit: {}", fit);

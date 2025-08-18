@@ -1,4 +1,3 @@
-
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Write as FmtWrite};
 
@@ -8,8 +7,6 @@ use crate::algorithms::equal_angle::Pt;
 use crate::nexus::*;
 use crate::phylo::phylo_graph::PhyloGraph;
 use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
-
-
 
 /// Write a SplitsTree-style NETWORK block:
 /// BEGIN Network;
@@ -51,7 +48,11 @@ pub fn write_network_block_splits<W: FmtWrite>(
     }
 
     writeln!(w, "BEGIN Network;")?;
-    writeln!(w, "DIMENSIONS ntax={} nvertices={} nedges={};", ntax, nverts, nedges)?;
+    writeln!(
+        w,
+        "DIMENSIONS ntax={} nvertices={} nedges={};",
+        ntax, nverts, nedges
+    )?;
     writeln!(w, "DRAW to_scale;")?;
 
     // TRANSLATE: leaf labels only (degree==1). Prefer taxon label if node maps
@@ -62,7 +63,9 @@ pub fn write_network_block_splits<W: FmtWrite>(
         for v in base.graph.node_indices() {
             if node_degree(base, v) == 1 {
                 if let Some(lbl) = leaf_label(base, v, taxa_labels_1based) {
-                    if any { writeln!(w, ",")?; }
+                    if any {
+                        writeln!(w, ",")?;
+                    }
                     write!(w, "{} '{}'", node_id[&v], escape_label(&lbl))?;
                     any = true;
                 }
@@ -136,7 +139,14 @@ pub fn write_vlabels_section<W: FmtWrite>(
                     if t >= 1 && t <= taxa_labels_1based.len() {
                         let label = &taxa_labels_1based[t - 1];
                         let id = node_id[&v];
-                        write!(w, "{} '{}' x={} y={}", id, escape_label(label), x_off, y_off)?;
+                        write!(
+                            w,
+                            "{} '{}' x={} y={}",
+                            id,
+                            escape_label(label),
+                            x_off,
+                            y_off
+                        )?;
                         if let Some(f) = font {
                             write!(w, " f='{}'", f)?;
                             font = None;

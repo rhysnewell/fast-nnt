@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
 use fixedbitset::FixedBitSet;
 use petgraph::prelude::{EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
+use std::collections::{HashMap, HashSet};
 
-use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
 use crate::phylo::phylo_graph::PhyloGraph;
+use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
 use crate::splits::asplit::ASplit; // adjust path if different
 
 /// Apply the convex hull algorithm to build a split network from `splits`.
@@ -12,7 +12,7 @@ use crate::splits::asplit::ASplit; // adjust path if different
 pub fn convex_hull_apply(
     n_tax: usize,
     taxa_labels: &[String],
-    splits: &[ASplit],          // 0-based Rust slice, we treat indices as 1-based where needed
+    splits: &[ASplit], // 0-based Rust slice, we treat indices as 1-based where needed
     graph: &mut PhyloSplitsGraph,
 ) -> anyhow::Result<()> {
     // make an empty used-splits bitset (1..=nsplits)
@@ -44,7 +44,10 @@ pub fn convex_hull_apply_with_used(
         // Sanity checks (like Java prints)
         for t in 1..=n_tax {
             if graph.base.get_taxon_node(t).is_none() {
-                log::warn!("ConvexHull: incomplete taxa mapping, taxon {} has no node", t);
+                log::warn!(
+                    "ConvexHull: incomplete taxa mapping, taxon {} has no node",
+                    t
+                );
             }
         }
         for e in graph.base.graph.edge_indices() {
@@ -59,7 +62,7 @@ pub fn convex_hull_apply_with_used(
 
     for &j in &order {
         let sj = &splits[j - 1]; // 1-based -> 0-based
-        let part_a = sj.get_a();     // FixedBitSet (1-based semantics)
+        let part_a = sj.get_a(); // FixedBitSet (1-based semantics)
 
         // Node hull membership: 0 => side-0(B), 1 => side-1(A), 2 => intersection; missing => unset
         let mut hulls: HashMap<NodeIndex, i32> = HashMap::new();
@@ -71,7 +74,9 @@ pub fn convex_hull_apply_with_used(
 
         // Find splits that divide side-0 (the complement of A)
         for i in 1..=splits.len() {
-            if !used_splits.contains(i) { continue; }
+            if !used_splits.contains(i) {
+                continue;
+            }
             if intersect2_cardinality(sj, false, &splits[i - 1], true) > 0
                 && intersect2_cardinality(sj, false, &splits[i - 1], false) > 0
             {
@@ -81,7 +86,9 @@ pub fn convex_hull_apply_with_used(
 
         // Find splits that divide side-1 (A)
         for i in 1..=splits.len() {
-            if !used_splits.contains(i) { continue; }
+            if !used_splits.contains(i) {
+                continue;
+            }
             if intersect2_cardinality(sj, true, &splits[i - 1], true) > 0
                 && intersect2_cardinality(sj, true, &splits[i - 1], false) > 0
             {
@@ -97,7 +104,9 @@ pub fn convex_hull_apply_with_used(
             } else {
                 start1 = graph.base.get_taxon_node(t);
             }
-            if start0.is_some() && start1.is_some() { break; }
+            if start0.is_some() && start1.is_some() {
+                break;
+            }
         }
         let start0 = start0.expect("ConvexHull: missing start0");
         let start1 = start1.expect("ConvexHull: missing start1");
@@ -111,8 +120,22 @@ pub fn convex_hull_apply_with_used(
         }
 
         // Build convex hulls via DFS over allowed splits
-        convex_hull_path(graph, start0, &mut hulls, &splits0, &mut intersection_nodes, 0);
-        convex_hull_path(graph, start1, &mut hulls, &splits1, &mut intersection_nodes, 1);
+        convex_hull_path(
+            graph,
+            start0,
+            &mut hulls,
+            &splits0,
+            &mut intersection_nodes,
+            0,
+        );
+        convex_hull_path(
+            graph,
+            start1,
+            &mut hulls,
+            &splits1,
+            &mut intersection_nodes,
+            1,
+        );
 
         // Duplicate each intersection node; connect duplicate v1--v with (split=j, weight=weight_j, label=j)
         for &v in &intersection_nodes {
@@ -145,7 +168,9 @@ pub fn convex_hull_apply_with_used(
             // snapshot adjacency to avoid iterator invalidation on deletions
             let adj: Vec<EdgeIndex> = graph.base.graph.edges(v).map(|re| re.id()).collect();
             for consider in adj {
-                if consider == to_v1 { continue; }
+                if consider == to_v1 {
+                    continue;
+                }
                 let w = graph.base.get_opposite(v, consider);
 
                 let mark = hulls.get(&w).copied().unwrap_or(-1);
@@ -156,10 +181,11 @@ pub fn convex_hull_apply_with_used(
                     let consider_dup = graph.base.new_edge(v1, w)?;
                     let sid = graph.get_split(consider);
                     graph.set_split(consider_dup, sid);
-                    graph.base.set_weight(consider_dup, graph.base.weight(consider));
-                    let copied_label: Option<String> = {
-                        graph.base.edge_label(consider).map(|s| s.to_string())
-                    }; // immutable borrow ends here
+                    graph
+                        .base
+                        .set_weight(consider_dup, graph.base.weight(consider));
+                    let copied_label: Option<String> =
+                        { graph.base.edge_label(consider).map(|s| s.to_string()) }; // immutable borrow ends here
 
                     if let Some(lbl) = copied_label {
                         graph.base.set_edge_label(consider_dup, lbl);
@@ -168,23 +194,23 @@ pub fn convex_hull_apply_with_used(
                 } else if mark == 2 {
                     // w is also intersection: connect duplicates if not already connected
                     let w1 = {
-                        let e_to_w1 = find_edge_with_split(graph, w, j)
-                            .expect("w1 duplicate edge not found");
+                        let e_to_w1 =
+                            find_edge_with_split(graph, w, j).expect("w1 duplicate edge not found");
                         graph.base.get_opposite(w, e_to_w1)
                     };
                     if graph.base.graph.find_edge(v1, w1).is_none() {
                         let consider_dup = graph.base.new_edge(v1, w1)?;
                         let sid = graph.get_split(consider);
                         graph.set_split(consider_dup, sid);
-                        graph.base.set_weight(consider_dup, graph.base.weight(consider));
-                        let copied_label: Option<String> = {
-                            graph.base.edge_label(consider).map(|s| s.to_string())
-                        }; // immutable borrow ends here
+                        graph
+                            .base
+                            .set_weight(consider_dup, graph.base.weight(consider));
+                        let copied_label: Option<String> =
+                            { graph.base.edge_label(consider).map(|s| s.to_string()) }; // immutable borrow ends here
 
                         if let Some(lbl) = copied_label {
                             graph.base.set_edge_label(consider_dup, lbl);
                         }
-
                     }
                 }
             }
@@ -230,9 +256,9 @@ fn convex_hull_path(
     g: &mut PhyloSplitsGraph,
     start: NodeIndex,
     hulls: &mut HashMap<NodeIndex, i32>,
-    allowed_splits: &FixedBitSet,         // bits are 1-based split ids
+    allowed_splits: &FixedBitSet, // bits are 1-based split ids
     intersection_nodes: &mut Vec<NodeIndex>,
-    side: i32,                             // 0 or 1
+    side: i32, // 0 or 1
 ) {
     let mut visited: HashSet<EdgeIndex> = HashSet::new();
     let mut stack: Vec<NodeIndex> = vec![start];
@@ -241,7 +267,9 @@ fn convex_hull_path(
         // iterate over incident edges
         let adj: Vec<EdgeIndex> = g.base.graph.edges(v).map(|re| re.id()).collect();
         for f in adj {
-            if visited.contains(&f) { continue; }
+            if visited.contains(&f) {
+                continue;
+            }
             let s_id = g.get_split(f);
             if s_id > 0 && allowed_splits.contains(s_id as usize) {
                 visited.insert(f);

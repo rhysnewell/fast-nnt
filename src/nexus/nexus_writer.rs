@@ -1,22 +1,18 @@
+use std::fmt::{self, Write as FmtWrite};
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::fmt::{self, Write as FmtWrite};
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use ndarray::Array2;
 
-use crate::data::splits_blocks::{Compatibility, SplitsBlock};
-use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
 use crate::algorithms::equal_angle::assign_coordinates_to_nodes;
+use crate::data::splits_blocks::{Compatibility, SplitsBlock};
 use crate::nexus::{
-    fmt_f,
-    trim_float,
-    bitset_to_string,
-    escape_label,
+    bitset_to_string, escape_label, fmt_f, network_writer::write_network_block_splits, trim_float,
     write_title_and_link,
-    network_writer::write_network_block_splits,
 };
+use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
 
 /// A small container for optional pieces you might want in blocks.
 #[derive(Default, Clone)]
@@ -30,7 +26,6 @@ pub struct NexusProperties {
     /// if true, write Distances FORMAT labels=no diagonal triangle=both (SplitsTree-ish)
     pub distances_triangle_both: bool,
 }
-
 
 /// Adapter: let `fmt::Write` target any `io::Write`.
 struct IoFmt<W: Write>(W);
@@ -46,16 +41,25 @@ pub fn write_nexus_all_to_path<P: AsRef<Path>>(
     taxa_labels: &[String],
     distances: Option<&Array2<f64>>,
     splits_block: Option<&SplitsBlock>,
-    cycle_1_based: Option<&[usize]>,      // [0, t1..tn], 1-based
+    cycle_1_based: Option<&[usize]>, // [0, t1..tn], 1-based
     graph: Option<&PhyloSplitsGraph>,
-    fit_percent: Option<f64>,             // for Splits PROPERTIES fit=...
+    fit_percent: Option<f64>, // for Splits PROPERTIES fit=...
     props: NexusProperties,
 ) -> anyhow::Result<()> {
     let file = File::create(&path)
         .with_context(|| format!("failed to create NEXUS file at {}", path.as_ref().display()))?;
     let buf = BufWriter::new(file);
-    write_nexus_all_to_writer(buf, taxa_labels, distances, splits_block, cycle_1_based, graph, fit_percent, props)
-        .with_context(|| format!("failed while writing NEXUS to {}", path.as_ref().display()))?;
+    write_nexus_all_to_writer(
+        buf,
+        taxa_labels,
+        distances,
+        splits_block,
+        cycle_1_based,
+        graph,
+        fit_percent,
+        props,
+    )
+    .with_context(|| format!("failed while writing NEXUS to {}", path.as_ref().display()))?;
     Ok(())
 }
 
@@ -66,16 +70,21 @@ pub fn write_nexus_all_to_writer<W: Write>(
     taxa_labels: &[String],
     distances: Option<&Array2<f64>>,
     splits_block: Option<&SplitsBlock>,
-    cycle_1_based: Option<&[usize]>,      // [0, t1..tn], 1-based
+    cycle_1_based: Option<&[usize]>, // [0, t1..tn], 1-based
     graph: Option<&PhyloSplitsGraph>,
-    _fit_percent: Option<f64>,             // for Splits PROPERTIES fit=...
+    _fit_percent: Option<f64>, // for Splits PROPERTIES fit=...
     props: NexusProperties,
 ) -> anyhow::Result<()> {
     let mut out = IoFmt(&mut sink);
 
-
-    debug!("Writing NEXUS with {} taxa, {} splits, distances: {:?}, cycle: {:?}, graph: {:?}",
-           taxa_labels.len(), splits_block.map_or(0, |s| s.nsplits()), distances.is_some(), cycle_1_based, graph.is_some());
+    debug!(
+        "Writing NEXUS with {} taxa, {} splits, distances: {:?}, cycle: {:?}, graph: {:?}",
+        taxa_labels.len(),
+        splits_block.map_or(0, |s| s.nsplits()),
+        distances.is_some(),
+        cycle_1_based,
+        graph.is_some()
+    );
     debug!("Writing header.");
     write_header(&mut out)?;
 
@@ -174,7 +183,9 @@ pub fn write_distances_block<W: FmtWrite>(
         // print row i (full square)
         let mut first = true;
         for j in 0..m {
-            if !first { write!(w, " ")?; }
+            if !first {
+                write!(w, " ")?;
+            }
             first = false;
             write!(w, "{}", fmt_f(matrix[[i, j]]))?;
         }
@@ -186,15 +197,14 @@ pub fn write_distances_block<W: FmtWrite>(
     Ok(())
 }
 
-
 /// Public entry: write the SPLITS block as per SplitsTree Java writer.
 /// `ntax` should come from your TaxaBlock.
 pub fn write_splits_block<W: FmtWrite>(
     mut w: W,
     ntax: usize,
     splits_block: &SplitsBlock,
-    title: Option<&str>,   // optional; Java calls writeTitleAndLink()
-    link: Option<&str>,    // optional
+    title: Option<&str>, // optional; Java calls writeTitleAndLink()
+    link: Option<&str>,  // optional
 ) -> Result<()> {
     let nsplits = splits_block.nsplits();
     let format = splits_block.format();
@@ -231,17 +241,25 @@ pub fn write_splits_block<W: FmtWrite>(
 
     // THRESHOLD (optional)
     if splits_block.threshold() != 0.0 {
-        writeln!(w, "THRESHOLD={};", trim_float(splits_block.threshold() as f64, 8))?;
+        writeln!(
+            w,
+            "THRESHOLD={};",
+            trim_float(splits_block.threshold() as f64, 8)
+        )?;
     }
 
     // PROPERTIES
-    write!(w, "PROPERTIES fit={}", trim_float(splits_block.fit() as f64, 2))?;
+    write!(
+        w,
+        "PROPERTIES fit={}",
+        trim_float(splits_block.fit() as f64, 2)
+    )?;
     match splits_block.compatibility() {
-        Compatibility::Compatible      => write!(w, " compatible")?,
-        Compatibility::Cyclic          => write!(w, " cyclic")?,
-        Compatibility::WeaklyCompatible=> write!(w, " weakly compatible")?,
-        Compatibility::Incompatible    => write!(w, " non compatible")?,
-        Compatibility::Unknown         => { /* nothing */ }
+        Compatibility::Compatible => write!(w, " compatible")?,
+        Compatibility::Cyclic => write!(w, " cyclic")?,
+        Compatibility::WeaklyCompatible => write!(w, " weakly compatible")?,
+        Compatibility::Incompatible => write!(w, " non compatible")?,
+        Compatibility::Unknown => { /* nothing */ }
     }
     writeln!(w, ";")?;
 
@@ -304,9 +322,6 @@ pub fn write_splits_block<W: FmtWrite>(
     Ok(())
 }
 
-
-
-
 pub fn write_st_assumptions_block<W: FmtWrite>(mut w: W) -> Result<()> {
     writeln!(w, "BEGIN st_Assumptions;")?;
     writeln!(w, "uptodate;")?;
@@ -318,7 +333,3 @@ pub fn write_st_assumptions_block<W: FmtWrite>(mut w: W) -> Result<()> {
     writeln!(w, "END; [st_Assumptions]\n")?;
     Ok(())
 }
-
-
-
-

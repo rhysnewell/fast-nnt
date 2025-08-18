@@ -3,9 +3,8 @@ use std::fmt::Write as FmtWrite;
 use anyhow::Result;
 use fixedbitset::FixedBitSet;
 
-pub mod nexus_writer;
 pub mod network_writer;
-
+pub mod nexus_writer;
 
 /* ---------- helpers ---------- */
 
@@ -14,9 +13,15 @@ fn fmt_f(x: f64) -> String {
     // 7 decimal digits is usually enough for NEXUS dumps
     let mut s = format!("{:.7}", x);
     // trim trailing zeros and possible trailing dot
-    while s.contains('.') && s.ends_with('0') { s.pop(); }
-    if s.ends_with('.') { s.pop(); }
-    if s.is_empty() { s.push('0'); }
+    while s.contains('.') && s.ends_with('0') {
+        s.pop();
+    }
+    if s.ends_with('.') {
+        s.pop();
+    }
+    if s.is_empty() {
+        s.push('0');
+    }
     s
 }
 
@@ -40,8 +45,12 @@ fn bitset_to_string(bs: &FixedBitSet) -> String {
     let mut out = String::new();
     let mut first = true;
     for t in bs.ones() {
-        if t == 0 { continue; }
-        if !first { out.push(' '); }
+        if t == 0 {
+            continue;
+        }
+        if !first {
+            out.push(' ');
+        }
         first = false;
         out.push_str(&t.to_string());
     }

@@ -418,8 +418,7 @@ impl PhyloGraph {
     }
 
     pub fn get_opposite(&self, v: NodeIndex, e: EdgeIndex) -> NodeIndex {
-        let endpoints = self.graph
-            .edge_endpoints(e).expect("valid edge endpoints");
+        let endpoints = self.graph.edge_endpoints(e).expect("valid edge endpoints");
         if endpoints.0 == v {
             endpoints.1
         } else {

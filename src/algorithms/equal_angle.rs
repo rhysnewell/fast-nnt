@@ -1,9 +1,18 @@
-use std::collections::{HashMap, HashSet};
 use anyhow::{Result, anyhow, bail};
 use fixedbitset::FixedBitSet;
-use petgraph::{csr::IndexType, prelude::{EdgeIndex, NodeIndex}, visit::{EdgeRef, NodeIndexable}};
+use petgraph::{
+    csr::IndexType,
+    prelude::{EdgeIndex, NodeIndex},
+    visit::{EdgeRef, NodeIndexable},
+};
+use std::collections::{HashMap, HashSet};
 
-use crate::{algorithms::convex_hull::convex_hull_apply, data::splits_blocks::{SplitsBlock, SplitsProvider}, phylo::phylo_splits_graph::PhyloSplitsGraph, splits::asplit::ASplitView};
+use crate::{
+    algorithms::convex_hull::convex_hull_apply,
+    data::splits_blocks::{SplitsBlock, SplitsProvider},
+    phylo::phylo_splits_graph::PhyloSplitsGraph,
+    splits::asplit::ASplitView,
+};
 use log::info;
 
 #[derive(Copy, Clone, Debug)]
@@ -22,7 +31,11 @@ pub struct EqualAngleOpts {
 
 impl Default for EqualAngleOpts {
     fn default() -> Self {
-        Self { use_weights: true, total_angle_deg: 360.0, root_split: 0 }
+        Self {
+            use_weights: true,
+            total_angle_deg: 360.0,
+            root_split: 0,
+        }
     }
 }
 
@@ -53,7 +66,9 @@ pub fn equal_angle_apply(
     }
 
     let cycle = {
-        let c = splits.cycle().ok_or_else(|| anyhow::anyhow!("SplitsBlock has no cycle"))?;
+        let c = splits
+            .cycle()
+            .ok_or_else(|| anyhow::anyhow!("SplitsBlock has no cycle"))?;
         normalize_cycle_1based(c)?
     };
 
@@ -80,20 +95,29 @@ pub fn equal_angle_apply(
     // 4) remove temporary trivial edges (none if we had trivial splits, some if we didn’t)
     remove_temporary_trivial_edges(graph);
 
+    if !all_used {
+        // assign remaining with ConvexHull
+        convex_hull_apply(ntax, taxa_labels, splits.get_splits(), graph)?;
+    }
     // 5) assign angles to edges from split directions
-    assign_angles_to_edges(ntax, splits, &cycle, graph, forbidden_splits, opts.total_angle_deg);
+    assign_angles_to_edges(
+        ntax,
+        splits,
+        &cycle,
+        graph,
+        forbidden_splits,
+        opts.total_angle_deg,
+    );
 
     // 6) rotate so the edge leaving taxon 1 points to 9 o’clock
     let (_align, _extra) = rotate_angles_align_then_offset(graph, 1, 180.0, 0.0);
 
     // 7) assign coordinates from angles (DFS through graph)
-    // You can collect and reuse for Network writer
     let _coords = assign_coordinates_to_nodes(opts.use_weights, graph, 1, opts.root_split);
-    
-    
+
     // 8) add leaf node labels from taxa
     add_leaf_labels_from_taxa(graph, taxa_labels);
-    
+
     info!(
         "EqualAngle: initialized network with {} nodes, {} edges in {:?} (use_weights={})",
         graph.base.graph.node_count(),
@@ -101,15 +125,6 @@ pub fn equal_angle_apply(
         t0.elapsed(),
         opts.use_weights
     );
-    if !all_used {
-        // assign remaining with ConvexHull
-        convex_hull_apply(
-            ntax,
-            taxa_labels,
-            splits.get_splits(),
-            graph,
-        )?;
-    }
 
     Ok(all_used)
 }
@@ -123,15 +138,27 @@ pub fn normalize_cycle_1based(cycle_1based: &[usize]) -> Result<Vec<usize>> {
     }
     let n = cycle_1based.len() - 1;
     let mut k = 1usize;
-    while k <= n && cycle_1based[k] != 1 { k += 1; }
-    if k > n { bail!("cycle does not contain taxon 1"); }
+    while k <= n && cycle_1based[k] != 1 {
+        k += 1;
+    }
+    if k > n {
+        bail!("cycle does not contain taxon 1");
+    }
 
     let mut out = vec![0usize; n + 1];
     let mut i = 1;
     let mut j = k;
-    while j <= n { out[i] = cycle_1based[j]; i += 1; j += 1; }
+    while j <= n {
+        out[i] = cycle_1based[j];
+        i += 1;
+        j += 1;
+    }
     j = 1;
-    while i <= n { out[i] = cycle_1based[j]; i += 1; j += 1; }
+    while i <= n {
+        out[i] = cycle_1based[j];
+        i += 1;
+        j += 1;
+    }
     Ok(out)
 }
 
@@ -199,12 +226,18 @@ fn is_circular_by_cycle(splits: &SplitsBlock, sid: usize, cycle: &[usize]) -> bo
     let mut pos: Vec<usize> = Vec::new();
     for i in 2..=ntax {
         let t = cycle[i];
-        if part.contains(t) { pos.push(i); }
+        if part.contains(t) {
+            pos.push(i);
+        }
     }
-    if pos.is_empty() { return true; } // degenerate
+    if pos.is_empty() {
+        return true;
+    } // degenerate
     // must be contiguous (allow wrap-around handled by cycle normalization)
     for w in pos.windows(2) {
-        if w[1] != w[0] + 1 { return false; }
+        if w[1] != w[0] + 1 {
+            return false;
+        }
     }
     true
 }
@@ -222,10 +255,24 @@ fn remove_temporary_trivial_edges(g: &mut PhyloSplitsGraph) {
             // choose leaf node (degree 1) to delete; move its taxa to the other node
             let du = g.base.graph.neighbors(u).count();
             let dv = g.base.graph.neighbors(v).count();
-            let (leaf, keep) = if du == 1 { (u, v) } else if dv == 1 { (v, u) } else { continue };
+            let (leaf, keep) = if du == 1 {
+                (u, v)
+            } else if dv == 1 {
+                (v, u)
+            } else {
+                continue;
+            };
 
-            if let Some(list) = g.base.node2taxa().expect("No taxa mapping").get(&leaf).cloned() {
-                for t in list { g.base.add_taxon(keep, t); }
+            if let Some(list) = g
+                .base
+                .node2taxa()
+                .expect("No taxa mapping")
+                .get(&leaf)
+                .cloned()
+            {
+                for t in list {
+                    g.base.add_taxon(keep, t);
+                }
                 // clear on leaf
                 g.base.clear_taxa_for_node(leaf);
             }
@@ -251,15 +298,13 @@ pub fn assign_angles_to_edges(
     let split2angle = assign_angles_to_splits(ntaxa, splits, cycle, total_angle);
 
     // Collect edge ids first to avoid holding an immutable borrow during mutation.
-    let edges: Vec<petgraph::prelude::EdgeIndex> =
-        g.base.graph.edge_indices().collect();
+    let edges: Vec<petgraph::prelude::EdgeIndex> = g.base.graph.edge_indices().collect();
 
     for e in edges {
         let sid = g.get_split(e);
         if sid > 0 {
             let sidu = sid as usize;
-            let is_forbidden = forbidden
-                .map_or(false, |bs| sidu < bs.len() && bs.contains(sidu));
+            let is_forbidden = forbidden.map_or(false, |bs| sidu < bs.len() && bs.contains(sidu));
             if !is_forbidden {
                 if let Some(&theta) = split2angle.get(sidu) {
                     g.set_angle(e, theta);
@@ -268,7 +313,6 @@ pub fn assign_angles_to_edges(
         }
     }
 }
-
 
 /// Compute split direction for each split id (1-based) by “mid-angle” between the first/last
 /// taxa (in cycle order) that lie on the part not containing cycle[1].
@@ -281,7 +325,8 @@ pub fn assign_angles_to_splits(
     // angles for taxa positions (1..=ntax), centered so taxon 1 points at 270 - total/2
     let mut taxa_angles = vec![0.0f64; ntaxa + 1];
     for tpos in 1..=ntaxa {
-        taxa_angles[tpos] = total_angle * ((tpos - 1) as f64) / (ntaxa as f64) + (270.0 - 0.5 * total_angle);
+        taxa_angles[tpos] =
+            total_angle * ((tpos - 1) as f64) / (ntaxa as f64) + (270.0 - 0.5 * total_angle);
     }
 
     // split angles (1-based)
@@ -294,11 +339,14 @@ pub fn assign_angles_to_splits(
         for i in 2..=ntaxa {
             let t = cycle[i];
             if part.contains(t) {
-                if xp == 0 { xp = i; }
+                if xp == 0 {
+                    xp = i;
+                }
                 xq = i;
             }
         }
-        if xp == 0 { // degenerate; aim at first taxon
+        if xp == 0 {
+            // degenerate; aim at first taxon
             split2angle[s] = modulo360(taxa_angles[1]);
         } else {
             split2angle[s] = modulo360(0.5 * (taxa_angles[xp] + taxa_angles[xq]));
@@ -329,11 +377,9 @@ pub fn rotate_angles_align_then_offset(
     (align_delta, extra_offset_deg)
 }
 
-
 /// Add `delta_deg` (in degrees) to every stored edge angle, modulo 360.
 pub fn rotate_angles_in_place(g: &mut PhyloSplitsGraph, delta_deg: f64) {
-    let edges: Vec<petgraph::prelude::EdgeIndex> =
-        g.base.graph.edge_indices().collect();
+    let edges: Vec<petgraph::prelude::EdgeIndex> = g.base.graph.edge_indices().collect();
 
     for e in edges {
         let a = g.get_angle(e);
@@ -343,8 +389,16 @@ pub fn rotate_angles_in_place(g: &mut PhyloSplitsGraph, delta_deg: f64) {
 
 /// Rotate all edge angles so the *first* edge incident to `taxon_id` is aligned to `target_deg`.
 /// Returns the delta that was applied (in degrees), or `None` if that leaf/edge couldn't be found.
-pub fn rotate_angles_align_leaf(g: &mut PhyloSplitsGraph, taxon_id: usize, target_deg: f64) -> Option<f64> {
-    let v = g.base.taxon2node().expect("No taxon2node map").get(&taxon_id)?;
+pub fn rotate_angles_align_leaf(
+    g: &mut PhyloSplitsGraph,
+    taxon_id: usize,
+    target_deg: f64,
+) -> Option<f64> {
+    let v = g
+        .base
+        .taxon2node()
+        .expect("No taxon2node map")
+        .get(&taxon_id)?;
     let e = g.base.graph.edges(*v).next()?.id(); // take first incident edge
     let cur = g.get_angle(e);
     let delta = modulo360(target_deg - cur);
@@ -359,13 +413,23 @@ pub fn assign_coordinates_to_nodes(
     root_split: i32,
 ) -> HashMap<NodeIndex, Pt> {
     let mut pts = HashMap::new();
-    let Some(&v0) = g.base.taxon2node().expect("taxon map").get(&start_taxon_id) else { return pts; };
+    let Some(&v0) = g.base.taxon2node().expect("taxon map").get(&start_taxon_id) else {
+        return pts;
+    };
     pts.insert(v0, Pt(0.0, 0.0));
 
     let mut visited = FixedBitSet::with_capacity(g.base.graph.node_bound().index());
     let mut splits_in_path = FixedBitSet::with_capacity((g.max_split_id().max(0) as usize) + 2);
 
-    dfs_coords(use_weights, g, v0, &mut visited, &mut splits_in_path, &mut pts, root_split);
+    dfs_coords(
+        use_weights,
+        g,
+        v0,
+        &mut visited,
+        &mut splits_in_path,
+        &mut pts,
+        root_split,
+    );
     pts
 }
 
@@ -378,31 +442,47 @@ fn dfs_coords(
     pts: &mut HashMap<NodeIndex, Pt>,
     root_split: i32,
 ) {
-    if visited.contains(v.index()) { return; }
+    if visited.contains(v.index()) {
+        return;
+    }
     visited.insert(v.index());
 
-    let nbrs: Vec<(EdgeIndex, NodeIndex)> =
-        g.base.graph.edges(v).map(|e| (e.id(), e.target())).collect();
+    let nbrs: Vec<(EdgeIndex, NodeIndex)> = g
+        .base
+        .graph
+        .edges(v)
+        .map(|e| (e.id(), e.target()))
+        .collect();
 
     for (e, w) in nbrs {
         let sid = g.get_split(e);
-        if sid <= 0 { continue; }
+        if sid <= 0 {
+            continue;
+        }
         let s = sid as usize;
-        if splits_in_path.len() <= s { splits_in_path.grow(s + 1); }
-        if splits_in_path.contains(s) { continue; } // KEY guard
+        if splits_in_path.len() <= s {
+            splits_in_path.grow(s + 1);
+        }
+        if splits_in_path.contains(s) {
+            continue;
+        } // KEY guard
         splits_in_path.insert(s);
 
-        let step = if use_weights { g.base.weight(e) }
-                   else if sid == root_split { 0.1 } else { 1.0 };
+        let step = if use_weights {
+            g.base.weight(e)
+        } else if sid == root_split {
+            0.1
+        } else {
+            1.0
+        };
         let Pt(x, y) = *pts.get(&v).unwrap();
         let a = g.get_angle(e).to_radians();
         pts.insert(w, Pt(x + step * a.cos(), y + step * a.sin()));
 
         dfs_coords(use_weights, g, w, visited, splits_in_path, pts, root_split);
-        splits_in_path.set(s, false);               // backtrack
+        splits_in_path.set(s, false); // backtrack
     }
 }
-
 
 /// Apply leaf labels from taxa labels (if exactly one taxon maps to the leaf), else keep node label
 fn add_leaf_labels_from_taxa(g: &mut PhyloSplitsGraph, taxa: &[String]) {
@@ -431,8 +511,8 @@ fn add_leaf_labels_from_taxa(g: &mut PhyloSplitsGraph, taxa: &[String]) {
 pub fn wrap_split(
     ntax: usize,
     splits: &SplitsBlock,
-    s: usize,                 // split id (1-based)
-    cycle: &[usize],          // 1-based cycle
+    s: usize,        // split id (1-based)
+    cycle: &[usize], // 1-based cycle
     graph: &mut PhyloSplitsGraph,
 ) -> Result<()> {
     // Part of split s that does NOT contain taxon 1 (1-based membership)
@@ -451,7 +531,10 @@ pub fn wrap_split(
         }
     }
     if xp == 0 || xq == 0 {
-        bail!("wrap_split: split {} has empty non-1 part after cycle filtering", s);
+        bail!(
+            "wrap_split: split {} has empty non-1 part after cycle filtering",
+            s
+        );
     }
 
     // vp and vq: leaf nodes for taxa xp and xq
@@ -464,13 +547,13 @@ pub fn wrap_split(
         .get_taxon_node(xq)
         .ok_or_else(|| anyhow!("wrap_split: no node for taxon {}", xq))?;
 
-    let e_vp = graph.first_adjacent_edge(vp).ok_or_else(|| {
-        anyhow!("wrap_split: taxon node vp ({:?}) has no incident edge", vp)
-    })?;
+    let e_vp = graph
+        .first_adjacent_edge(vp)
+        .ok_or_else(|| anyhow!("wrap_split: taxon node vp ({:?}) has no incident edge", vp))?;
 
-    let e_vq = graph.first_adjacent_edge(vq).ok_or_else(|| {
-        anyhow!("wrap_split: taxon node vq ({:?}) has no incident edge", vq)
-    })?;
+    let e_vq = graph
+        .first_adjacent_edge(vq)
+        .ok_or_else(|| anyhow!("wrap_split: taxon node vq ({:?}) has no incident edge", vq))?;
 
     let target_leaf_edge = e_vq; // Java: vq.getFirstAdjacentEdge()
 
@@ -480,7 +563,7 @@ pub fn wrap_split(
 
     // Leaf edges we’ll copy at the current step (Java accumulates then clears each round)
     let mut leaf_edges: Vec<EdgeIndex> = Vec::with_capacity(ntax);
-
+    leaf_edges.push(e);
     // "nodesVisited" to detect cycles (should not happen)
     let mut nodes_visited: HashSet<NodeIndex> = HashSet::new();
 
@@ -489,7 +572,12 @@ pub fn wrap_split(
 
     // Boundary walk
     loop {
-        debug!("wrap_split: entering node {:?} via edge {:?} (nodes visits {})", v, e, nodes_visited.len());
+        debug!(
+            "wrap_split: entering node {:?} via edge {:?} (nodes visits {})",
+            v,
+            e,
+            nodes_visited.len()
+        );
         if !nodes_visited.insert(v) {
             // already present
             bail!("wrap_split: node revisited during wrapping: {:?}", v);
@@ -501,7 +589,7 @@ pub fn wrap_split(
         // Gather leaf edges incident to v; detect if we reached target_leaf_edge
         // Also choose the "next" non-leaf boundary edge (not equal to f0).
         let mut reached_end = false;
-        leaf_edges.clear();
+
         let mut next_e: Option<EdgeIndex> = None;
 
         // Collect adjacency first to avoid borrow issues while mutating later
@@ -514,11 +602,16 @@ pub fn wrap_split(
                 if f == f0 {
                     return Err(anyhow!(
                         "wrap_split: next adjacent edge cyclic after f0 ({:?}) is also f0; cycle detected at node {:?}",
-                        f0, v
+                        f0,
+                        v
                     ));
                 }
                 f = graph.next_adjacent_edge_cyclic(v, f).ok_or_else(|| {
-                    anyhow!("wrap_split: no next leaf edge at node {:?} (after entering via {:?})", v, e)
+                    anyhow!(
+                        "wrap_split: no next leaf edge at node {:?} (after entering via {:?})",
+                        v,
+                        e
+                    )
                 })?;
             }
 
@@ -527,9 +620,11 @@ pub fn wrap_split(
                 reached_end = true;
             } else {
                 next_e = Some(f);
-                
             }
-            debug!("wrap_split: reached node {:?} edge {:?} (via {:?})", v, f, f0);
+            debug!(
+                "wrap_split: reached node {:?} edge {:?} (via {:?})",
+                v, f, f0
+            );
         };
 
         // Create new node on the NEW path
@@ -538,9 +633,7 @@ pub fn wrap_split(
         // Edge from new node `u` to old node `v` (inserted "after f0" in Java — we can’t control embedding)
         let f_uv = graph.new_edge_after(u, v, f0)?;
         graph.set_split(f_uv, s as i32);
-        graph
-            .base
-            .set_weight(f_uv, splits.get(s).weight().into());
+        graph.base.set_weight(f_uv, splits.get(s).weight().into());
 
         // If we already had a previous `u`, connect it to the current `u` carrying split/weight from `e`
         if let Some(prev) = prev_u {
@@ -554,7 +647,8 @@ pub fn wrap_split(
 
         // Copy each leaf edge (v -- w) to (u -- w), copying split/weight; then delete old edge
         // Snapshot required info before mutation to avoid borrow conflicts
-        let mut copies: Vec<(NodeIndex, i32, f64, EdgeIndex)> = Vec::with_capacity(leaf_edges.len());
+        let mut copies: Vec<(NodeIndex, i32, f64, EdgeIndex)> =
+            Vec::with_capacity(leaf_edges.len());
         for f in leaf_edges.iter().copied() {
             let w = graph.base.get_opposite(v, f);
             let s_id = graph.get_split(f);
@@ -567,7 +661,7 @@ pub fn wrap_split(
             graph.base.set_weight(f_new, wgt);
             graph.remove_edge(f_old); // delete original leaf edge
         }
-
+        leaf_edges.clear();
         // Advance along boundary or stop if we encountered the target leaf edge
         if reached_end {
             break;
@@ -588,19 +682,138 @@ pub fn wrap_split(
     Ok(())
 }
 
-
 /* ----------------------------- tiny utilities ------------------------------ */
 
 fn first_member(bs: &fixedbitset::FixedBitSet) -> Option<usize> {
     // our FixedBitSet is 1-based usage; find first set from 1
     for i in 1..bs.len() {
-        if bs.contains(i) { return Some(i); }
+        if bs.contains(i) {
+            return Some(i);
+        }
     }
     None
 }
 
 fn modulo360(a: f64) -> f64 {
     let mut x = a % 360.0;
-    if x < 0.0 { x += 360.0; }
+    if x < 0.0 {
+        x += 360.0;
+    }
     x
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fixedbitset::FixedBitSet;
+    use ndarray::arr2;
+
+    use crate::{
+        algorithms::equal_angle::{
+            get_nontrivial_splits_ordered, init_graph_star, normalize_cycle_1based,
+        },
+        data::splits_blocks::SplitsBlock,
+        ordering::ordering_graph::compute_ordering,
+        phylo::phylo_splits_graph::PhyloSplitsGraph,
+        utils::compute_least_squares_fit,
+        weights::active_set_weights::{NNLSParams, compute_asplits},
+    };
+
+    #[test]
+    fn smoke_10_1() {
+        let d = arr2(&[
+            [0.0, 5.0, 12.0, 7.0, 3.0, 9.0, 11.0, 6.0, 4.0, 10.0],
+            [5.0, 0.0, 8.0, 2.0, 14.0, 5.0, 13.0, 7.0, 12.0, 1.0],
+            [12.0, 8.0, 0.0, 4.0, 9.0, 3.0, 8.0, 2.0, 5.0, 6.0],
+            [7.0, 2.0, 4.0, 0.0, 11.0, 7.0, 10.0, 4.0, 6.0, 9.0],
+            [3.0, 14.0, 9.0, 11.0, 0.0, 8.0, 1.0, 13.0, 2.0, 7.0],
+            [9.0, 5.0, 3.0, 7.0, 8.0, 0.0, 12.0, 5.0, 3.0, 4.0],
+            [11.0, 13.0, 8.0, 10.0, 1.0, 12.0, 0.0, 6.0, 2.0, 8.0],
+            [6.0, 7.0, 2.0, 4.0, 13.0, 5.0, 6.0, 0.0, 9.0, 7.0],
+            [4.0, 12.0, 5.0, 6.0, 2.0, 3.0, 2.0, 9.0, 0.0, 5.0],
+            [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
+        ]);
+
+        let cycle = compute_ordering(&d);
+        let mut params = NNLSParams::default();
+        let progress = None; // No progress tracking in this test
+        let labels = vec![
+            "t1".to_string(),
+            "t2".to_string(),
+            "t3".to_string(),
+            "t4".to_string(),
+            "t5".to_string(),
+            "t6".to_string(),
+            "t7".to_string(),
+            "t8".to_string(),
+            "t9".to_string(),
+            "t10".to_string(),
+        ];
+
+        let splits = compute_asplits(&cycle, &d, &mut params, progress).expect("NNLS solve");
+        let fit = compute_least_squares_fit(&d, &splits);
+        let mut splits_blocks = SplitsBlock::new();
+        splits_blocks.set_splits(splits);
+        splits_blocks.set_fit(fit);
+        splits_blocks.set_cycle(cycle, true).expect("set cycle");
+
+        let mut graph = PhyloSplitsGraph::new();
+        // then:
+        let mut used_splits = FixedBitSet::with_capacity(splits_blocks.nsplits() + 1);
+
+        let cycle_exp = vec![0, 1, 5, 7, 9, 3, 8, 4, 2, 10, 6];
+        let c = splits_blocks
+            .cycle()
+            .ok_or_else(|| anyhow::anyhow!("SplitsBlock has no cycle"))
+            .expect("get cycle");
+        let norm_cycle = normalize_cycle_1based(&c).expect("normalize cycle");
+        assert_eq!(norm_cycle, cycle_exp);
+        init_graph_star(&labels, &splits_blocks, &norm_cycle, &mut graph).expect("init graph star");
+        assert!(graph.base.graph.node_count() == 11);
+        assert!(graph.base.graph.edge_count() == 10);
+
+        let ordered = get_nontrivial_splits_ordered(&splits_blocks);
+        assert_eq!(ordered, vec![2, 3, 11, 9, 16, 4, 8, 15, 7, 14, 19, 21]);
+        let ntax = labels.len();
+        let mut all_used = true;
+        for &sid in &ordered {
+            if is_circular_by_cycle(&splits_blocks, sid, &norm_cycle) {
+                // Wrap split sid around the cycle
+                wrap_split(ntax, &splits_blocks, sid, &norm_cycle, &mut graph).expect("wrap split");
+                // Placeholder: log and mark used. We don’t modify graph topology here yet.
+                used_splits.grow(splits_blocks.nsplits() + 1);
+                used_splits.insert(sid);
+                println!("====================");
+                println!("used split {}", sid);
+                println!("{}", graph.base.graph.node_count());
+                println!("{}", graph.base.graph.edge_count());
+            } else {
+                all_used = false;
+            }
+        }
+        println!("all_used = {}", all_used);
+        println!("{}", graph.base.graph.node_count());
+        println!("{}", graph.base.graph.edge_count());
+        assert!(graph.base.graph.node_count() == 41);
+        assert!(graph.base.graph.edge_count() == 58);
+
+        let exp_angles = vec![
+            0.0, 270.0, 288.0, 324.0, 18.0, 54.0, 126.0, 144.0, 162.0, 180.0, 162.0, 234.0, 198.0,
+            234.0, 252.0, 270.0, 288.0, 270.0, 306.0, 324.0, 342.0, 0.0, 18.0,
+        ];
+        let split2angle = assign_angles_to_splits(ntax, &splits_blocks, &norm_cycle, 360.);
+        assert_eq!(split2angle, exp_angles);
+        // equal_angle_apply(
+        //     EqualAngleOpts::default(),
+        //     &labels,
+        //     &splits_blocks,
+        //     &mut graph,
+        //     None,
+        //     &mut used_splits,
+        // ).expect("EqualAngle apply");
+        // println!("{}", graph.base.graph.node_count());
+        // println!("{}", graph.base.graph.edge_count());
+        // assert!(graph.base.graph.node_count() == 42);
+        // assert!(graph.base.graph.edge_count() == 60);
+    }
 }

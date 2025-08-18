@@ -227,8 +227,7 @@ impl PhyloSplitsGraph {
             };
 
             // collect current incident edges of w (so we can mutate the graph safely)
-            let w_incident: Vec<EdgeIndex> =
-                self.base.graph.edges(w).map(|er| er.id()).collect();
+            let w_incident: Vec<EdgeIndex> = self.base.graph.edges(w).map(|er| er.id()).collect();
 
             for f in w_incident.iter().copied() {
                 if f == e {
@@ -475,9 +474,12 @@ impl PhyloSplitsGraph {
         Ok(e)
     }
 
-    pub fn new_edge_with_label(&mut self, u: NodeIndex, v: NodeIndex, lbl: String)
-        -> anyhow::Result<EdgeIndex>
-    {
+    pub fn new_edge_with_label(
+        &mut self,
+        u: NodeIndex,
+        v: NodeIndex,
+        lbl: String,
+    ) -> anyhow::Result<EdgeIndex> {
         let e = self.base.new_edge_with_label(u, v, lbl)?;
         self.rot_append(u, e);
         self.rot_append(v, e);
@@ -485,9 +487,12 @@ impl PhyloSplitsGraph {
     }
 
     /// Create (u,v) and splice its v-side halfedge AFTER `f0_at_v` (matches Java’s AFTER).
-    pub fn new_edge_after(&mut self, u: NodeIndex, v: NodeIndex, f0_at_v: EdgeIndex)
-        -> anyhow::Result<EdgeIndex>
-    {
+    pub fn new_edge_after(
+        &mut self,
+        u: NodeIndex,
+        v: NodeIndex,
+        f0_at_v: EdgeIndex,
+    ) -> anyhow::Result<EdgeIndex> {
         let e = self.base.new_edge(u, v)?;
         self.rot_append(u, e);
         self.rot_insert_after(v, f0_at_v, e);
@@ -500,7 +505,9 @@ impl PhyloSplitsGraph {
             self.rot_remove(u, e);
             self.rot_remove(v, e);
             self.base.graph.remove_edge(e).is_some()
-        } else { false }
+        } else {
+            false
+        }
     }
 
     /// Remove a node and all incident edges, updating rotations.
@@ -529,8 +536,11 @@ impl PhyloSplitsGraph {
     #[inline]
     fn rot_insert_after(&mut self, v: NodeIndex, after: EdgeIndex, e_new: EdgeIndex) {
         let r = self.rot_mut(v);
-        if let Some(i) = r.iter().position(|&x| x == after) { r.insert(i + 1, e_new); }
-        else { r.push(e_new); }
+        if let Some(i) = r.iter().position(|&x| x == after) {
+            r.insert(i + 1, e_new);
+        } else {
+            r.push(e_new);
+        }
     }
     #[inline]
     fn rot_append(&mut self, v: NodeIndex, e_new: EdgeIndex) {
@@ -539,8 +549,12 @@ impl PhyloSplitsGraph {
     #[inline]
     fn rot_remove(&mut self, v: NodeIndex, e: EdgeIndex) {
         if let Some(r) = self.rotation.get_mut(&v) {
-            if let Some(i) = r.iter().position(|&x| x == e) { r.remove(i); }
-            if r.is_empty() { self.rotation.remove(&v); }
+            if let Some(i) = r.iter().position(|&x| x == e) {
+                r.remove(i);
+            }
+            if r.is_empty() {
+                self.rotation.remove(&v);
+            }
         }
     }
 
@@ -629,15 +643,25 @@ impl PhyloSplitsGraph {
     }
     pub fn next_adjacent_edge_cyclic(&self, v: NodeIndex, e: EdgeIndex) -> Option<EdgeIndex> {
         let r = self.rot(v);
-        if r.is_empty() { return None; }
-        if let Some(i) = r.iter().position(|&x| x == e) { Some(r[(i + 1) % r.len()]) }
-        else { r.first().copied() }
+        if r.is_empty() {
+            return None;
+        }
+        if let Some(i) = r.iter().position(|&x| x == e) {
+            Some(r[(i + 1) % r.len()])
+        } else {
+            r.first().copied()
+        }
     }
     pub fn prev_adjacent_edge_cyclic(&self, v: NodeIndex, e: EdgeIndex) -> Option<EdgeIndex> {
         let r = self.rot(v);
-        if r.is_empty() { return None; }
-        if let Some(i) = r.iter().position(|&x| x == e) { Some(r[(i + r.len() - 1) % r.len()]) }
-        else { r.last().copied() }
+        if r.is_empty() {
+            return None;
+        }
+        if let Some(i) = r.iter().position(|&x| x == e) {
+            Some(r[(i + r.len() - 1) % r.len()])
+        } else {
+            r.last().copied()
+        }
     }
 
     #[inline]

@@ -49,7 +49,7 @@ impl Component {
     fn first(&self) -> usize {
         self.first
     }
-    
+
     fn second(&self) -> usize {
         self.second.expect("not a pair")
     }
@@ -110,7 +110,10 @@ pub fn compute_ordering(dist: &Array2<f64>) -> Vec<usize> {
 
             let new_component = Component::pair(p, q);
             components[ip] = new_component;
-            debug!("First case: P={} Q={} NewComponent={:?}", p, q, components[ip]);
+            debug!(
+                "First case: P={} Q={} NewComponent={:?}",
+                p, q, components[ip]
+            );
             components.remove(iq);
         } else if p_comp.size() == 1 && q_comp.size() == 2 {
             // --- Case 2: 1 vs 2 ---
@@ -146,7 +149,10 @@ pub fn compute_ordering(dist: &Array2<f64>) -> Vec<usize> {
             graph.add_edge(node_map[p], node_map[q], ());
             let new_component = Component::pair(p, qb);
             components[ip] = new_component;
-            debug!("Second case: P={} Q={} NewComponent={:?}", p, q, components[ip]);
+            debug!(
+                "Second case: P={} Q={} NewComponent={:?}",
+                p, q, components[ip]
+            );
             components.remove(iq);
         } else if p_comp.size() == 2 && q_comp.size() == 2 {
             // --- Case 3: 2 vs 2 ---
@@ -155,7 +161,8 @@ pub fn compute_ordering(dist: &Array2<f64>) -> Vec<usize> {
             let qb = q_comp.other(q);
 
             // D[pb][qb] = D[qb][pb] = (D[pb][p] + D[pb][q] + D[pb][qb] + D[p][q] + D[p][qb] + D[q][qb]) / 6.0;
-            d[[pb, qb]] = (d[[pb, p]] + d[[pb, q]] + d[[pb, qb]] + d[[p, q]] + d[[p, qb]] + d[[q, qb]]) / 6.0;
+            d[[pb, qb]] =
+                (d[[pb, p]] + d[[pb, q]] + d[[pb, qb]] + d[[p, q]] + d[[p, qb]] + d[[q, qb]]) / 6.0;
             d[[qb, pb]] = d[[pb, qb]];
 
             for i in 0..components.len() {
@@ -182,7 +189,10 @@ pub fn compute_ordering(dist: &Array2<f64>) -> Vec<usize> {
 
             graph.add_edge(node_map[p], node_map[q], ());
             let new_component = Component::pair(pb, qb);
-            debug!("Third case: P={} Q={} NewComponent={:?}", p, q, new_component);
+            debug!(
+                "Third case: P={} Q={} NewComponent={:?}",
+                p, q, new_component
+            );
             components[ip] = new_component;
             components.remove(iq);
         } else {
@@ -216,7 +226,6 @@ fn create_array_upward_count(n: usize) -> Vec<usize> {
     }
     v
 }
-
 
 #[inline]
 fn avg_d_comp_comp(d: &Array2<f64>, p: &Component, q: &Component) -> f64 {
@@ -300,7 +309,6 @@ fn select_closest_pair(components: &[Component], d: &Array2<f64>) -> (usize, usi
     (best_ip, best_iq)
 }
 
-
 fn select_closest_1_vs_2(ip: usize, iq: usize, d: &Array2<f64>, components: &[Component]) -> usize {
     let m = components.len();
     let p = components[ip].first();
@@ -316,7 +324,7 @@ fn select_closest_1_vs_2(ip: usize, iq: usize, d: &Array2<f64>, components: &[Co
             continue;
         }
         let other = components[i];
-        p_r  += avg_d_p_comp(d,   p,  &other);
+        p_r += avg_d_p_comp(d, p, &other);
         q1_r += avg_d_p_comp(d, q1, &other);
         q2_r += avg_d_p_comp(d, q2, &other);
     }
@@ -325,7 +333,10 @@ fn select_closest_1_vs_2(ip: usize, iq: usize, d: &Array2<f64>, components: &[Co
     let q1p_adj = mm1 * d[[q1, p]] - q1_r - p_r;
     let q2p_adj = mm1 * d[[q2, p]] - q2_r - p_r;
 
-    debug!("1x2 @ P={} Q={} -> q1p_adj:{:.9} q2p_adj:{:.9}", p, q1, q1p_adj, q2p_adj);
+    debug!(
+        "1x2 @ P={} Q={} -> q1p_adj:{:.9} q2p_adj:{:.9}",
+        p, q1, q1p_adj, q2p_adj
+    );
 
     if q1p_adj <= q2p_adj { q1 } else { q2 }
 }
@@ -349,7 +360,9 @@ fn select_closest_2_vs_2(
     let mut q2_r = d[[p1, q2]] + d[[p2, q2]];
 
     for i in 0..m {
-        if i == ip || i == iq { continue; }
+        if i == ip || i == iq {
+            continue;
+        }
         let other = components[i];
         p1_r += avg_d_p_comp(d, p1, &other);
         p2_r += avg_d_p_comp(d, p2, &other);
@@ -357,7 +370,7 @@ fn select_closest_2_vs_2(
         q2_r += avg_d_p_comp(d, q2, &other);
     }
 
-    // m * D[p][q] - pR - qR 
+    // m * D[p][q] - pR - qR
     let m_f = m as f64;
     let p1q1 = m_f * d[[p1, q1]] - p1_r - q1_r;
     let p2q1 = m_f * d[[p2, q1]] - p2_r - q1_r;
@@ -368,9 +381,18 @@ fn select_closest_2_vs_2(
         "2x2 inputs P={{{}, {}}} Q={{{}, {}}} | \
         D: p1q1={:.12}, p2q1={:.12}, p1q2={:.12}, p2q2={:.12} | \
         R: p1R={:.12}, p2R={:.12}, q1R={:.12}, q2R={:.12}",
-        p1, p2, q1, q2,
-        d[[p1,q1]], d[[p2,q1]], d[[p1,q2]], d[[p2,q2]],
-        p1_r, p2_r, q1_r, q2_r
+        p1,
+        p2,
+        q1,
+        q2,
+        d[[p1, q1]],
+        d[[p2, q1]],
+        d[[p1, q2]],
+        d[[p2, q2]],
+        p1_r,
+        p2_r,
+        q1_r,
+        q2_r
     );
 
     match rank_of_min(&[p1q1, p2q1, p1q2, p2q2]) {
@@ -392,7 +414,6 @@ fn rank_of_min(vals: &[f64]) -> usize {
     idx
 }
 
-
 /// Cycle extraction:
 /// - start at taxon 1
 /// - first step: pick the smaller-labeled of its two neighbors (stable direction)
@@ -407,7 +428,9 @@ fn extract_ordering(graph: &Graph<usize, (), Undirected>, node_map: &[NodeIndex]
         return order;
     }
     if n <= 3 {
-        for t in 1..=n { order.push(t); }
+        for t in 1..=n {
+            order.push(t);
+        }
         return order;
     }
 
@@ -420,8 +443,11 @@ fn extract_ordering(graph: &Graph<usize, (), Undirected>, node_map: &[NodeIndex]
     );
     // neigh.sort_by_key(|&v| graph[v]); // stable direction
     let mut prev = v1;
-    let mut cur  = min(neigh[0], neigh[1]);
-    debug!("Starting at v1={} cur={}: neighbours {:?}", graph[v1], graph[cur], neigh);
+    let mut cur = min(neigh[0], neigh[1]);
+    debug!(
+        "Starting at v1={} cur={}: neighbours {:?}",
+        graph[v1], graph[cur], neigh
+    );
 
     order.push(graph[v1]); // taxon 1
     while order.len() - 1 < n {
@@ -433,17 +459,21 @@ fn extract_ordering(graph: &Graph<usize, (), Undirected>, node_map: &[NodeIndex]
         let b = it[1];
         let nxt = if a == prev { b } else { a };
         prev = cur;
-        cur  = nxt;
+        cur = nxt;
     }
     order
 }
 
-
-
 // ---------- tests ----------
 fn _debug_pair(components: &[Component], d: &Array2<f64>, a: usize, b: usize) {
-    let ip = components.iter().position(|c| c.first == a || c.second == Some(a)).unwrap();
-    let iq = components.iter().position(|c| c.first == b || c.second == Some(b)).unwrap();
+    let ip = components
+        .iter()
+        .position(|c| c.first == a || c.second == Some(a))
+        .unwrap();
+    let iq = components
+        .iter()
+        .position(|c| c.first == b || c.second == Some(b))
+        .unwrap();
 
     let m = components.len();
     let p = &components[ip];
@@ -453,7 +483,9 @@ fn _debug_pair(components: &[Component], d: &Array2<f64>, a: usize, b: usize) {
 
     debug!("-- adj breakdown for P={:?} Q={:?} (m={})", p, q, m);
     for (is, s) in components.iter().enumerate() {
-        if is == ip || is == iq { continue; }
+        if is == ip || is == iq {
+            continue;
+        }
         let aps = avg_d_comp_comp(d, p, s);
         let aqs = avg_d_comp_comp(d, q, s);
         debug!("  S={:?}: avg(P,S)={:.9} avg(Q,S)={:.9}", s, aps, aqs);
@@ -462,9 +494,11 @@ fn _debug_pair(components: &[Component], d: &Array2<f64>, a: usize, b: usize) {
     }
     let pq = avg_d_comp_comp(d, p, q);
     let adjusted = (m as f64 - 2.0) * pq - sum_p - sum_q;
-    debug!("  avg(P,Q)={:.9} sumP={:.9} sumQ={:.9} -> adjusted={:.9}", pq, sum_p, sum_q, adjusted);
+    debug!(
+        "  avg(P,Q)={:.9} sumP={:.9} sumQ={:.9} -> adjusted={:.9}",
+        pq, sum_p, sum_q, adjusted
+    );
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -487,7 +521,12 @@ mod tests {
         // 1.0,  0.0,  1.5,  2.5
         // 2.0,  1.5,  0.0,  1.5
         // 3.0,  2.5,  1.5,  0.0
-        let d = arr2(&[[0.0, 1.0, 2.0, 3.0], [1.0, 0.0, 1.5, 2.5], [2.0, 1.5, 0.0, 1.5], [3.0, 2.5, 1.5, 0.0]]);
+        let d = arr2(&[
+            [0.0, 1.0, 2.0, 3.0],
+            [1.0, 0.0, 1.5, 2.5],
+            [2.0, 1.5, 0.0, 1.5],
+            [3.0, 2.5, 1.5, 0.0],
+        ]);
         let ord = compute_ordering(&d);
         assert_eq!(ord, vec![0, 1, 2, 4, 3]);
     }
@@ -525,11 +564,11 @@ mod tests {
         // 5.0,8.0,1.0,2.0,0.0
 
         let d = arr2(&[
-            [0.0,2.0,3.0,4.0,5.0],
-            [2.0,0.0,6.0,7.0,8.0],
-            [3.0,6.0,0.0,9.0,1.0],
-            [4.0,7.0,9.0,0.0,2.0],
-            [5.0,8.0,1.0,2.0,0.0],
+            [0.0, 2.0, 3.0, 4.0, 5.0],
+            [2.0, 0.0, 6.0, 7.0, 8.0],
+            [3.0, 6.0, 0.0, 9.0, 1.0],
+            [4.0, 7.0, 9.0, 0.0, 2.0],
+            [5.0, 8.0, 1.0, 2.0, 0.0],
         ]);
         let ord = compute_ordering(&d);
         let exp = vec![0, 1, 2, 4, 5, 3];
@@ -552,16 +591,16 @@ mod tests {
         // 10.0,1.0,6.0,9.0,7.0,4.0,8.0,7.0,5.0,0.0
 
         let d = arr2(&[
-            [0.0,5.0,12.0,7.0,3.0,9.0,11.0,6.0,4.0,10.0],
-            [5.0,0.0,8.0,2.0,14.0,5.0,13.0,7.0,12.0,1.0],
-            [12.0,8.0,0.0,4.0,9.0,3.0,8.0,2.0,5.0,6.0],
-            [7.0,2.0,4.0,0.0,11.0,7.0,10.0,4.0,6.0,9.0],
-            [3.0,14.0,9.0,11.0,0.0,8.0,1.0,13.0,2.0,7.0],
-            [9.0,5.0,3.0,7.0,8.0,0.0,12.0,5.0,3.0,4.0],
-            [11.0,13.0,8.0,10.0,1.0,12.0,0.0,6.0,2.0,8.0],
-            [6.0,7.0,2.0,4.0,13.0,5.0,6.0,0.0,9.0,7.0],
-            [4.0,12.0,5.0,6.0,2.0,3.0,2.0,9.0,0.0,5.0],
-            [10.0,1.0,6.0,9.0,7.0,4.0,8.0,7.0,5.0,0.0],
+            [0.0, 5.0, 12.0, 7.0, 3.0, 9.0, 11.0, 6.0, 4.0, 10.0],
+            [5.0, 0.0, 8.0, 2.0, 14.0, 5.0, 13.0, 7.0, 12.0, 1.0],
+            [12.0, 8.0, 0.0, 4.0, 9.0, 3.0, 8.0, 2.0, 5.0, 6.0],
+            [7.0, 2.0, 4.0, 0.0, 11.0, 7.0, 10.0, 4.0, 6.0, 9.0],
+            [3.0, 14.0, 9.0, 11.0, 0.0, 8.0, 1.0, 13.0, 2.0, 7.0],
+            [9.0, 5.0, 3.0, 7.0, 8.0, 0.0, 12.0, 5.0, 3.0, 4.0],
+            [11.0, 13.0, 8.0, 10.0, 1.0, 12.0, 0.0, 6.0, 2.0, 8.0],
+            [6.0, 7.0, 2.0, 4.0, 13.0, 5.0, 6.0, 0.0, 9.0, 7.0],
+            [4.0, 12.0, 5.0, 6.0, 2.0, 3.0, 2.0, 9.0, 0.0, 5.0],
+            [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
         ]);
 
         let ord = compute_ordering(&d);
@@ -584,16 +623,16 @@ mod tests {
         // 1.0,8.0,9.0,6.0,5.0,2.0,8.0,7.0,4.0,0.0
 
         let d = arr2(&[
-            [0.0,3.0,7.0,4.0,5.0,9.0,2.0,8.0,6.0,1.0],
-            [3.0,0.0,5.0,2.0,10.0,4.0,11.0,7.0,9.0,8.0],
-            [7.0,5.0,0.0,6.0,3.0,8.0,4.0,2.0,5.0,9.0],
-            [4.0,2.0,6.0,0.0,7.0,5.0,9.0,3.0,4.0,6.0],
-            [5.0,10.0,3.0,7.0,0.0,2.0,6.0,12.0,1.0,5.0],
-            [9.0,4.0,8.0,5.0,2.0,0.0,7.0,4.0,3.0,2.0],
-            [2.0,11.0,4.0,9.0,6.0,7.0,0.0,5.0,2.0,8.0],
-            [8.0,7.0,2.0,3.0,12.0,4.0,5.0,0.0,6.0,7.0],
-            [6.0,9.0,5.0,4.0,1.0,3.0,2.0,6.0,0.0,4.0],
-            [1.0,8.0,9.0,6.0,5.0,2.0,8.0,7.0,4.0,0.0],
+            [0.0, 3.0, 7.0, 4.0, 5.0, 9.0, 2.0, 8.0, 6.0, 1.0],
+            [3.0, 0.0, 5.0, 2.0, 10.0, 4.0, 11.0, 7.0, 9.0, 8.0],
+            [7.0, 5.0, 0.0, 6.0, 3.0, 8.0, 4.0, 2.0, 5.0, 9.0],
+            [4.0, 2.0, 6.0, 0.0, 7.0, 5.0, 9.0, 3.0, 4.0, 6.0],
+            [5.0, 10.0, 3.0, 7.0, 0.0, 2.0, 6.0, 12.0, 1.0, 5.0],
+            [9.0, 4.0, 8.0, 5.0, 2.0, 0.0, 7.0, 4.0, 3.0, 2.0],
+            [2.0, 11.0, 4.0, 9.0, 6.0, 7.0, 0.0, 5.0, 2.0, 8.0],
+            [8.0, 7.0, 2.0, 3.0, 12.0, 4.0, 5.0, 0.0, 6.0, 7.0],
+            [6.0, 9.0, 5.0, 4.0, 1.0, 3.0, 2.0, 6.0, 0.0, 4.0],
+            [1.0, 8.0, 9.0, 6.0, 5.0, 2.0, 8.0, 7.0, 4.0, 0.0],
         ]);
 
         let ord = compute_ordering(&d);
@@ -621,24 +660,57 @@ mod tests {
         // 3.0,8.0,13.0,5.0,10.0,2.0,7.0,12.0,4.0,9.0,1.0,6.0,11.0,3.0,0.0
 
         let d = arr2(&[
-            [0.0, 14.0, 9.0, 4.0, 16.0, 11.0, 17.0, 12.0, 7.0, 19.0, 14.0, 9.0, 15.0, 10.0, 5.0],
-            [14.0, 0.0, 17.0, 12.0, 7.0, 13.0, 8.0, 3.0, 15.0, 10.0, 22.0, 11.0, 6.0, 18.0, 13.0],
-            [9.0, 17.0, 0.0, 20.0, 9.0, 4.0, 16.0, 11.0, 6.0, 18.0, 7.0, 2.0, 14.0, 9.0, 21.0],
-            [4.0, 12.0, 20.0, 0.0, 17.0, 12.0, 7.0, 19.0, 14.0, 3.0, 15.0, 10.0, 5.0, 17.0, 12.0],
-            [16.0, 7.0, 9.0, 17.0, 0.0, 20.0, 15.0, 10.0, 16.0, 11.0, 6.0, 18.0, 13.0, 8.0, 14.0],
-            [11.0, 13.0, 4.0, 12.0, 20.0, 0.0, 6.0, 12.0, 7.0, 19.0, 14.0, 9.0, 21.0, 10.0, 5.0],
-            [17.0, 8.0, 16.0, 7.0, 15.0, 6.0, 0.0, 3.0, 15.0, 10.0, 5.0, 17.0, 6.0, 18.0, 13.0],
-            [12.0, 3.0, 11.0, 19.0, 10.0, 12.0, 3.0, 0.0, 6.0, 18.0, 13.0, 2.0, 14.0, 9.0, 4.0],
-            [7.0, 15.0, 6.0, 14.0, 16.0, 7.0, 15.0, 6.0, 0.0, 9.0, 15.0, 10.0, 5.0, 17.0, 12.0],
-            [19.0, 10.0, 18.0, 3.0, 11.0, 19.0, 10.0, 18.0, 9.0, 0.0, 6.0, 18.0, 13.0, 8.0, 20.0],
-            [14.0, 22.0, 7.0, 15.0, 6.0, 14.0, 5.0, 13.0, 15.0, 6.0, 0.0, 9.0, 21.0, 16.0, 5.0],
-            [9.0, 11.0, 2.0, 10.0, 18.0, 9.0, 17.0, 2.0, 10.0, 18.0, 9.0, 0.0, 12.0, 1.0, 13.0],
-            [15.0, 6.0, 14.0, 5.0, 13.0, 21.0, 6.0, 14.0, 5.0, 13.0, 21.0, 12.0, 0.0, 9.0, 4.0],
-            [10.0, 18.0, 9.0, 17.0, 8.0, 10.0, 18.0, 9.0, 17.0, 8.0, 16.0, 1.0, 9.0, 0.0, 12.0],
-            [5.0, 13.0, 21.0, 12.0, 14.0, 5.0, 13.0, 4.0, 12.0, 20.0, 5.0, 13.0, 4.0, 12.0, 0.0],
+            [
+                0.0, 14.0, 9.0, 4.0, 16.0, 11.0, 17.0, 12.0, 7.0, 19.0, 14.0, 9.0, 15.0, 10.0, 5.0,
+            ],
+            [
+                14.0, 0.0, 17.0, 12.0, 7.0, 13.0, 8.0, 3.0, 15.0, 10.0, 22.0, 11.0, 6.0, 18.0, 13.0,
+            ],
+            [
+                9.0, 17.0, 0.0, 20.0, 9.0, 4.0, 16.0, 11.0, 6.0, 18.0, 7.0, 2.0, 14.0, 9.0, 21.0,
+            ],
+            [
+                4.0, 12.0, 20.0, 0.0, 17.0, 12.0, 7.0, 19.0, 14.0, 3.0, 15.0, 10.0, 5.0, 17.0, 12.0,
+            ],
+            [
+                16.0, 7.0, 9.0, 17.0, 0.0, 20.0, 15.0, 10.0, 16.0, 11.0, 6.0, 18.0, 13.0, 8.0, 14.0,
+            ],
+            [
+                11.0, 13.0, 4.0, 12.0, 20.0, 0.0, 6.0, 12.0, 7.0, 19.0, 14.0, 9.0, 21.0, 10.0, 5.0,
+            ],
+            [
+                17.0, 8.0, 16.0, 7.0, 15.0, 6.0, 0.0, 3.0, 15.0, 10.0, 5.0, 17.0, 6.0, 18.0, 13.0,
+            ],
+            [
+                12.0, 3.0, 11.0, 19.0, 10.0, 12.0, 3.0, 0.0, 6.0, 18.0, 13.0, 2.0, 14.0, 9.0, 4.0,
+            ],
+            [
+                7.0, 15.0, 6.0, 14.0, 16.0, 7.0, 15.0, 6.0, 0.0, 9.0, 15.0, 10.0, 5.0, 17.0, 12.0,
+            ],
+            [
+                19.0, 10.0, 18.0, 3.0, 11.0, 19.0, 10.0, 18.0, 9.0, 0.0, 6.0, 18.0, 13.0, 8.0, 20.0,
+            ],
+            [
+                14.0, 22.0, 7.0, 15.0, 6.0, 14.0, 5.0, 13.0, 15.0, 6.0, 0.0, 9.0, 21.0, 16.0, 5.0,
+            ],
+            [
+                9.0, 11.0, 2.0, 10.0, 18.0, 9.0, 17.0, 2.0, 10.0, 18.0, 9.0, 0.0, 12.0, 1.0, 13.0,
+            ],
+            [
+                15.0, 6.0, 14.0, 5.0, 13.0, 21.0, 6.0, 14.0, 5.0, 13.0, 21.0, 12.0, 0.0, 9.0, 4.0,
+            ],
+            [
+                10.0, 18.0, 9.0, 17.0, 8.0, 10.0, 18.0, 9.0, 17.0, 8.0, 16.0, 1.0, 9.0, 0.0, 12.0,
+            ],
+            [
+                5.0, 13.0, 21.0, 12.0, 14.0, 5.0, 13.0, 4.0, 12.0, 20.0, 5.0, 13.0, 4.0, 12.0, 0.0,
+            ],
         ]);
 
         let ord = compute_ordering(&d);
-        assert_eq!(ord, vec![0, 1, 9, 3, 6, 12, 14, 5, 11, 10, 4, 7, 8, 2, 13, 15]);
+        assert_eq!(
+            ord,
+            vec![0, 1, 9, 3, 6, 12, 14, 5, 11, 10, 4, 7, 8, 2, 13, 15]
+        );
     }
 }

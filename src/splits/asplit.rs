@@ -246,10 +246,18 @@ pub trait ASplitView {
 }
 
 impl ASplitView for ASplit {
-    fn weight(&self) -> f64 { self.weight }
-    fn size(&self) -> usize { self.size() }
-    fn smaller_part(&self) -> &fixedbitset::FixedBitSet { self.smaller_part() }
-    fn ntax(&self) -> usize { self.ntax() }
+    fn weight(&self) -> f64 {
+        self.weight
+    }
+    fn size(&self) -> usize {
+        self.size()
+    }
+    fn smaller_part(&self) -> &fixedbitset::FixedBitSet {
+        self.smaller_part()
+    }
+    fn ntax(&self) -> usize {
+        self.ntax()
+    }
 }
 
 /* -------- tests -------- */
