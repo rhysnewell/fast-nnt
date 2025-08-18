@@ -68,7 +68,7 @@ pub fn write_nexus_all_to_writer<W: Write>(
     splits_block: Option<&SplitsBlock>,
     cycle_1_based: Option<&[usize]>,      // [0, t1..tn], 1-based
     graph: Option<&PhyloSplitsGraph>,
-    fit_percent: Option<f64>,             // for Splits PROPERTIES fit=...
+    _fit_percent: Option<f64>,             // for Splits PROPERTIES fit=...
     props: NexusProperties,
 ) -> anyhow::Result<()> {
     let mut out = IoFmt(&mut sink);
@@ -90,7 +90,7 @@ pub fn write_nexus_all_to_writer<W: Write>(
     }
 
     // SPLITS (optional)
-    if let (Some(sp), Some(cycle)) = (splits_block, cycle_1_based) {
+    if let Some(sp) = splits_block {
         // let cycle_norm = normalize_cycle(cycle);
         debug!("Writing splits block with {} splits.", sp.nsplits());
         write_splits_block(
@@ -103,7 +103,7 @@ pub fn write_nexus_all_to_writer<W: Write>(
     }
 
     // NETWORK (optional): requires a PhyloSplitsGraph + cycle for angles & coordinates
-    if let (Some(g), Some(sp), Some(cycle)) = (graph, splits_block, cycle_1_based) {
+    if let Some(g) = graph {
         // angles & coords
         // let total = props.total_angle_deg.unwrap_or(360.0);
         // let ntax = taxa_labels.len(); // expecting 1-based input usage elsewhere
@@ -168,7 +168,7 @@ pub fn write_distances_block<W: FmtWrite>(
     } else {
         writeln!(w, "FORMAT labels=no diagonal;")?;
     }
-    writeln!(w, "MATRIX # The square distance matrix")?;
+    writeln!(w, "MATRIX")?;
 
     for i in 0..n {
         // print row i (full square)

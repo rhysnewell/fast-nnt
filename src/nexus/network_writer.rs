@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Write as FmtWrite};
 
-use petgraph::prelude::{EdgeIndex, NodeIndex};
+use petgraph::prelude::NodeIndex;
 
 use crate::algorithms::equal_angle::Pt;
 use crate::nexus::*;
@@ -83,15 +83,15 @@ pub fn write_network_block_splits<W: FmtWrite>(
 
     // Example offsets and font to mirror your sample: x=12, y=0, font="Dialog-PLAIN-6"
     // TODO: Actual label layout calcs
-    write_vlabels_section(
-        &mut w,
-        base,
-        &node_id,
-        taxa_labels_1based,
-        12,    // x
-        0,     // y  (your example varied y; use a fixed default or compute if you wish)
-        Some("Dialog-PLAIN-6"),
-    )?;
+    // write_vlabels_section(
+    //     &mut w,
+    //     base,
+    //     &node_id,
+    //     taxa_labels_1based,
+    //     12,    // x
+    //     0,     // y  (your example varied y; use a fixed default or compute if you wish)
+    //     Some("Dialog-PLAIN-6"),
+    // )?;
 
     // EDGES: "<eid> <u_id> <v_id> s=<splitid> w=<weight>,"
     writeln!(w, "EDGES")?;

@@ -263,18 +263,8 @@ fn select_closest_pair(components: &[Component], d: &Array2<f64>) -> (usize, usi
     let mut best_val = f64::INFINITY;
     let mut best_ip = 0usize;
     let mut best_iq = 1usize;
-    let mut debugging = false;
     for ip in 0..m {
         let p = components[ip];
-        // check if p contains 1 or 2
-        if p.values().iter().any(|&v| match v {
-            Some(1) | Some(2) => true,
-            _ => false,
-        }) {
-            debugging = true;
-        } else {
-            debugging = false;
-        }
         for iq in (ip + 1)..m {
             let q = components[iq];
 
@@ -292,15 +282,7 @@ fn select_closest_pair(components: &[Component], d: &Array2<f64>) -> (usize, usi
 
             let pq = avg_d_comp_comp(d, &p, &q);
             let adjusted = (m as f64 - 2.0) * pq - sum_p - sum_q;
-            if debugging {
-                debug!(
-                    "Comparing P={} Q={} -> adjusted: {:.9} (m={})",
-                    p.first(),
-                    q.first(),
-                    adjusted,
-                    m
-                );
-            }
+
             // strict <, so ties keep the first hit (Java behavior)
             if adjusted < best_val {
                 best_val = adjusted;
@@ -459,7 +441,7 @@ fn extract_ordering(graph: &Graph<usize, (), Undirected>, node_map: &[NodeIndex]
 
 
 // ---------- tests ----------
-fn debug_pair(components: &[Component], d: &Array2<f64>, a: usize, b: usize) {
+fn _debug_pair(components: &[Component], d: &Array2<f64>, a: usize, b: usize) {
     let ip = components.iter().position(|c| c.first == a || c.second == Some(a)).unwrap();
     let iq = components.iter().position(|c| c.first == b || c.second == Some(b)).unwrap();
 

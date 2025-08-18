@@ -75,7 +75,7 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
 
 #[cfg(test)]
 mod lsq_tests {
-    use crate::weights::active_set_weights::{compute_asplits, compute_use_1d, NNLSParams};
+    use crate::weights::active_set_weights::{compute_asplits, NNLSParams};
 
     use super::*;
     use ndarray::{arr2, Array2};

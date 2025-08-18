@@ -1,4 +1,3 @@
-use anyhow::{anyhow, Result};
 use fixedbitset::FixedBitSet;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{EdgeRef, NodeIndexable};
@@ -789,7 +788,7 @@ mod phylo_splits_graph_tests {
 
     #[test]
     fn label_nodes_by_sequences_basic() {
-        let (g, a, b, c, e_ab, e_bc) = make_abc();
+        let (g, a, b, c, _e_ab, _e_bc) = make_abc();
 
         // Define a simple mapping: split 99 flips char 1; split 5 flips char 2
         // first_chars is 1-based: index 0 unused; positions 1..m are '0'/'1'
@@ -819,7 +818,7 @@ mod phylo_splits_graph_tests {
 
     #[test]
     fn deep_copy_preserves_structure_and_annotations() {
-        let (mut g, a, b, c, e_ab, e_bc) = make_abc();
+        let (mut g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
         g.set_taxon2_cycle(1, 1);
         g.set_taxon2_cycle(2, 2);
         g.set_taxon2_cycle(3, 3);

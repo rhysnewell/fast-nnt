@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use anyhow::Result;
 use fixedbitset::FixedBitSet;
@@ -135,22 +135,24 @@ impl SplitsBlock {
     }
 
     /// Set from 0-based list `[t1..tn]` (no sentinel). We’ll prepend a 0.
-    pub fn set_cycle_from_zero_based(&mut self, order: &[usize], normalize: bool) {
+    pub fn set_cycle_from_zero_based(&mut self, order: &[usize], normalize: bool) -> Result<()> {
         let mut c = Vec::with_capacity(order.len() + 1);
         c.push(0);
         c.extend_from_slice(order);
-        self.set_cycle(c, normalize);
+        self.set_cycle(c, normalize)?;
+        Ok(())
     }
 
     /// If cycle is missing, default to identity `[0, 1, 2, ..., ntax]`.
-    pub fn ensure_cycle_default(&mut self, ntax: usize) {
+    pub fn ensure_cycle_default(&mut self, ntax: usize) -> Result<()> {
         if self.cycle.is_none() {
             let mut c = Vec::with_capacity(ntax + 1);
             c.push(0);
             for t in 1..=ntax { c.push(t); }
             // normalize will keep 1 at position 1
-            self.set_cycle(c, true);
+            self.set_cycle(c, true)?;
         }
+        Ok(())
     }
 
     /// Returns the set of taxa in (P.sideP) ∩ (Q.sideQ).
@@ -177,10 +179,10 @@ impl SplitsBlock {
 
 /* ---------- FixedBitSet helpers ---------- */
 
-fn fb_grow_to(mut bs: FixedBitSet, len: usize) -> FixedBitSet {
-    if bs.len() < len { bs.grow(len); }
-    bs
-}
+// fn fb_grow_to(mut bs: FixedBitSet, len: usize) -> FixedBitSet {
+//     if bs.len() < len { bs.grow(len); }
+//     bs
+// }
 
 fn fb_and(a: &FixedBitSet, b: &FixedBitSet) -> FixedBitSet {
     let len = a.len().max(b.len());
@@ -242,7 +244,7 @@ mod tests {
         sb.push(mk_split(&[1], ntax, 1.0));
         // split {1,2}|{3,4} weight 0.5
         sb.push(mk_split(&[1,2], ntax, 0.5));
-        sb.set_cycle(cycle.clone(), true);
+        sb.set_cycle(cycle.clone(), true).expect("valid cycle");
 
         let angs = assign_angles_to_splits(ntax, &sb, sb.cycle().unwrap(), 360.0);
         // sanity: we got angles for 2 splits
