@@ -3,7 +3,7 @@ name = "fast-nnt"
 version = "0.1.0"
 edition = "2024"
 authors = ["Rhys Newell <rhys.newell94@gmail.com>"]
-description = "Rust implementation of the SplitsTree NeighborNet algorithm. CLI usage and R-bindings."
+description = "Rust implementation of the SplitsTree NeighborNet algorithm."
 default-run = "fast_nnt"
 
 [dependencies]
