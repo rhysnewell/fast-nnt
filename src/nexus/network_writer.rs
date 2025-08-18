@@ -71,7 +71,7 @@ pub fn write_network_block_splits<W: FmtWrite>(
                 }
             }
         }
-        writeln!(w, ",")?; // trailing comma line like your example
+        writeln!(w, ",")?;
     }
     writeln!(w, ";")?;
 
@@ -84,7 +84,6 @@ pub fn write_network_block_splits<W: FmtWrite>(
     }
     writeln!(w, ";")?;
 
-    // Example offsets and font to mirror your sample: x=12, y=0, font="Dialog-PLAIN-6"
     // TODO: Actual label layout calcs
     // write_vlabels_section(
     //     &mut w,
@@ -92,7 +91,7 @@ pub fn write_network_block_splits<W: FmtWrite>(
     //     &node_id,
     //     taxa_labels_1based,
     //     12,    // x
-    //     0,     // y  (your example varied y; use a fixed default or compute if you wish)
+    //     0,     // y 
     //     Some("Dialog-PLAIN-6"),
     // )?;
 
@@ -115,7 +114,7 @@ pub fn write_network_block_splits<W: FmtWrite>(
 }
 
 /// Write a VLABELS section for nodes that have taxa (i.e., the leaves).
-/// - `x_off`/`y_off` are the same fixed offsets for every label (matches your example).
+/// - `x_off`/`y_off` are the same fixed offsets for every label.
 /// - `font` is optional; when `Some`, we append `f='<font>'`.
 pub fn write_vlabels_section<W: FmtWrite>(
     mut w: W,

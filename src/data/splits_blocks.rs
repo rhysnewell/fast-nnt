@@ -280,9 +280,6 @@ mod tests {
         bs
     }
 
-    // You’ll need a constructor for ASplit like:
-    // ASplit::from_parts(a: FixedBitSet, ntax: usize, weight: f64, confidence: f64, label: Option<String>)
-    // or adapt to whatever you implemented earlier.
     fn mk_split(a: &[usize], ntax: usize, w: f64) -> ASplit {
         let a_bs = mk_bitset(ntax, a);
         ASplit::from_a_ntax_with_weight_conf(a_bs, ntax, w, -1.0)

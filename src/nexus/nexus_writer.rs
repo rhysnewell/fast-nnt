@@ -14,7 +14,7 @@ use crate::nexus::{
 };
 use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
 
-/// A small container for optional pieces you might want in blocks.
+/// A small container for optional pieces
 #[derive(Default, Clone)]
 pub struct NexusProperties {
     /// e.g., "fit=99.92 leastsquares cyclic"
@@ -114,15 +114,6 @@ pub fn write_nexus_all_to_writer<W: Write>(
     // NETWORK (optional): requires a PhyloSplitsGraph + cycle for angles & coordinates
     if let Some(g) = graph {
         // angles & coords
-        // let total = props.total_angle_deg.unwrap_or(360.0);
-        // let ntax = taxa_labels.len(); // expecting 1-based input usage elsewhere
-        // let cycle_norm = normalize_cycle(cycle);
-
-        // // assign per-split angle & push to edges (skip forbiddens — if you need that, pass a bitset and modify here)
-        // assign_angles_to_edges(ntax, sp, &cycle_norm, &mut g.clone_graph(), None, total);
-        // NOTE: we call assign_angles_to_edges onto a clone if you don't want to mutate the input `graph`.
-        // If you do want to mutate original, call on &mut graph before passing here.
-
         // quick coordinates (use_weights=true is typical for to-scale)
         debug!("Assigning coordinates to nodes.");
         let coords = assign_coordinates_to_nodes(true, g, 1, props.network_root_split.unwrap_or(0));
@@ -198,7 +189,6 @@ pub fn write_distances_block<W: FmtWrite>(
 }
 
 /// Public entry: write the SPLITS block as per SplitsTree Java writer.
-/// `ntax` should come from your TaxaBlock.
 pub fn write_splits_block<W: FmtWrite>(
     mut w: W,
     ntax: usize,

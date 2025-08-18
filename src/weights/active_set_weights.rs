@@ -48,7 +48,7 @@ pub struct NNLSParams {
     #[arg(short, long, default_value_t = u64::MAX)]
     pub max_time_ms: u64,
     // CGNR
-    #[arg(short, long, default_value = "5000")]
+    #[arg(short, long, default_value = "50")]
     pub cgnr_iterations: usize,
     #[arg(short, long, default_value = "5e-6")]
     pub cgnr_tolerance: f64,
@@ -164,7 +164,7 @@ pub fn compute_use_1d(
         let mut vals = vec![0.0; npairs];
 
         params.cgnr_tolerance = params.proj_grad_bound / 2.0;
-        params.cgnr_iterations = max(50, n * (n - 1) / 2);
+        params.cgnr_iterations = max(params.cgnr_iterations, n * (n - 1) / 2);
         params.active_set_rho = 0.4;
 
         active_set_method(

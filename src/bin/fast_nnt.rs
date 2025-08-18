@@ -24,7 +24,7 @@ fn main() {
             let runner = NeighbourNet::new(app.output_directory, args);
             runner.run()
         }
-        // If you have more subcommands, add them here. The wildcard keeps this exhaustive.
+
         #[allow(unreachable_patterns)]
         other => {
             error!("Subcommand not implemented: {:?}", other);

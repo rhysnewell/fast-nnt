@@ -526,15 +526,15 @@ impl PhyloSplitsGraph {
 
     /* --------------- rotation helpers --------------- */
     #[inline]
-    fn rot_mut(&mut self, v: NodeIndex) -> &mut Vec<EdgeIndex> {
+    pub fn rot_mut(&mut self, v: NodeIndex) -> &mut Vec<EdgeIndex> {
         self.rotation.entry(v).or_default()
     }
     #[inline]
-    fn rot(&self, v: NodeIndex) -> &[EdgeIndex] {
+    pub fn rot(&self, v: NodeIndex) -> &[EdgeIndex] {
         self.rotation.get(&v).map(|r| r.as_slice()).unwrap_or(&[])
     }
     #[inline]
-    fn rot_insert_after(&mut self, v: NodeIndex, after: EdgeIndex, e_new: EdgeIndex) {
+    pub fn rot_insert_after(&mut self, v: NodeIndex, after: EdgeIndex, e_new: EdgeIndex) {
         let r = self.rot_mut(v);
         if let Some(i) = r.iter().position(|&x| x == after) {
             r.insert(i + 1, e_new);
@@ -543,11 +543,11 @@ impl PhyloSplitsGraph {
         }
     }
     #[inline]
-    fn rot_append(&mut self, v: NodeIndex, e_new: EdgeIndex) {
+    pub fn rot_append(&mut self, v: NodeIndex, e_new: EdgeIndex) {
         self.rot_mut(v).push(e_new);
     }
     #[inline]
-    fn rot_remove(&mut self, v: NodeIndex, e: EdgeIndex) {
+    pub fn rot_remove(&mut self, v: NodeIndex, e: EdgeIndex) {
         if let Some(r) = self.rotation.get_mut(&v) {
             if let Some(i) = r.iter().position(|&x| x == e) {
                 r.remove(i);
@@ -773,8 +773,6 @@ mod phylo_splits_graph_tests {
                     ac_found = true;
                     // split id of the new edge should be 5 (copied from BC)
                     assert_eq!(g.get_split(e), 5);
-                    // weight/angle copied from BC as well (if your impl copies them)
-                    // Can't guarantee exact edge identity, so we just assert presence
                 }
             }
         }

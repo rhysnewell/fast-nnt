@@ -61,7 +61,6 @@ fn escape_label(s: &str) -> String {
     s.replace('\'', "''")
 }
 
-/// Optional: emit TITLE/LINK if you want parity with NexusIOBase.writeTitleAndLink().
 fn write_title_and_link<W: FmtWrite>(
     mut w: W,
     title: Option<&str>,
