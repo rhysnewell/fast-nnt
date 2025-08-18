@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use anyhow::{Result, bail};
+use std::collections::{HashMap, HashSet};
+use anyhow::{Result, anyhow, bail};
 use fixedbitset::FixedBitSet;
 use petgraph::{csr::IndexType, prelude::{EdgeIndex, NodeIndex}, visit::{EdgeRef, NodeIndexable}};
 
-use crate::{data::splits_blocks::{SplitsBlock, SplitsProvider}, phylo::phylo_splits_graph::PhyloSplitsGraph, splits::asplit::ASplitView};
+use crate::{algorithms::convex_hull::convex_hull_apply, data::splits_blocks::{SplitsBlock, SplitsProvider}, phylo::phylo_splits_graph::PhyloSplitsGraph, splits::asplit::ASplitView};
 use log::info;
 
 #[derive(Copy, Clone, Debug)]
@@ -67,7 +67,8 @@ pub fn equal_angle_apply(
     let mut all_used = true;
     for &sid in &ordered {
         if is_circular_by_cycle(splits, sid, &cycle) {
-            // TODO: full Bryant–Huson wrapping algorithm.
+            // Wrap split sid around the cycle
+            wrap_split(ntax, splits, sid, &cycle, graph)?;
             // Placeholder: log and mark used. We don’t modify graph topology here yet.
             used_splits.grow(splits.nsplits() + 1);
             used_splits.insert(sid);
@@ -83,15 +84,16 @@ pub fn equal_angle_apply(
     assign_angles_to_edges(ntax, splits, &cycle, graph, forbidden_splits, opts.total_angle_deg);
 
     // 6) rotate so the edge leaving taxon 1 points to 9 o’clock
-    let (_align, _extra) = rotate_angles_align_then_offset(graph, 1, 180.0, 15.0);
+    let (_align, _extra) = rotate_angles_align_then_offset(graph, 1, 180.0, 0.0);
 
     // 7) assign coordinates from angles (DFS through graph)
     // You can collect and reuse for Network writer
     let _coords = assign_coordinates_to_nodes(opts.use_weights, graph, 1, opts.root_split);
-
+    
+    
     // 8) add leaf node labels from taxa
     add_leaf_labels_from_taxa(graph, taxa_labels);
-
+    
     info!(
         "EqualAngle: initialized network with {} nodes, {} edges in {:?} (use_weights={})",
         graph.base.graph.node_count(),
@@ -99,6 +101,15 @@ pub fn equal_angle_apply(
         t0.elapsed(),
         opts.use_weights
     );
+    if !all_used {
+        // assign remaining with ConvexHull
+        convex_hull_apply(
+            ntax,
+            taxa_labels,
+            splits.get_splits(),
+            graph,
+        )?;
+    }
 
     Ok(all_used)
 }
@@ -151,7 +162,7 @@ fn init_graph_star(
         let t = cycle[i];
         let leaf = g.base.new_node();
         g.base.add_taxon(leaf, t);
-        let e = g.base.new_edge(center, leaf)?;
+        let e = g.new_edge(center, leaf)?;
         let sid = taxon2trivial[t];
         if sid != 0 {
             let w = splits.split(sid as usize).weight();
@@ -210,8 +221,9 @@ fn remove_temporary_trivial_edges(g: &mut PhyloSplitsGraph) {
         if let Some((u, v)) = g.base.graph.edge_endpoints(e) {
             // choose leaf node (degree 1) to delete; move its taxa to the other node
             let du = g.base.graph.neighbors(u).count();
-            let _dv = g.base.graph.neighbors(v).count();
-            let (leaf, keep) = if du == 1 { (u, v) } else { (v, u) };
+            let dv = g.base.graph.neighbors(v).count();
+            let (leaf, keep) = if du == 1 { (u, v) } else if dv == 1 { (v, u) } else { continue };
+
             if let Some(list) = g.base.node2taxa().expect("No taxa mapping").get(&leaf).cloned() {
                 for t in list { g.base.add_taxon(keep, t); }
                 // clear on leaf
@@ -340,21 +352,21 @@ pub fn rotate_angles_align_leaf(g: &mut PhyloSplitsGraph, taxon_id: usize, targe
     Some(delta)
 }
 
-
-/// Assign coordinates by DFS following edge angles; start at taxon `start_taxon_id` with (0,0)
 pub fn assign_coordinates_to_nodes(
     use_weights: bool,
     g: &PhyloSplitsGraph,
     start_taxon_id: usize,
     root_split: i32,
 ) -> HashMap<NodeIndex, Pt> {
-    let mut node2pt: HashMap<NodeIndex, Pt> = HashMap::new();
-    let Some(v0) = g.base.taxon2node().expect("No taxon2node map").get(&start_taxon_id) else { return node2pt; };
-    node2pt.insert(*v0, Pt(0.0, 0.0));
+    let mut pts = HashMap::new();
+    let Some(&v0) = g.base.taxon2node().expect("taxon map").get(&start_taxon_id) else { return pts; };
+    pts.insert(v0, Pt(0.0, 0.0));
 
-    let mut visited = fixedbitset::FixedBitSet::with_capacity(g.base.graph.node_bound().index());
-    dfs_coords(use_weights, g, *v0, &mut visited, &mut node2pt, root_split);
-    node2pt
+    let mut visited = FixedBitSet::with_capacity(g.base.graph.node_bound().index());
+    let mut splits_in_path = FixedBitSet::with_capacity((g.max_split_id().max(0) as usize) + 2);
+
+    dfs_coords(use_weights, g, v0, &mut visited, &mut splits_in_path, &mut pts, root_split);
+    pts
 }
 
 fn dfs_coords(
@@ -362,37 +374,35 @@ fn dfs_coords(
     g: &PhyloSplitsGraph,
     v: NodeIndex,
     visited: &mut FixedBitSet,
-    node2pt: &mut HashMap<NodeIndex, Pt>,
+    splits_in_path: &mut FixedBitSet,
+    pts: &mut HashMap<NodeIndex, Pt>,
     root_split: i32,
 ) {
     if visited.contains(v.index()) { return; }
     visited.insert(v.index());
 
-    // clone neighbors list to avoid borrow checker headaches
-    let neighbors: Vec<(EdgeIndex, NodeIndex)> = g.base.graph.edges(v)
-        .map(|e| (e.id(), e.target())).collect();
+    let nbrs: Vec<(EdgeIndex, NodeIndex)> =
+        g.base.graph.edges(v).map(|e| (e.id(), e.target())).collect();
 
-    for (e, w) in neighbors {
+    for (e, w) in nbrs {
         let sid = g.get_split(e);
-        // guard against using the same split twice on the path? In Java they use a BitSet path; here we rely on visited nodes
-        if !visited.contains(w.index()) {
-            // step length
-            let weight = if use_weights {
-                g.base.weight(e)
-            } else if sid == root_split {
-                0.1
-            } else { 1.0 };
+        if sid <= 0 { continue; }
+        let s = sid as usize;
+        if splits_in_path.len() <= s { splits_in_path.grow(s + 1); }
+        if splits_in_path.contains(s) { continue; } // KEY guard
+        splits_in_path.insert(s);
 
-            let theta = g.get_angle(e).to_radians();
-            let Pt(x, y) = *node2pt.get(&v).unwrap_or(&Pt(0.0, 0.0));
-            let nx = x + weight * theta.cos();
-            let ny = y + weight * theta.sin();
-            node2pt.insert(w, Pt(nx, ny));
+        let step = if use_weights { g.base.weight(e) }
+                   else if sid == root_split { 0.1 } else { 1.0 };
+        let Pt(x, y) = *pts.get(&v).unwrap();
+        let a = g.get_angle(e).to_radians();
+        pts.insert(w, Pt(x + step * a.cos(), y + step * a.sin()));
 
-            dfs_coords(use_weights, g, w, visited, node2pt, root_split);
-        }
+        dfs_coords(use_weights, g, w, visited, splits_in_path, pts, root_split);
+        splits_in_path.set(s, false);               // backtrack
     }
 }
+
 
 /// Apply leaf labels from taxa labels (if exactly one taxon maps to the leaf), else keep node label
 fn add_leaf_labels_from_taxa(g: &mut PhyloSplitsGraph, taxa: &[String]) {
@@ -414,6 +424,170 @@ fn add_leaf_labels_from_taxa(g: &mut PhyloSplitsGraph, taxa: &[String]) {
         g.base.set_node_label(v, lab);
     }
 }
+
+/// Translate Java: EqualAngle.wrapSplit(...)
+/// - `ntax`: number of taxa (1-based domain, i.e., taxa ids are 1..=ntax)
+/// - `cycle`: 1-based array [ _, t1, t2, ..., t_ntax ] (index 0 ignored), already normalized
+pub fn wrap_split(
+    ntax: usize,
+    splits: &SplitsBlock,
+    s: usize,                 // split id (1-based)
+    cycle: &[usize],          // 1-based cycle
+    graph: &mut PhyloSplitsGraph,
+) -> Result<()> {
+    // Part of split s that does NOT contain taxon 1 (1-based membership)
+    let part = splits.get(s).part_not_containing(1);
+
+    // xp = first taxon in that part along the cycle
+    // xq = last  taxon in that part along the cycle
+    let (mut xp, mut xq) = (0usize, 0usize);
+    for i in 1..=ntax {
+        let t = cycle[i];
+        if part.contains(t) {
+            if xp == 0 {
+                xp = t;
+            }
+            xq = t;
+        }
+    }
+    if xp == 0 || xq == 0 {
+        bail!("wrap_split: split {} has empty non-1 part after cycle filtering", s);
+    }
+
+    // vp and vq: leaf nodes for taxa xp and xq
+    let vp = graph
+        .base
+        .get_taxon_node(xp)
+        .ok_or_else(|| anyhow!("wrap_split: no node for taxon {}", xp))?;
+    let vq = graph
+        .base
+        .get_taxon_node(xq)
+        .ok_or_else(|| anyhow!("wrap_split: no node for taxon {}", xq))?;
+
+    let e_vp = graph.first_adjacent_edge(vp).ok_or_else(|| {
+        anyhow!("wrap_split: taxon node vp ({:?}) has no incident edge", vp)
+    })?;
+
+    let e_vq = graph.first_adjacent_edge(vq).ok_or_else(|| {
+        anyhow!("wrap_split: taxon node vq ({:?}) has no incident edge", vq)
+    })?;
+
+    let target_leaf_edge = e_vq; // Java: vq.getFirstAdjacentEdge()
+
+    // Start from vp’s leaf edge and step to the inner neighbor
+    let mut e = e_vp;
+    let mut v = graph.base.get_opposite(vp, e);
+
+    // Leaf edges we’ll copy at the current step (Java accumulates then clears each round)
+    let mut leaf_edges: Vec<EdgeIndex> = Vec::with_capacity(ntax);
+
+    // "nodesVisited" to detect cycles (should not happen)
+    let mut nodes_visited: HashSet<NodeIndex> = HashSet::new();
+
+    // prevU = previous node on the new boundary path
+    let mut prev_u: Option<NodeIndex> = None;
+
+    // Boundary walk
+    loop {
+        debug!("wrap_split: entering node {:?} via edge {:?} (nodes visits {})", v, e, nodes_visited.len());
+        if !nodes_visited.insert(v) {
+            // already present
+            bail!("wrap_split: node revisited during wrapping: {:?}", v);
+        }
+
+        // f0 is the edge by which we enter node v
+        let f0 = e;
+
+        // Gather leaf edges incident to v; detect if we reached target_leaf_edge
+        // Also choose the "next" non-leaf boundary edge (not equal to f0).
+        let mut reached_end = false;
+        leaf_edges.clear();
+        let mut next_e: Option<EdgeIndex> = None;
+
+        // Collect adjacency first to avoid borrow issues while mutating later
+        if let Some(mut f) = graph.next_adjacent_edge_cyclic(v, e) {
+            while graph.is_leaf_edge(f) {
+                leaf_edges.push(f);
+                if f == target_leaf_edge {
+                    break;
+                }
+                if f == f0 {
+                    return Err(anyhow!(
+                        "wrap_split: next adjacent edge cyclic after f0 ({:?}) is also f0; cycle detected at node {:?}",
+                        f0, v
+                    ));
+                }
+                f = graph.next_adjacent_edge_cyclic(v, f).ok_or_else(|| {
+                    anyhow!("wrap_split: no next leaf edge at node {:?} (after entering via {:?})", v, e)
+                })?;
+            }
+
+            if f == target_leaf_edge {
+                next_e = None; // no next edge, we reached the target leaf edge
+                reached_end = true;
+            } else {
+                next_e = Some(f);
+                
+            }
+            debug!("wrap_split: reached node {:?} edge {:?} (via {:?})", v, f, f0);
+        };
+
+        // Create new node on the NEW path
+        let u = graph.base.new_node();
+
+        // Edge from new node `u` to old node `v` (inserted "after f0" in Java — we can’t control embedding)
+        let f_uv = graph.new_edge_after(u, v, f0)?;
+        graph.set_split(f_uv, s as i32);
+        graph
+            .base
+            .set_weight(f_uv, splits.get(s).weight().into());
+
+        // If we already had a previous `u`, connect it to the current `u` carrying split/weight from `e`
+        if let Some(prev) = prev_u {
+            // Snapshot split/weight on `e` before any mutation
+            let e_split = graph.get_split(e);
+            let e_w = graph.base.weight(e);
+            let f_uprev = graph.new_edge(u, prev)?;
+            graph.set_split(f_uprev, e_split);
+            graph.base.set_weight(f_uprev, e_w);
+        }
+
+        // Copy each leaf edge (v -- w) to (u -- w), copying split/weight; then delete old edge
+        // Snapshot required info before mutation to avoid borrow conflicts
+        let mut copies: Vec<(NodeIndex, i32, f64, EdgeIndex)> = Vec::with_capacity(leaf_edges.len());
+        for f in leaf_edges.iter().copied() {
+            let w = graph.base.get_opposite(v, f);
+            let s_id = graph.get_split(f);
+            let wgt = graph.base.weight(f);
+            copies.push((w, s_id, wgt, f));
+        }
+        for (w, s_id, wgt, f_old) in copies {
+            let f_new = graph.new_edge(u, w)?;
+            graph.set_split(f_new, s_id);
+            graph.base.set_weight(f_new, wgt);
+            graph.remove_edge(f_old); // delete original leaf edge
+        }
+
+        // Advance along boundary or stop if we encountered the target leaf edge
+        if reached_end {
+            break;
+        } else {
+            let ne = next_e.ok_or_else(|| {
+                anyhow!(
+                    "wrap_split: no next boundary edge at node {:?} (after entering via {:?})",
+                    v,
+                    f0
+                )
+            })?;
+            v = graph.base.get_opposite(v, ne);
+            e = ne;
+            prev_u = Some(u);
+        }
+    }
+
+    Ok(())
+}
+
 
 /* ----------------------------- tiny utilities ------------------------------ */
 

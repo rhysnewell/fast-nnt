@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use fixedbitset::FixedBitSet;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{EdgeRef, NodeIndexable};
@@ -35,6 +36,8 @@ pub struct PhyloSplitsGraph {
 
     // 1-based taxon id → cycle position (1..=ntax); index 0 is unused
     taxon_cycle_map: Option<Vec<usize>>,
+    // rotation system (cyclic order of incident edges)
+    rotation: HashMap<NodeIndex, Vec<EdgeIndex>>,
 }
 
 impl PhyloSplitsGraph {
@@ -49,6 +52,7 @@ impl PhyloSplitsGraph {
         self.edge_split_map = None;
         self.edge_angle_map = None;
         self.taxon_cycle_map = None;
+        self.rotation.clear();
     }
 
     pub fn name(&self) -> Option<&str> {
@@ -143,9 +147,9 @@ impl PhyloSplitsGraph {
             let u = old2new_node[&u_old];
             let v = old2new_node[&v_old];
             let f = if let Some(l) = src.base.edge_label(e) {
-                self.base.new_edge_with_label(u, v, l.to_string()).unwrap()
+                self.new_edge_with_label(u, v, l.to_string()).unwrap()
             } else {
-                self.base.new_edge(u, v).unwrap()
+                self.new_edge(u, v).unwrap()
             };
             self.base.set_weight(f, src.base.weight(e));
             if let Some(conf) = src
@@ -245,7 +249,7 @@ impl PhyloSplitsGraph {
                 }
 
                 // create new edge g: (u, v)
-                if let Ok(g) = self.base.new_edge(u, v) {
+                if let Ok(g) = self.new_edge(u, v) {
                     // copy split, weight, angle from f
                     let sid = self.get_split(f);
                     if sid != 0 {
@@ -312,7 +316,7 @@ impl PhyloSplitsGraph {
             self.base.clear_taxa_for_node(w);
 
             // delete w
-            self.base.remove_node_and_cleanup(w);
+            self.remove_node_and_cleanup(w); // not base.remove_node_and_cleanup
         }
     }
 
@@ -426,15 +430,11 @@ impl PhyloSplitsGraph {
         // flips := OR of all character-sets for splits in 'used'
         let mut flips = FixedBitSet::with_capacity(first_chars.len());
         // iterate split ids present in 'used' (we don't know max; iterate keys)
-        if let Some(sm) = &self.edge_split_map {
-            for (&sid, _) in sm.iter() {
-                if used.contains(sid.index()) {
-                    if let Some(bits) = split2chars.get(&(sid.index() as i32)) {
-                        let mut tmp = flips.clone();
-                        tmp.union_with(bits);
-                        flips = tmp;
-                    }
-                }
+        for s in used.ones() {
+            if let Some(bits) = split2chars.get(&(s as i32)) {
+                let mut tmp = flips.clone();
+                tmp.union_with(bits);
+                flips = tmp;
             }
         }
 
@@ -465,6 +465,83 @@ impl PhyloSplitsGraph {
                     fb_set(used, idx, false);
                 }
             }
+        }
+    }
+
+    /// Create (u,v) and append on both rotations.
+    pub fn new_edge(&mut self, u: NodeIndex, v: NodeIndex) -> anyhow::Result<EdgeIndex> {
+        let e = self.base.new_edge(u, v)?;
+        self.rot_append(u, e);
+        self.rot_append(v, e);
+        Ok(e)
+    }
+
+    pub fn new_edge_with_label(&mut self, u: NodeIndex, v: NodeIndex, lbl: String)
+        -> anyhow::Result<EdgeIndex>
+    {
+        let e = self.base.new_edge_with_label(u, v, lbl)?;
+        self.rot_append(u, e);
+        self.rot_append(v, e);
+        Ok(e)
+    }
+
+    /// Create (u,v) and splice its v-side halfedge AFTER `f0_at_v` (matches Java’s AFTER).
+    pub fn new_edge_after(&mut self, u: NodeIndex, v: NodeIndex, f0_at_v: EdgeIndex)
+        -> anyhow::Result<EdgeIndex>
+    {
+        let e = self.base.new_edge(u, v)?;
+        self.rot_append(u, e);
+        self.rot_insert_after(v, f0_at_v, e);
+        Ok(e)
+    }
+
+    /// Remove an edge and keep rotations in sync.
+    pub fn remove_edge(&mut self, e: EdgeIndex) -> bool {
+        if let Some((u, v)) = self.base.graph.edge_endpoints(e) {
+            self.rot_remove(u, e);
+            self.rot_remove(v, e);
+            self.base.graph.remove_edge(e).is_some()
+        } else { false }
+    }
+
+    /// Remove a node and all incident edges, updating rotations.
+    pub fn remove_node_and_cleanup(&mut self, v: NodeIndex) {
+        if let Some(rs) = self.rotation.remove(&v) {
+            for e in rs {
+                if let Some((a, b)) = self.base.graph.edge_endpoints(e) {
+                    let other = if a == v { b } else { a };
+                    self.rot_remove(other, e);
+                    self.base.graph.remove_edge(e);
+                }
+            }
+        }
+        self.base.remove_node_and_cleanup(v);
+    }
+
+    /* --------------- rotation helpers --------------- */
+    #[inline]
+    fn rot_mut(&mut self, v: NodeIndex) -> &mut Vec<EdgeIndex> {
+        self.rotation.entry(v).or_default()
+    }
+    #[inline]
+    fn rot(&self, v: NodeIndex) -> &[EdgeIndex] {
+        self.rotation.get(&v).map(|r| r.as_slice()).unwrap_or(&[])
+    }
+    #[inline]
+    fn rot_insert_after(&mut self, v: NodeIndex, after: EdgeIndex, e_new: EdgeIndex) {
+        let r = self.rot_mut(v);
+        if let Some(i) = r.iter().position(|&x| x == after) { r.insert(i + 1, e_new); }
+        else { r.push(e_new); }
+    }
+    #[inline]
+    fn rot_append(&mut self, v: NodeIndex, e_new: EdgeIndex) {
+        self.rot_mut(v).push(e_new);
+    }
+    #[inline]
+    fn rot_remove(&mut self, v: NodeIndex, e: EdgeIndex) {
+        if let Some(r) = self.rotation.get_mut(&v) {
+            if let Some(i) = r.iter().position(|&x| x == e) { r.remove(i); }
+            if r.is_empty() { self.rotation.remove(&v); }
         }
     }
 
@@ -541,6 +618,47 @@ impl PhyloSplitsGraph {
 
     pub fn network_type(&self) -> &str {
         "phylo-splits"
+    }
+
+    #[inline]
+    pub fn first_adjacent_edge(&self, v: NodeIndex) -> Option<EdgeIndex> {
+        self.rot(v).first().copied()
+    }
+    #[inline]
+    pub fn last_adjacent_edge(&self, v: NodeIndex) -> Option<EdgeIndex> {
+        self.rot(v).last().copied()
+    }
+    pub fn next_adjacent_edge_cyclic(&self, v: NodeIndex, e: EdgeIndex) -> Option<EdgeIndex> {
+        let r = self.rot(v);
+        if r.is_empty() { return None; }
+        if let Some(i) = r.iter().position(|&x| x == e) { Some(r[(i + 1) % r.len()]) }
+        else { r.first().copied() }
+    }
+    pub fn prev_adjacent_edge_cyclic(&self, v: NodeIndex, e: EdgeIndex) -> Option<EdgeIndex> {
+        let r = self.rot(v);
+        if r.is_empty() { return None; }
+        if let Some(i) = r.iter().position(|&x| x == e) { Some(r[(i + r.len() - 1) % r.len()]) }
+        else { r.last().copied() }
+    }
+
+    #[inline]
+    pub fn opposite(&self, v: NodeIndex, e: EdgeIndex) -> anyhow::Result<NodeIndex> {
+        let (a, b) = self
+            .base
+            .graph
+            .edge_endpoints(e)
+            .ok_or_else(|| anyhow::anyhow!("opposite: edge {:?} has no endpoints", e))?;
+        Ok(if a == v { b } else { a })
+    }
+
+    pub fn is_leaf_edge(&self, e: EdgeIndex) -> bool {
+        if let Some((a, b)) = self.base.graph.edge_endpoints(e) {
+            let da = self.base.graph.neighbors(a).count();
+            let db = self.base.graph.neighbors(b).count();
+            da == 1 || db == 1
+        } else {
+            false
+        }
     }
 }
 

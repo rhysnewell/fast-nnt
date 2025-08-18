@@ -213,6 +213,10 @@ impl PhyloGraph {
         self.taxon2node.as_ref()?.get(&taxon).copied()
     }
 
+    pub fn get_node_taxon(&self, node: NodeIndex) -> Option<&[usize]> {
+        self.node2taxa.as_ref()?.get(&node).map(|v| v.as_slice())
+    }
+
     pub fn number_of_taxa(&self) -> usize {
         self.taxon2node.as_ref().map(|m| m.len()).unwrap_or(0)
     }
@@ -287,6 +291,10 @@ impl PhyloGraph {
                 }
             }
         }
+    }
+
+    pub fn remove_edge(&mut self, e: EdgeIndex) {
+        self.graph.remove_edge(e);
     }
 
     pub fn clear_all_taxa(&mut self) {
@@ -407,5 +415,15 @@ impl PhyloGraph {
         }
         // Java add() did NOT copy taxa; we keep that behavior.
         old2new
+    }
+
+    pub fn get_opposite(&self, v: NodeIndex, e: EdgeIndex) -> NodeIndex {
+        let endpoints = self.graph
+            .edge_endpoints(e).expect("valid edge endpoints");
+        if endpoints.0 == v {
+            endpoints.1
+        } else {
+            endpoints.0
+        }
     }
 }

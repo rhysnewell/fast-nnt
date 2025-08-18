@@ -1,0 +1,183 @@
+#nexus [SplitsTree6]
+
+BEGIN SPLITSTREE6;
+DIMENSIONS nDataNodes=7 nAlgorithms=5;
+PROGRAM version='SplitsTree App (version 6.5.1, built 31 Jul 2025)';
+WORKFLOW creationDate='1755500075807'; [Mon Aug 18 16:54:35 AEST 2025]
+END; [SPLITSTREE6]
+
+[
+Methods:
+Analysis was performed using SplitsTree App 6.0.0 (Huson and Bryant 2024).
+The original input consisted of 10 taxa and a 10 x 10 distance matrix.
+The Neighbor Net method (Bryant & Moulton 2004, Bryant & Huson 2023) was used (default options) so as to obtain 27 splits, cyclic.
+The Show Splits method was used (default options) so as to obtain a Split Network visualization.
+
+References:
+Bryant & Huson 2023: D. Bryant and DH Huson, NeighborNet- improved algorithms and implementation. Front. Bioinform. 3, 2023.
+Bryant & Moulton 2004: D. Bryant and V. Moulton. Neighbor-net: An agglomerative method for the construction of phylogenetic networks. Molecular Biology and Evolution, 21(2):255– 265, 2004.
+Huson and Bryant 2024: D.H. Huson and D. Bryant. The SplitsTree App: interactive analysis and visualization using phylogenetic trees and networks. Nature Methods, 2024.
+]
+
+BEGIN TAXA;
+TITLE 'Input Taxa';
+LINK ALGORITHM = 'Input Data Loader';
+DIMENSIONS ntax=10;
+TAXLABELS
+	[1] 'a'
+	[2] 'b'
+	[3] 'c'
+	[4] 'd'
+	[5] 'e'
+	[6] 'f'
+	[7] 'g'
+	[8] 'h'
+	[9] 'i'
+	[10] 'j'
+;
+[DISPLAYLABELS;]
+[TAXINFO;]
+END; [TAXA]
+
+BEGIN ALGORITHM;
+TITLE 'Taxa Filter';
+LINK ALGORITHM = 'Input Data Loader';
+NAME 'Taxa Filter';
+OPTIONS
+;
+END; [ALGORITHM]
+
+BEGIN TAXA;
+TITLE 'Working Taxa';
+LINK ALGORITHM = 'Taxa Filter';
+DIMENSIONS ntax=10;
+TAXLABELS
+	[1] 'a'
+	[2] 'b'
+	[3] 'c'
+	[4] 'd'
+	[5] 'e'
+	[6] 'f'
+	[7] 'g'
+	[8] 'h'
+	[9] 'i'
+	[10] 'j'
+;
+[DISPLAYLABELS;]
+[TAXINFO;]
+END; [TAXA]
+
+BEGIN DISTANCES;
+TITLE 'Input Distances';
+LINK ALGORITHM = 'Input Data Loader';
+DIMENSIONS ntax=10;
+FORMAT labels=left diagonal triangle=Both;
+MATRIX
+[1] 'a'   0 3 7 4 5 9 2 8 6 1
+[2] 'b'   3 0 5 2 10 4 11 7 9 8
+[3] 'c'   7 5 0 6 3 8 4 2 5 9
+[4] 'd'   4 2 6 0 7 5 9 3 4 6
+[5] 'e'   5 10 3 7 0 2 6 12 1 5
+[6] 'f'   9 4 8 5 2 0 7 4 3 2
+[7] 'g'   2 11 4 9 6 7 0 5 2 8
+[8] 'h'   8 7 2 3 12 4 5 0 6 7
+[9] 'i'   6 9 5 4 1 3 2 6 0 4
+[10] 'j'   1 8 9 6 5 2 8 7 4 0
+;
+END; [DISTANCES]
+
+BEGIN ALGORITHM;
+TITLE 'Input Data Filter';
+LINK DISTANCES = 'Input Distances';
+NAME 'Distances Taxa Filter';
+END; [ALGORITHM]
+
+BEGIN DISTANCES;
+TITLE 'Working Distances';
+LINK ALGORITHM = 'Input Data Filter';
+DIMENSIONS ntax=10;
+FORMAT labels=left diagonal triangle=Both;
+MATRIX
+[1] 'a'   0 3 7 4 5 9 2 8 6 1
+[2] 'b'   3 0 5 2 10 4 11 7 9 8
+[3] 'c'   7 5 0 6 3 8 4 2 5 9
+[4] 'd'   4 2 6 0 7 5 9 3 4 6
+[5] 'e'   5 10 3 7 0 2 6 12 1 5
+[6] 'f'   9 4 8 5 2 0 7 4 3 2
+[7] 'g'   2 11 4 9 6 7 0 5 2 8
+[8] 'h'   8 7 2 3 12 4 5 0 6 7
+[9] 'i'   6 9 5 4 1 3 2 6 0 4
+[10] 'j'   1 8 9 6 5 2 8 7 4 0
+;
+END; [DISTANCES]
+
+BEGIN ALGORITHM;
+TITLE 'Neighbor Net';
+LINK DISTANCES = 'Working Distances';
+NAME 'Neighbor Net';
+OPTIONS
+	InferenceAlgorithm = 'ActiveSet';
+END; [ALGORITHM]
+
+BEGIN SPLITS;
+TITLE 'Splits';
+LINK ALGORITHM = 'Neighbor Net';
+DIMENSIONS ntax=10 nsplits=27;
+FORMAT labels=no weights=yes confidences=no;
+PROPERTIES fit=93.2 cyclic;
+CYCLE 1 2 4 8 3 7 9 5 6 10;
+MATRIX
+[1, size=1] 	 0 	 1,
+[2, size=2] 	 0.15797165 	 1 2,
+[3, size=3] 	 0.50310685 	 1 2 4,
+[4, size=4] 	 0.94680737 	 1 2 3 4 7 8,
+[5, size=3] 	 0.5299003 	 1 2 3 4 7 8 9,
+[6, size=2] 	 0.13539612 	 1 2 3 4 5 7 8 9,
+[7, size=1] 	 0.05891377 	 1 2 3 4 5 6 7 8 9,
+[8, size=1] 	 1.40266156 	 1 3 4 5 6 7 8 9 10,
+[9, size=2] 	 0.39842901 	 1 3 5 6 7 8 9 10,
+[10, size=4] 	 1.61386623 	 1 5 6 7 9 10,
+[11, size=2] 	 0.9176079 	 1 10,
+[12, size=1] 	 0 	 1 2 3 5 6 7 8 9 10,
+[13, size=2] 	 0.36737931 	 1 2 3 5 6 7 9 10,
+[14, size=3] 	 0.53279886 	 1 2 10,
+[15, size=1] 	 0.60557384 	 1 2 3 4 5 6 7 9 10,
+[16, size=2] 	 0.38577875 	 1 2 4 5 6 7 9 10,
+[17, size=3] 	 1.15704573 	 1 2 4 5 6 9 10,
+[18, size=4] 	 0.13370399 	 1 2 4 5 6 10,
+[19, size=4] 	 0.2703082 	 1 2 4 10,
+[20, size=1] 	 0 	 1 2 4 5 6 7 8 9 10,
+[21, size=4] 	 1.73679543 	 1 2 4 6 8 10,
+[22, size=1] 	 1.10545089 	 1 2 3 4 5 6 8 9 10,
+[23, size=2] 	 0.0435549 	 1 2 3 4 5 6 8 10,
+[24, size=1] 	 0 	 1 2 3 4 5 6 7 8 10,
+[25, size=1] 	 0.462423 	 1 2 3 4 6 7 8 9 10,
+[26, size=2] 	 0.55102919 	 1 2 3 4 7 8 9 10,
+[27, size=1] 	 0 	 1 2 3 4 5 7 8 9 10,
+;
+END; [SPLITS]
+
+BEGIN ALGORITHM;
+TITLE 'Show Splits';
+LINK SPLITS = 'Splits';
+NAME 'Show Splits';
+OPTIONS
+	View = 'SplitNetwork';
+END; [ALGORITHM]
+
+BEGIN VIEW;
+TITLE 'SplitNetwork';
+LINK ALGORITHM = 'Show Splits';
+NAME 'SplitNetwork';
+INPUT 'SPLITS';
+OPTIONS
+	Diagram = 'Splits',
+	Orientation = 'Rotate0Deg',
+	Rooting = 'None',
+	ZoomFactor = 1,
+	FontScaleFactor = 1,
+	RootAngle = 160,
+	OutlineFill = 0xa9a9a9ff,
+	LabelSplitsBy = 'None',
+	ShowQRCode = 'false';
+END; [VIEW]

@@ -1,0 +1,37 @@
+#nexus
+
+BEGIN TAXA;
+DIMENSIONS ntax=10;
+TAXLABELS
+	[1] 'a'
+	[2] 'b'
+	[3] 'c'
+	[4] 'd'
+	[5] 'e'
+	[6] 'f'
+	[7] 'g'
+	[8] 'h'
+	[9] 'i'
+	[10] 'j'
+;
+[DISPLAYLABELS;]
+[TAXINFO;]
+END; [TAXA]
+
+BEGIN DISTANCES;
+DIMENSIONS ntax=10;
+FORMAT labels=left diagonal triangle=Both;
+MATRIX
+[1] 'a'   0 3 7 4 5 9 2 8 6 1
+[2] 'b'   3 0 5 2 10 4 11 7 9 8
+[3] 'c'   7 5 0 6 3 8 4 2 5 9
+[4] 'd'   4 2 6 0 7 5 9 3 4 6
+[5] 'e'   5 10 3 7 0 2 6 12 1 5
+[6] 'f'   9 4 8 5 2 0 7 4 3 2
+[7] 'g'   2 11 4 9 6 7 0 5 2 8
+[8] 'h'   8 7 2 3 12 4 5 0 6 7
+[9] 'i'   6 9 5 4 1 3 2 6 0 4
+[10] 'j'   1 8 9 6 5 2 8 7 4 0
+;
+END; [DISTANCES]
+

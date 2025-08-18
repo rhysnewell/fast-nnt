@@ -8,7 +8,7 @@ use std::{fs, path::Path, time::Instant};
 
 use crate::algorithms::equal_angle::{equal_angle_apply, EqualAngleOpts};
 use crate::cli::NeighborNetArgs;
-use crate::data::splits_blocks::{self, SplitsBlock};
+use crate::data::splits_blocks::SplitsBlock;
 use crate::nexus::nexus_writer::{write_nexus_all_to_path, NexusProperties};
 use crate::ordering::ordering_graph::compute_ordering;
 use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
@@ -72,7 +72,7 @@ impl NeighbourNet {
 
         // 5) Create splits blocks
         let t_spl = Instant::now();
-        let mut splits_blocks = splits_blocks::SplitsBlock::new();
+        let mut splits_blocks = SplitsBlock::new();
         splits_blocks.set_splits(splits);
         splits_blocks.set_fit(fit);
         // splits_blocks.set_threshold(params.threshold);
@@ -84,7 +84,6 @@ impl NeighbourNet {
         // 6) Create phylogenetic splits graph
         let t_graph = Instant::now();
         let mut graph = PhyloSplitsGraph::new();
-        let n_taxa = distance_matrix.nrows();
         // then:
         let cycle = splits_blocks.cycle().expect("Cycle not yet set."); // ensure cycle[1]==1
         let mut used_splits = FixedBitSet::with_capacity(splits_blocks.nsplits() + 1);
@@ -471,7 +470,7 @@ fn system_stats() -> SystemStats {
 }
 
 fn current_rss_bytes() -> u64 {
-    use sysinfo::{Pid, Process, System};
+    use sysinfo::System;
     let mut sys = System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     if let Ok(pid) = sysinfo::get_current_pid() {
@@ -533,14 +532,14 @@ fn peak_rss_bytes() -> Option<u64> {
 
 /* ───────────── misc helpers ───────────── */
 
-fn default_out_dir(input: &str) -> String {
-    let p = Path::new(input);
-    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-        format!("{}_nn", stem)
-    } else {
-        "nn_out".to_string()
-    }
-}
+// fn default_out_dir(input: &str) -> String {
+//     let p = Path::new(input);
+//     if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+//         format!("{}_nn", stem)
+//     } else {
+//         "nn_out".to_string()
+//     }
+// }
 
 /// Pick the delimiter with the most hits among common choices.
 fn detect_delim(line: &str) -> char {
@@ -607,14 +606,14 @@ fn sniff_header_index(rows: &[Vec<String>]) -> anyhow::Result<(bool, bool)> {
     Ok((has_header, has_index))
 }
 
-fn ones_to_string(bs: &fixedbitset::FixedBitSet) -> String {
-    let mut v: Vec<usize> = bs.ones().filter(|&t| t != 0).collect();
-    v.sort_unstable();
-    v.iter()
-        .map(|i| i.to_string())
-        .collect::<Vec<_>>()
-        .join(";")
-}
+// fn ones_to_string(bs: &fixedbitset::FixedBitSet) -> String {
+//     let mut v: Vec<usize> = bs.ones().filter(|&t| t != 0).collect();
+//     v.sort_unstable();
+//     v.iter()
+//         .map(|i| i.to_string())
+//         .collect::<Vec<_>>()
+//         .join(";")
+// }
 /* ───────────── tests ───────────── */
 
 #[cfg(test)]

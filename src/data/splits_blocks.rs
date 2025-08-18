@@ -33,7 +33,7 @@ pub struct SplitsFormat {
 /// Container of circular splits for Equal-Angle / NEXUS writing.
 #[derive(Debug, Clone, Default)]
 pub struct SplitsBlock {
-    splits: Vec<ASplit>,                 // 1-based access via get(i)
+    pub splits: Vec<ASplit>,                 // 1-based access via get(i)
     compatibility: Compatibility,
     fit: f32,
     threshold: f32,
@@ -75,6 +75,7 @@ impl SplitsBlock {
     pub fn nsplits(&self) -> usize { self.splits.len() }
     pub fn splits(&self) -> impl Iterator<Item=&ASplit> { self.splits.iter() }
     pub fn splits_mut(&mut self) -> impl Iterator<Item=&mut ASplit> { self.splits.iter_mut() }
+    pub fn get_splits(&self) -> &[ASplit] { &self.splits }
 
     /// 1-based accessor (panics if out of range, matches Java’s get(i))
     pub fn get(&self, i: usize) -> &ASplit {

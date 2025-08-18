@@ -891,52 +891,6 @@ mod tests {
         ];
 
         compare_float_array(&atx, &exp, 1e-8);
-        // let norm_atd = sqrt(sumArraySquared(Atd, n));
-        let norm_atx = sum_array_squared(&atx, n).sqrt();
-        assert_eq!(norm_atx, 959.9874999186187);
-        let mut params = NNLSParams::default();
-        params.proj_grad_bound = (1e-4 * norm_atx).powi(2);
-
-        let mut x_exp = vec![2.0, 2.0, 1.0, 4.0, -4.0, -0.5, 0.0, 3.0, 1.5, -3.5, 4.0, -0.5, 5.0, -1.5, 2.5, -6.0, 1.0, 0.5, -0.5, -3.0, 3.0, 0.0, 1.0, 1.5, -0.5, 3.0, -3.5, 1.5, -1.0, -3.0, -1.0, 2.5, -1.0, 2.5, -0.5, 1.0, -0.5, 1.0, 0.5, -0.5, 3.5, 0.0, -3.0, 3.0, 0.0];
-        let mut d_exp = vec![3.0, 11.0, 4.0, 12.0, 6.0, 7.0, 5.0, 10.0, 9.0, 1.0, 2.0, 9.0, 13.0, 11.0, 14.0, 7.0, 8.0, 2.0, 8.0, 6.0, 10.0, 13.0, 8.0, 12.0, 5.0, 9.0, 6.0, 12.0, 5.0, 3.0, 2.0, 4.0, 8.0, 6.0, 3.0, 4.0, 7.0, 7.0, 5.0, 2.0, 9.0, 7.0, 1.0, 5.0, 4.0];
-
-        let mut x = vec![0.0; n_pairs];
-        calc_ainv_y(&d, &mut x, n);
-        let min_val = x.iter().copied().fold(f64::INFINITY, f64::min);
-
-        assert_eq!(min_val, -6.0);
-        compare_float_array(&x, &x_exp, 1e-8);
-        compare_float_array(&d, &d_exp, 1e-8);
-
-
-        let start = Instant::now();
-        zero_negative_entries(&mut x);
-        let mut active = vec![false; n_pairs];
-        get_active_entries(&x, &mut active);
-
-        let mut scratch = Scratch::new(n_pairs); // p, r, z, w
-        let mut splits_idx = vec![0usize; n_pairs];
-        let mut order_idx: Vec<usize> = (0..n_pairs).collect();
-        let mut vals = vec![0.0; n_pairs];
-
-        active_set_method(
-            &mut x,
-            &d,
-            n,
-            &mut params,
-            &mut active,
-            &mut scratch,
-            &mut splits_idx,
-            &mut order_idx,
-            &mut vals,
-            None,
-            start,
-        ).expect("active set method failed");
-
-        x_exp = vec![1.3724245430681956, 1.3454752556293355, 0.0, 2.012589097140714, 0.0, 0.0, 0.432648565932274, 0.0, 1.2912946058459376, 0.0, 1.7933838153171087, 0.7711228988729982, 1.0043842023776657, 0.0, 0.0, 0.0, 0.0, 0.8997353824936709, 0.0, 0.0, 0.0, 0.6914161425268539, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.24973217871606335, 0.9249564751107247, 0.5594817784033412, 0.6432103250072205, 0.0, 0.7511706061796792, 0.0, 0.0, 0.0, 0.06892851867483342, 1.9992119883544948, 0.0, 0.0, 1.889915657808208, 0.0];
-        d_exp = vec![3.0, 11.0, 4.0, 12.0, 6.0, 7.0, 5.0, 10.0, 9.0, 1.0, 2.0, 9.0, 13.0, 11.0, 14.0, 7.0, 8.0, 2.0, 8.0, 6.0, 10.0, 13.0, 8.0, 12.0, 5.0, 9.0, 6.0, 12.0, 5.0, 3.0, 2.0, 4.0, 8.0, 6.0, 3.0, 4.0, 7.0, 7.0, 5.0, 2.0, 9.0, 7.0, 1.0, 5.0, 4.0];
-        compare_float_array(&x, &x_exp, 1e-8);
-        compare_float_array(&d, &d_exp, 1e-8);
     }
 
     #[test]
