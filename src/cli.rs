@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 
-use crate::weights::active_set_weights::NNLSParams;
+use crate::{ordering::OrderingMethod, weights::active_set_weights::NNLSParams};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -62,6 +62,8 @@ pub struct NeighborNetArgs {
         default_value = "output"
     )]
     pub output_prefix: String,
+    #[arg(short='O', long, help = "The ordering algorithm to use to get splits cycle", default_value = "huson2023")]
+    pub ordering: OrderingMethod,
     #[clap(flatten)]
     pub nnls_params: NNLSParams,
 }

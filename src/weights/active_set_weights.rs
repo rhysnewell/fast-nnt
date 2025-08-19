@@ -691,7 +691,7 @@ fn pair_idx(i: usize, j: usize, n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::ordering::ordering_graph::compute_ordering;
+    use crate::ordering::ordering_huson2023::compute_order_huson_2023;
 
     use super::*;
     use ndarray::{Array2, arr2};
@@ -1205,7 +1205,7 @@ mod tests {
                 0.935940, 0.599593, 0.729686, 0.000000,
             ],
         ]);
-        let mut ord = compute_ordering(&d);
+        let mut ord = compute_order_huson_2023(&d);
 
         // reverse ordering but keep first 2 indices in place
         ord[2..].reverse();

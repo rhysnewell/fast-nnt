@@ -63,7 +63,7 @@ impl Component {
 /// Input distances are 0-based (shape n x n), symmetric, with zeros on the diagonal.
 /// Output matches Java version: a vector of length n+1 with a leading 0 sentinel,
 /// followed by a 1-based circular order of taxa.
-pub fn compute_ordering(dist: &Array2<f64>) -> Vec<usize> {
+pub fn compute_order_huson_2023(dist: &Array2<f64>) -> Vec<usize> {
     let n_tax = dist.nrows();
     assert_eq!(
         n_tax,
@@ -509,7 +509,7 @@ mod tests {
     fn small_triangle() {
         // 3 taxa — returns [0,1,2,3]
         let d = arr2(&[[0.0, 1.0, 2.0], [1.0, 0.0, 1.5], [2.0, 1.5, 0.0]]);
-        let ord = compute_ordering(&d);
+        let ord = compute_order_huson_2023(&d);
         assert_eq!(ord, vec![0, 1, 2, 3]);
     }
 
@@ -527,7 +527,7 @@ mod tests {
             [2.0, 1.5, 0.0, 1.5],
             [3.0, 2.5, 1.5, 0.0],
         ]);
-        let ord = compute_ordering(&d);
+        let ord = compute_order_huson_2023(&d);
         assert_eq!(ord, vec![0, 1, 2, 4, 3]);
     }
 
@@ -548,7 +548,7 @@ mod tests {
             [9.0, 10.0, 8.0, 0.0, 3.0],
             [8.0, 9.0, 7.0, 3.0, 0.0],
         ]);
-        let ord = compute_ordering(&d);
+        let ord = compute_order_huson_2023(&d);
         let exp = vec![0, 1, 2, 5, 4, 3];
         assert_eq!(ord, exp);
     }
@@ -570,7 +570,7 @@ mod tests {
             [4.0, 7.0, 9.0, 0.0, 2.0],
             [5.0, 8.0, 1.0, 2.0, 0.0],
         ]);
-        let ord = compute_ordering(&d);
+        let ord = compute_order_huson_2023(&d);
         let exp = vec![0, 1, 2, 4, 5, 3];
         assert_eq!(ord, exp);
     }
@@ -603,7 +603,7 @@ mod tests {
             [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
         ]);
 
-        let ord = compute_ordering(&d);
+        let ord = compute_order_huson_2023(&d);
         assert_eq!(ord, vec![0, 1, 5, 7, 9, 3, 8, 4, 2, 10, 6]);
     }
 
@@ -635,7 +635,7 @@ mod tests {
             [1.0, 8.0, 9.0, 6.0, 5.0, 2.0, 8.0, 7.0, 4.0, 0.0],
         ]);
 
-        let ord = compute_ordering(&d);
+        let ord = compute_order_huson_2023(&d);
         assert_eq!(ord, vec![0, 1, 2, 4, 8, 3, 7, 9, 5, 6, 10]);
     }
 
@@ -707,7 +707,7 @@ mod tests {
             ],
         ]);
 
-        let ord = compute_ordering(&d);
+        let ord = compute_order_huson_2023(&d);
         assert_eq!(
             ord,
             vec![0, 1, 9, 3, 6, 12, 14, 5, 11, 10, 4, 7, 8, 2, 13, 15]
