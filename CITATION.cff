@@ -9,7 +9,7 @@ authors:
     orcid: https://orcid.org/0000-0002-7415-8690
 title: "Fast-NNT: Fast NeighborNet Split Trees For Unrooted Phylogenetic Analysis"
 version: 0.1.0
-# doi: 10.5281/zenodo.10806928
+doi: 10.5281/zenodo.16907380
 date-released: 2025-08-20
 preferred-citation:
   type: article
@@ -21,5 +21,5 @@ preferred-citation:
       given-names: Eilish S.
       orcid: https://orcid.org/0000-0002-7415-8690
   title: "Fast-NNT: Fast NeighborNet Split Trees For Unrooted Phylogenetic Analysis"
-  # doi: 10.5281/zenodo.10806928
-  # journal: "Zenodo"
+  doi: 10.5281/zenodo.16907380
+  journal: "Zenodo"

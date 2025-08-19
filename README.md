@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/1037785550.svg)](https://doi.org/10.5281/zenodo.16907379)
+
 # fast-nnt
 fast-nnt (read Fast Ent) is a simple Rust implementation of the Neighbor Net algorithm
 
@@ -51,3 +53,4 @@ If you use this tool in your work, please cite the original authors work:
 - Daniel H. Huson and David Bryant. The SplitsTree App: interactive analysis and visualization using phylogenetic trees and networks. Nature Methods (2024) https://doi.org/10.1038/s41592-024-02406-3
 
 You can also cite this repository directly:
+- Newell, R. J. P., & McMaster, E. S. (2025). Fast-NNT: Fast NeighborNet Split Trees For Unrooted Phylogenetic Analysis (v0.1.0). Zenodo. https://doi.org/10.5281/zenodo.16907380
