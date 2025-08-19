@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, ensure, anyhow};
+use anyhow::{Context, Result, anyhow, ensure};
 use ndarray::Array2;
 
 const EPS: f64 = 1e-12;
@@ -88,7 +88,10 @@ impl Default for NetNode {
 }
 impl NetNode {
     fn new(id: usize) -> Self {
-        Self { id, ..Default::default() }
+        Self {
+            id,
+            ..Default::default()
+        }
     }
 }
 
@@ -111,7 +114,11 @@ fn join_nodes(
         if num_active == 4 && num_clusters == 2 {
             let actives = snapshot_active(nodes, head);
             let p = actives[0];
-            let q = if Some(actives[1]) != nodes[p].nbr { actives[1] } else { actives[2] };
+            let q = if Some(actives[1]) != nodes[p].nbr {
+                actives[1]
+            } else {
+                actives[2]
+            };
             let pn = nodes[p].nbr.context("expected partner (pn)")?;
             let qn = nodes[q].nbr.context("expected partner (qn)")?;
             let lhs = d[nodes[p].id][nodes[q].id] + d[nodes[pn].id][nodes[qn].id];
@@ -150,9 +157,13 @@ fn join_nodes(
                         if eval_q {
                             let dpq = avg_cluster_dist(d, nodes, p, q);
                             nodes[p].sx += dpq;
-                            if let Some(pb) = nodes[p].nbr { nodes[pb].sx += dpq; }
+                            if let Some(pb) = nodes[p].nbr {
+                                nodes[pb].sx += dpq;
+                            }
                             nodes[q].sx += dpq;
-                            if let Some(qb) = nodes[q].nbr { nodes[qb].sx += dpq; }
+                            if let Some(qb) = nodes[q].nbr {
+                                nodes[qb].sx += dpq;
+                            }
                         }
                         q_opt = nodes[q].next;
                     }
@@ -160,7 +171,6 @@ fn join_nodes(
                 p_opt = nodes[p].next;
             }
         }
-
 
         // --- Choose representatives ---
         let (cx, cy, _bestq) = {
@@ -179,12 +189,16 @@ fn join_nodes(
 
                 let mut q_opt = nodes[head].next;
                 while let Some(q) = q_opt {
-                    if q == p { break; }
+                    if q == p {
+                        break;
+                    }
                     if nodes[q].nbr.map_or(false, |nb| nodes[nb].id < nodes[q].id) {
-                        q_opt = nodes[q].next; continue;
+                        q_opt = nodes[q].next;
+                        continue;
                     }
                     if nodes[q].nbr == Some(p) {
-                        q_opt = nodes[q].next; continue;
+                        q_opt = nodes[q].next;
+                        continue;
                     }
 
                     let dpq = avg_cluster_dist(d, nodes, p, q);
@@ -197,7 +211,9 @@ fn join_nodes(
                         c_y = Some(q);
                         best = qpq;
                         best_leafs = leaf_count_pair(p, q, nodes, n_tax);
-                    } else if fuzzy_eq(qpq, best) && better_tie_pair(p, q, c_x.unwrap(), c_y.unwrap(), nodes) {
+                    } else if fuzzy_eq(qpq, best)
+                        && better_tie_pair(p, q, c_x.unwrap(), c_y.unwrap(), nodes)
+                    {
                         let leafs = leaf_count_pair(p, q, nodes, n_tax);
                         if leafs > best_leafs {
                             c_x = Some(p);
@@ -211,7 +227,11 @@ fn join_nodes(
                 p_opt = nodes[p].next;
             }
 
-            (c_x.context("failed selecting Cx")?, c_y.context("failed selecting Cy")?, best)
+            (
+                c_x.context("failed selecting Cx")?,
+                c_y.context("failed selecting Cy")?,
+                best,
+            )
         };
 
         debug!("Cx {} Cy {} bestq {}", cx, cy, _bestq);
@@ -226,7 +246,6 @@ fn join_nodes(
             if let Some(cyb) = nodes[cy].nbr {
                 nodes[cyb].rx = compute_rx(cyb, cx, cy, d, nodes, head);
             }
-
         }
 
         // --- Pick x,y among candidates ---
@@ -234,51 +253,95 @@ fn join_nodes(
         let mut y = cy;
 
         let mut m = num_clusters;
-        if nodes[cx].nbr.is_some() { m += 1; }
-        if nodes[cy].nbr.is_some() { m += 1; }
+        if nodes[cx].nbr.is_some() {
+            m += 1;
+        }
+        if nodes[cy].nbr.is_some() {
+            m += 1;
+        }
 
-        let mut best_q = (m as f64 - 2.0) * d[nodes[cx].id][nodes[cy].id] - nodes[cx].rx - nodes[cy].rx;
+        let mut best_q =
+            (m as f64 - 2.0) * d[nodes[cx].id][nodes[cy].id] - nodes[cx].rx - nodes[cy].rx;
 
         if let Some(cxb) = nodes[cx].nbr {
-            let qv = (m as f64 - 2.0) * d[nodes[cxb].id][nodes[cy].id] - nodes[cxb].rx - nodes[cy].rx;
-            if fuzzy_lt(qv, best_q) { best_q = qv; x = cxb; y = cy; }
+            let qv =
+                (m as f64 - 2.0) * d[nodes[cxb].id][nodes[cy].id] - nodes[cxb].rx - nodes[cy].rx;
+            if fuzzy_lt(qv, best_q) {
+                best_q = qv;
+                x = cxb;
+                y = cy;
+            }
         }
         if let Some(cyb) = nodes[cy].nbr {
-            let qv = (m as f64 - 2.0) * d[nodes[cx].id][nodes[cyb].id] - nodes[cx].rx - nodes[cyb].rx;
-            if fuzzy_lt(qv, best_q) { best_q = qv; x = cx; y = cyb; }
+            let qv =
+                (m as f64 - 2.0) * d[nodes[cx].id][nodes[cyb].id] - nodes[cx].rx - nodes[cyb].rx;
+            if fuzzy_lt(qv, best_q) {
+                best_q = qv;
+                x = cx;
+                y = cyb;
+            }
         }
         if let (Some(cxb), Some(cyb)) = (nodes[cx].nbr, nodes[cy].nbr) {
-            let qv = (m as f64 - 2.0) * d[nodes[cxb].id][nodes[cyb].id] - nodes[cxb].rx - nodes[cyb].rx;
-            if fuzzy_lt(qv, best_q) { x = cxb; y = cyb; }
+            let qv =
+                (m as f64 - 2.0) * d[nodes[cxb].id][nodes[cyb].id] - nodes[cxb].rx - nodes[cyb].rx;
+            if fuzzy_lt(qv, best_q) {
+                x = cxb;
+                y = cyb;
+            }
         }
 
         // --- Agglomeration ---
         match (nodes[x].nbr, nodes[y].nbr, num_active) {
-            (None, None, _) => {               // 2-way
+            (None, None, _) => {
+                // 2-way
                 debug!("Join 2 way: x {} y {} num_active {}", x, y, num_active);
                 join2way(nodes, x, y);
                 num_clusters -= 1;
             }
-            (None, Some(_), _) => {            // 3-way (x isolated)
+            (None, Some(_), _) => {
+                // 3-way (x isolated)
                 debug!("Join 3(1) way: x {} y {} num_active {}", x, y, num_active);
-                join3way(x, y, nodes[y].nbr.context("expected y.nbr for 3-way agglomeration")?, &mut joins, d, nodes, head, &mut num_nodes)?;
+                join3way(
+                    x,
+                    y,
+                    nodes[y]
+                        .nbr
+                        .context("expected y.nbr for 3-way agglomeration")?,
+                    &mut joins,
+                    d,
+                    nodes,
+                    head,
+                    &mut num_nodes,
+                )?;
                 num_nodes += 2;
                 num_active -= 1;
                 num_clusters -= 1;
             }
-            (Some(_), None, _) | (_, _, 4) => { // 3-way (y isolated) OR last 4 active
+            (Some(_), None, _) | (_, _, 4) => {
+                // 3-way (y isolated) OR last 4 active
                 let x2 = y;
                 let y2 = x;
-                let y2_nbr = nodes[y2].nbr.context("expected y2.nbr for 3-way agglomeration")?;
-                debug!("Join 3(2) way: x2 {} y2 {} num_active {}", x2, y2, num_active);
+                let y2_nbr = nodes[y2]
+                    .nbr
+                    .context("expected y2.nbr for 3-way agglomeration")?;
+                debug!(
+                    "Join 3(2) way: x2 {} y2 {} num_active {}",
+                    x2, y2, num_active
+                );
                 join3way(x2, y2, y2_nbr, &mut joins, d, nodes, head, &mut num_nodes)?;
                 num_nodes += 2;
                 num_active -= 1;
                 num_clusters -= 1;
             }
-            (Some(xb), Some(_yb), _) => {       // 4-way
-                let yb = nodes[y].nbr.context("expected yb.nbr for 4-way agglomeration")?;
-                debug!("Join 4-way: xb {} x {} y {} yb {} num_active {}", xb, x, y, yb, num_active);
+            (Some(xb), Some(_yb), _) => {
+                // 4-way
+                let yb = nodes[y]
+                    .nbr
+                    .context("expected yb.nbr for 4-way agglomeration")?;
+                debug!(
+                    "Join 4-way: xb {} x {} y {} yb {} num_active {}",
+                    xb, x, y, yb, num_active
+                );
                 join4way(xb, x, y, yb, &mut joins, d, nodes, head, &mut num_nodes)?;
                 num_active -= 2;
                 num_clusters -= 1;
@@ -289,8 +352,12 @@ fn join_nodes(
     Ok(joins)
 }
 
-fn fuzzy_lt(a: f64, b: f64) -> bool { (a - b) < -EPS }
-fn fuzzy_eq(a: f64, b: f64) -> bool { (a - b).abs() <= EPS }
+fn fuzzy_lt(a: f64, b: f64) -> bool {
+    (a - b) < -EPS
+}
+fn fuzzy_eq(a: f64, b: f64) -> bool {
+    (a - b).abs() <= EPS
+}
 
 #[inline]
 fn leaf_count_pair(p: usize, q: usize, nodes: &[NetNode], n_tax: usize) -> u8 {
@@ -321,7 +388,9 @@ fn join2way(nodes: &mut [NetNode], x: usize, y: usize) {
 
 /// Returns the new node `u` (and pushes it onto `joins`)
 fn join3way(
-    x: usize, y: usize, z: usize,
+    x: usize,
+    y: usize,
+    z: usize,
     joins: &mut Vec<usize>,
     mat: &mut [Vec<f64>],
     nodes: &mut [NetNode],
@@ -333,28 +402,49 @@ fn join3way(
 
     ensure!(u < nodes.len() && v < nodes.len(), "node capacity exceeded");
 
-    nodes[u] = NetNode { id: u, ..Default::default() };
-    nodes[v] = NetNode { id: v, ..Default::default() };
+    nodes[u] = NetNode {
+        id: u,
+        ..Default::default()
+    };
+    nodes[v] = NetNode {
+        id: v,
+        ..Default::default()
+    };
 
-    nodes[u].ch1 = Some(x); nodes[u].ch2 = Some(y);
-    nodes[v].ch1 = Some(y); nodes[v].ch2 = Some(z);
-    nodes[u].nbr = Some(v); nodes[v].nbr = Some(u);
+    nodes[u].ch1 = Some(x);
+    nodes[u].ch2 = Some(y);
+    nodes[v].ch1 = Some(y);
+    nodes[v].ch2 = Some(z);
+    nodes[u].nbr = Some(v);
+    nodes[v].nbr = Some(u);
 
     // Replace x by u in the linked list
     nodes[u].next = nodes[x].next;
     nodes[u].prev = nodes[x].prev;
-    if let Some(nx) = nodes[u].next { nodes[nx].prev = Some(u); }
-    if let Some(px) = nodes[u].prev { nodes[px].next = Some(u); }
+    if let Some(nx) = nodes[u].next {
+        nodes[nx].prev = Some(u);
+    }
+    if let Some(px) = nodes[u].prev {
+        nodes[px].next = Some(u);
+    }
 
     // Replace z by v in the linked list
     nodes[v].next = nodes[z].next;
     nodes[v].prev = nodes[z].prev;
-    if let Some(nz) = nodes[v].next { nodes[nz].prev = Some(v); }
-    if let Some(pz) = nodes[v].prev { nodes[pz].next = Some(v); }
+    if let Some(nz) = nodes[v].next {
+        nodes[nz].prev = Some(v);
+    }
+    if let Some(pz) = nodes[v].prev {
+        nodes[pz].next = Some(v);
+    }
 
     // Remove y from the linked list
-    if let Some(ny) = nodes[y].next { nodes[ny].prev = nodes[y].prev; }
-    if let Some(py) = nodes[y].prev { nodes[py].next = nodes[y].next; }
+    if let Some(ny) = nodes[y].next {
+        nodes[ny].prev = nodes[y].prev;
+    }
+    if let Some(py) = nodes[y].prev {
+        nodes[py].next = nodes[y].next;
+    }
 
     // --- Update distances exactly like the Java code ---
     // let actives = snapshot_active(nodes, head);
@@ -367,10 +457,10 @@ fn join3way(
         while let Some(p) = p_opt {
             let pid = nodes[p].id;
 
-            mat[u][pid] = (2.0/3.0) * mat[xid][pid] + (1.0/3.0) * mat[yid][pid];
+            mat[u][pid] = (2.0 / 3.0) * mat[xid][pid] + (1.0 / 3.0) * mat[yid][pid];
             mat[pid][u] = mat[u][pid];
 
-            mat[v][pid] = (2.0/3.0) * mat[zid][pid] + (1.0/3.0) * mat[yid][pid];
+            mat[v][pid] = (2.0 / 3.0) * mat[zid][pid] + (1.0 / 3.0) * mat[yid][pid];
             mat[pid][v] = mat[v][pid];
 
             p_opt = nodes[p].next;
@@ -384,22 +474,33 @@ fn join3way(
 }
 
 fn join4way(
-    x2: usize, x: usize, y: usize, y2: usize,
+    x2: usize,
+    x: usize,
+    y: usize,
+    y2: usize,
     joins: &mut Vec<usize>,
     mat: &mut [Vec<f64>],
     nodes: &mut [NetNode],
     head: usize,
-    num_nodes: &mut usize
+    num_nodes: &mut usize,
 ) -> Result<()> {
     // First 3-way
     let u = join3way(x2, x, y, joins, mat, nodes, head, num_nodes)?;
     *num_nodes += 2;
     // Second 3-way
-    let _ = join3way(u, nodes[u].nbr.context("u.nbr")?, y2, joins, mat, nodes, head, num_nodes)?;
+    let _ = join3way(
+        u,
+        nodes[u].nbr.context("u.nbr")?,
+        y2,
+        joins,
+        mat,
+        nodes,
+        head,
+        num_nodes,
+    )?;
     *num_nodes += 2;
     Ok(())
 }
-
 
 /* ---------------------------- scoring helpers --------------------------- */
 
@@ -408,15 +509,23 @@ fn avg_cluster_dist(mat: &[Vec<f64>], nodes: &[NetNode], p: usize, q: usize) -> 
         (None, None) => mat[nodes[p].id][nodes[q].id],
         (Some(pb), None) => 0.5 * (mat[nodes[p].id][nodes[q].id] + mat[nodes[pb].id][nodes[q].id]),
         (None, Some(qb)) => 0.5 * (mat[nodes[p].id][nodes[q].id] + mat[nodes[p].id][nodes[qb].id]),
-        (Some(pb), Some(qb)) => 0.25
-            * (mat[nodes[p].id][nodes[q].id]
+        (Some(pb), Some(qb)) => {
+            0.25 * (mat[nodes[p].id][nodes[q].id]
                 + mat[nodes[p].id][nodes[qb].id]
                 + mat[nodes[pb].id][nodes[q].id]
-                + mat[nodes[pb].id][nodes[qb].id]),
+                + mat[nodes[pb].id][nodes[qb].id])
+        }
     }
 }
 
-fn compute_rx(z: usize, cx: usize, cy: usize, mat: &[Vec<f64>], nodes: &[NetNode], head: usize) -> f64 {
+fn compute_rx(
+    z: usize,
+    cx: usize,
+    cy: usize,
+    mat: &[Vec<f64>],
+    nodes: &[NetNode],
+    head: usize,
+) -> f64 {
     let mut rx = 0.0;
     let mut p_opt = nodes[head].next;
     while let Some(p) = p_opt {
@@ -434,23 +543,32 @@ fn compute_rx(z: usize, cx: usize, cy: usize, mat: &[Vec<f64>], nodes: &[NetNode
 
 /* ---------------------------- expansion phase --------------------------- */
 
-
 fn are_adjacent(nodes: &[NetNode], u: usize, v: usize) -> Option<bool> {
-    if nodes[u].next == Some(v) { Some(true) }
-    else if nodes[v].next == Some(u) { Some(false) }
-    else { None }
+    if nodes[u].next == Some(v) {
+        Some(true)
+    } else if nodes[v].next == Some(u) {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 fn next_leaf_in_dir(nodes: &[NetNode], start: usize, forward: bool, n_tax: usize) -> Result<usize> {
     let mut a = start;
     loop {
         a = if forward {
-            nodes[a].next.context("ring broken while seeking next leaf (forward)")?
+            nodes[a]
+                .next
+                .context("ring broken while seeking next leaf (forward)")?
         } else {
-            nodes[a].prev.context("ring broken while seeking next leaf (backward)")?
+            nodes[a]
+                .prev
+                .context("ring broken while seeking next leaf (backward)")?
         };
         let id = nodes[a].id;
-        if (1..=n_tax).contains(&id) { return Ok(id); }
+        if (1..=n_tax).contains(&id) {
+            return Ok(id);
+        }
         // guard against infinite loop on malformed rings
         ensure!(a != start, "looped around without finding a leaf");
     }
@@ -476,7 +594,7 @@ fn expand_nodes(
 
     // Expand joins, LIFO
     while let Some(mut u) = joins.pop() {
-        let mut v  = nodes[u].nbr.context("u.nbr missing")?;
+        let mut v = nodes[u].nbr.context("u.nbr missing")?;
         let mut x1 = nodes[u].ch1.context("u.ch1 missing")?;
         let y1 = nodes[u].ch2.context("u.ch2 missing")?;
         let mut z1 = nodes[v].ch2.context("v.ch2 missing")?;
@@ -486,11 +604,15 @@ fn expand_nodes(
             Some(true) => Ok(()),
             Some(false) => {
                 // v -> u: swap roles and outer ends (x ↔ z)
-                std::mem::swap(&mut u,  &mut v);
+                std::mem::swap(&mut u, &mut v);
                 std::mem::swap(&mut x1, &mut z1);
                 Ok(())
             }
-            None => Err(anyhow!("Join expansion invariant broken: u={} and v={} are not adjacent in the ring", u, v)),
+            None => Err(anyhow!(
+                "Join expansion invariant broken: u={} and v={} are not adjacent in the ring",
+                u,
+                v
+            )),
         }?;
 
         // Anchors must exist
@@ -516,14 +638,18 @@ fn expand_nodes(
         let head_next = nodes[head].next.context("no active nodes")?;
         let mut cur = head_next;
         loop {
-            if nodes[cur].id == 1 { break cur; }
-            cur = nodes[cur].next.context("broken ring while seeking leaf 1")?;
+            if nodes[cur].id == 1 {
+                break cur;
+            }
+            cur = nodes[cur]
+                .next
+                .context("broken ring while seeking leaf 1")?;
             ensure!(cur != head_next, "leaf 1 not found in ring");
         }
     };
 
     // Canonicalize orientation: pick the direction from 1 whose *next leaf* is smaller
-    let next_leaf_fwd = next_leaf_in_dir(nodes, start, true,  n_tax)?;
+    let next_leaf_fwd = next_leaf_in_dir(nodes, start, true, n_tax)?;
     let next_leaf_bwd = next_leaf_in_dir(nodes, start, false, n_tax)?;
     let forward = next_leaf_fwd <= next_leaf_bwd;
 
@@ -536,17 +662,22 @@ fn expand_nodes(
         if (1..=n_tax).contains(&id) {
             cycle.push(id);
             seen += 1;
-            if seen == n_tax { break; }
+            if seen == n_tax {
+                break;
+            }
         }
         a = if forward {
-            nodes[a].next.context("ring broken during extraction (forward)")?
+            nodes[a]
+                .next
+                .context("ring broken during extraction (forward)")?
         } else {
-            nodes[a].prev.context("ring broken during extraction (backward)")?
+            nodes[a]
+                .prev
+                .context("ring broken during extraction (backward)")?
         };
     }
     Ok(cycle)
 }
-
 
 /* ------------------------------ utilities ------------------------------- */
 
@@ -561,7 +692,6 @@ fn snapshot_active(nodes: &[NetNode], head: usize) -> Vec<usize> {
     out
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,7 +701,9 @@ mod tests {
     fn small_triangle() {
         // 3 taxa — returns [0,1,2,3]
         let d = arr2(&[[0.0, 1.0, 2.0], [1.0, 0.0, 1.5], [2.0, 1.5, 0.0]]);
-        let ord = compute_order_splits_tree4(&d).context("computing order for small triangle").unwrap();
+        let ord = compute_order_splits_tree4(&d)
+            .context("computing order for small triangle")
+            .unwrap();
         assert_eq!(ord, vec![0, 1, 2, 3]);
     }
 
@@ -589,10 +721,17 @@ mod tests {
             [2.0, 1.5, 0.0, 1.5],
             [3.0, 2.5, 1.5, 0.0],
         ]);
-        let ord = compute_order_splits_tree4(&d).context("computing order for small square").unwrap();
+        let ord = compute_order_splits_tree4(&d)
+            .context("computing order for small square")
+            .unwrap();
         let exp = vec![0, 1, 2, 4, 3];
         let rev_exp = vec![0, 1, 3, 4, 2];
-        assert!(ord == exp || ord == rev_exp, "Expected order to be either {:?} or {:?}", exp, rev_exp);
+        assert!(
+            ord == exp || ord == rev_exp,
+            "Expected order to be either {:?} or {:?}",
+            exp,
+            rev_exp
+        );
     }
 
     #[test]
@@ -612,10 +751,17 @@ mod tests {
             [9.0, 10.0, 8.0, 0.0, 3.0],
             [8.0, 9.0, 7.0, 3.0, 0.0],
         ]);
-        let ord = compute_order_splits_tree4(&d).context("computing order for smoke 5_1").unwrap();
+        let ord = compute_order_splits_tree4(&d)
+            .context("computing order for smoke 5_1")
+            .unwrap();
         let exp = vec![0, 1, 2, 5, 4, 3];
         let rev_exp = vec![0, 1, 3, 4, 5, 2];
-        assert!(ord == exp || ord == rev_exp, "Expected order to be either {:?} or {:?}", exp, rev_exp);
+        assert!(
+            ord == exp || ord == rev_exp,
+            "Expected order to be either {:?} or {:?}",
+            exp,
+            rev_exp
+        );
     }
 
     #[test]
@@ -635,7 +781,9 @@ mod tests {
             [4.0, 7.0, 9.0, 0.0, 2.0],
             [5.0, 8.0, 1.0, 2.0, 0.0],
         ]);
-        let ord = compute_order_splits_tree4(&d).context("computing order for smoke 5_2").unwrap();
+        let ord = compute_order_splits_tree4(&d)
+            .context("computing order for smoke 5_2")
+            .unwrap();
         let exp = vec![0, 1, 2, 4, 5, 3];
         assert_eq!(ord, exp);
     }
@@ -668,7 +816,9 @@ mod tests {
             [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
         ]);
 
-        let ord = compute_order_splits_tree4(&d).context("computing order for smoke 10_1").unwrap();
+        let ord = compute_order_splits_tree4(&d)
+            .context("computing order for smoke 10_1")
+            .unwrap();
         assert_eq!(ord, vec![0, 1, 2, 10, 6, 4, 8, 3, 9, 7, 5]);
     }
 
@@ -700,10 +850,18 @@ mod tests {
             [1.0, 8.0, 9.0, 6.0, 5.0, 2.0, 8.0, 7.0, 4.0, 0.0],
         ]);
 
-        let ord = compute_order_splits_tree4(&d).context("computing order for smoke 10_2").unwrap();
+        let ord = compute_order_splits_tree4(&d)
+            .context("computing order for smoke 10_2")
+            .unwrap();
         let exp_ord = vec![0, 1, 2, 4, 8, 3, 7, 9, 5, 6, 10];
         let rev_ex_order = vec![0, 1, 10, 6, 5, 9, 7, 3, 8, 4, 2];
-        assert!(ord == exp_ord || ord == rev_ex_order, "Unexpected order {:?} | {:?} OR {:?}", ord, exp_ord, rev_ex_order);
+        assert!(
+            ord == exp_ord || ord == rev_ex_order,
+            "Unexpected order {:?} | {:?} OR {:?}",
+            ord,
+            exp_ord,
+            rev_ex_order
+        );
     }
 
     #[test]
@@ -728,57 +886,58 @@ mod tests {
 
         let d = arr2(&[
             [
-                0.0,3.0,9.0,2.0,8.0,1.0,7.0,13.0,6.0,12.0,5.0,11.0,4.0,10.0,3.0
+                0.0, 3.0, 9.0, 2.0, 8.0, 1.0, 7.0, 13.0, 6.0, 12.0, 5.0, 11.0, 4.0, 10.0, 3.0,
             ],
             [
-                3.0,0.0,2.0,9.0,3.0,10.0,4.0,11.0,5.0,12.0,6.0,13.0,7.0,1.0,8.0
+                3.0, 0.0, 2.0, 9.0, 3.0, 10.0, 4.0, 11.0, 5.0, 12.0, 6.0, 13.0, 7.0, 1.0, 8.0,
             ],
             [
-                9.0,2.0,0.0,3.0,11.0,6.0,1.0,9.0,4.0,12.0,7.0,2.0,10.0,5.0,13.0
+                9.0, 2.0, 0.0, 3.0, 11.0, 6.0, 1.0, 9.0, 4.0, 12.0, 7.0, 2.0, 10.0, 5.0, 13.0,
             ],
             [
-                2.0,9.0,3.0,0.0,6.0,2.0,11.0,7.0,3.0,12.0,8.0,4.0,13.0,9.0,5.0
+                2.0, 9.0, 3.0, 0.0, 6.0, 2.0, 11.0, 7.0, 3.0, 12.0, 8.0, 4.0, 13.0, 9.0, 5.0,
             ],
             [
-                8.0,3.0,11.0,6.0,0.0,11.0,8.0,5.0,2.0,12.0,9.0,6.0,3.0,13.0,10.0
+                8.0, 3.0, 11.0, 6.0, 0.0, 11.0, 8.0, 5.0, 2.0, 12.0, 9.0, 6.0, 3.0, 13.0, 10.0,
             ],
             [
-                1.0,10.0,6.0,2.0,11.0,0.0,5.0,3.0,1.0,12.0,10.0,8.0,6.0,4.0,2.0
+                1.0, 10.0, 6.0, 2.0, 11.0, 0.0, 5.0, 3.0, 1.0, 12.0, 10.0, 8.0, 6.0, 4.0, 2.0,
             ],
             [
-                7.0,4.0,1.0,11.0,8.0,5.0,0.0,1.0,13.0,12.0,11.0,10.0,9.0,8.0,7.0
+                7.0, 4.0, 1.0, 11.0, 8.0, 5.0, 0.0, 1.0, 13.0, 12.0, 11.0, 10.0, 9.0, 8.0, 7.0,
             ],
             [
-                13.0,11.0,9.0,7.0,5.0,3.0,1.0,0.0,12.0,12.0,12.0,12.0,12.0,12.0,12.0
+                13.0, 11.0, 9.0, 7.0, 5.0, 3.0, 1.0, 0.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0,
             ],
             [
-                6.0,5.0,4.0,3.0,2.0,1.0,13.0,12.0,0.0,12.0,13.0,1.0,2.0,3.0,4.0
+                6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 13.0, 12.0, 0.0, 12.0, 13.0, 1.0, 2.0, 3.0, 4.0,
             ],
             [
-                12.0,12.0,12.0,12.0,12.0,12.0,12.0,12.0,12.0,0.0,1.0,3.0,5.0,7.0,9.0
+                12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 0.0, 1.0, 3.0, 5.0, 7.0, 9.0,
             ],
             [
-                5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0,13.0,1.0,0.0,5.0,8.0,11.0,1.0
+                5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 1.0, 0.0, 5.0, 8.0, 11.0, 1.0,
             ],
             [
-                11.0,13.0,2.0,4.0,6.0,8.0,10.0,12.0,1.0,3.0,5.0,0.0,11.0,2.0,6.0
+                11.0, 13.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 1.0, 3.0, 5.0, 0.0, 11.0, 2.0, 6.0,
             ],
             [
-                4.0,7.0,10.0,13.0,3.0,6.0,9.0,12.0,2.0,5.0,8.0,11.0,0.0,6.0,11.0
+                4.0, 7.0, 10.0, 13.0, 3.0, 6.0, 9.0, 12.0, 2.0, 5.0, 8.0, 11.0, 0.0, 6.0, 11.0,
             ],
             [
-                10.0,1.0,5.0,9.0,13.0,4.0,8.0,12.0,3.0,7.0,11.0,2.0,6.0,0.0,3.0
+                10.0, 1.0, 5.0, 9.0, 13.0, 4.0, 8.0, 12.0, 3.0, 7.0, 11.0, 2.0, 6.0, 0.0, 3.0,
             ],
             [
-                3.0,8.0,13.0,5.0,10.0,2.0,7.0,12.0,4.0,9.0,1.0,6.0,11.0,3.0,0.0
+                3.0, 8.0, 13.0, 5.0, 10.0, 2.0, 7.0, 12.0, 4.0, 9.0, 1.0, 6.0, 11.0, 3.0, 0.0,
             ],
         ]);
 
-        let ord = compute_order_splits_tree4(&d).context("computing order for smoke 15_1").unwrap();
+        let ord = compute_order_splits_tree4(&d)
+            .context("computing order for smoke 15_1")
+            .unwrap();
         assert_eq!(
             ord,
             vec![0, 1, 4, 15, 11, 10, 12, 14, 2, 3, 7, 8, 13, 5, 9, 6]
         );
     }
-
 }

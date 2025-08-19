@@ -10,14 +10,12 @@ use crate::algorithms::equal_angle::{EqualAngleOpts, equal_angle_apply};
 use crate::cli::NeighborNetArgs;
 use crate::data::splits_blocks::SplitsBlock;
 use crate::nexus::nexus_writer::{NexusProperties, write_nexus_all_to_path};
+use crate::ordering::OrderingMethod;
 use crate::ordering::ordering_huson2023::compute_order_huson_2023;
 use crate::ordering::ordering_splitstree4::compute_order_splits_tree4;
-use crate::ordering::OrderingMethod;
 use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
 use crate::utils::compute_least_squares_fit;
 use crate::weights::active_set_weights::{NNLSParams, compute_asplits};
-
-
 
 pub struct NeighbourNet {
     out_dir: String,
@@ -43,7 +41,9 @@ impl NeighbourNet {
         let t_cycle = Instant::now();
         let mut cycle = match self.args.ordering {
             OrderingMethod::Huson2023 => compute_order_huson_2023(&distance_matrix),
-            OrderingMethod::SplitsTree4 => compute_order_splits_tree4(&distance_matrix).context("computing cycle")?,
+            OrderingMethod::SplitsTree4 => {
+                compute_order_splits_tree4(&distance_matrix).context("computing cycle")?
+            }
         };
         if cycle.first().copied() != Some(0) {
             cycle = std::iter::once(0usize)

@@ -91,7 +91,7 @@ pub fn write_network_block_splits<W: FmtWrite>(
     //     &node_id,
     //     taxa_labels_1based,
     //     12,    // x
-    //     0,     // y 
+    //     0,     // y
     //     Some("Dialog-PLAIN-6"),
     // )?;
 

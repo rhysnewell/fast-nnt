@@ -350,8 +350,6 @@ trait RotationAccess {
 impl RotationAccess for PhyloSplitsGraph {
     #[inline]
     fn rotation(&self, v: NodeIndex) -> &[EdgeIndex] {
-        self.rot(v) 
+        self.rot(v)
     }
 }
-
-
