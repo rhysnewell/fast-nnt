@@ -5,14 +5,21 @@ fast-nnt (read Fast Ent) is a simple Rust implementation of the Neighbor Net alg
 ### Installation
 Install Rust via [rustup](https://rustup.rs/).
 
-Clone and install this repo via:
+Once Rust is installed you can simply run:
 ```
-git clone https://github.com/yourusername/fast-nnt.git
+cargo install fast-nnt
+```
+
+Alternatively, you can build from source. Clone and install this repo via:
+```
+git clone https://github.com/rhysnewell/fast-nnt.git
 cd fast-nnt
 cargo install --path .
 ```
 
 ### Usage
+
+Required input is a symmetrical distance matrix, ideally with a header row indicating the taxa labels. Can be separated by any delimiter.
 
 To generate a split nexus file (mostly) identical to SplitsTree4 and SplitsTree6:
 ```
@@ -24,6 +31,9 @@ Use the new Huson 2023 ordering algorithm (default):
 fast_nnt neighbour_net -t 4 -i test/data/large_dist_matrix.csv -d output_dir -o prefix -O huson2023
 ```
 
+### Output
+
+The output will include a nexus file containing the split network and network layout.
 
 ### Known issues
 - Floating point drift in the CGNR function, as observed in the smoke_30 test.
