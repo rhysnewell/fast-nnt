@@ -43,3 +43,11 @@ The output will include a nexus file containing the split network and network la
 ### TODO
 - Work on parallelism. Not a priority as the program is fast enough.
 - Test on giant datasets.
+
+
+### Citations
+
+If you use this tool in your work, please cite the original authors work:
+- Daniel H. Huson and David Bryant. The SplitsTree App: interactive analysis and visualization using phylogenetic trees and networks. Nature Methods (2024) https://doi.org/10.1038/s41592-024-02406-3
+
+You can also cite this repository directly:

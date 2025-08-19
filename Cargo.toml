@@ -8,7 +8,7 @@ documentation = "https://docs.rs/fast-nnt"
 readme = "README.md"
 repository = "https://github.com/rhysnewell/fast-nnt"
 license = "GPL-3.0"
-keywords = ["phylogenetics", "neighbor-net", "splits-tree", "network", "rust"]
+keywords = ["phylogenetics", "neighbor-net", "splits-tree", "trees", "networks"]
 default-run = "fast_nnt"
 
 [dependencies]

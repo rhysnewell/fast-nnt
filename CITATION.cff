@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: Newell
+    given-names: Rhys J. P.
+    orcid: https://orcid.org/0000-0002-1300-6116
+  - family-names: McMaster
+    given-names: Eilish S.
+    orcid: https://orcid.org/0000-0002-7415-8690
+title: "Fast-NNT: Fast NeighborNet Split Trees For Unrooted Phylogenetic Analysis"
+version: 0.1.0
+# doi: 10.5281/zenodo.10806928
+date-released: 2025-08-20
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Newell
+      given-names: Rhys J. P.
+      orcid: https://orcid.org/0000-0002-1300-6116
+    - family-names: McMaster
+      given-names: Eilish S.
+      orcid: https://orcid.org/0000-0002-7415-8690
+  title: "Fast-NNT: Fast NeighborNet Split Trees For Unrooted Phylogenetic Analysis"
+  # doi: 10.5281/zenodo.10806928
+  # journal: "Zenodo"
