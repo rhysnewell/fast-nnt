@@ -43,6 +43,11 @@ pub fn compute_order_splits_tree4(dist: &Array2<f64>) -> Result<Vec<usize>> {
         }
     }
 
+    debug!("Matrix: ");
+    for row in &mat {
+        debug!("{:?}", row);
+    }
+    debug!("Matrix size: {:?} {}", mat.len(), mat[0].len());
     // 3) Agglomerate
     let joins = join_nodes(&mut mat, &mut nodes, 0, n_tax)?;
 
@@ -162,6 +167,7 @@ fn join_nodes(
             let mut c_x: Option<usize> = None;
             let mut c_y: Option<usize> = None;
             let mut best = 0.0_f64; // Java seeds to 0. First candidate sets it.
+            let mut best_leafs: u8 = 0;
 
             let mut p_opt = nodes[head].next;
             while let Some(p) = p_opt {
@@ -183,14 +189,21 @@ fn join_nodes(
 
                     let dpq = avg_cluster_dist(d, nodes, p, q);
                     let qpq = (num_clusters as f64 - 2.0) * dpq - nodes[p].sx - nodes[q].sx;
+                    // System.out.debug("\t"+"["+p.id+","+q.id+"] \t = \t "+Qpq);
+                    debug!("\t[{},{}] \t = \t {}", nodes[p].id, nodes[q].id, qpq);
 
-                    if c_x.is_none()
-                        || fuzzy_lt(qpq, best)
-                        || (fuzzy_eq(qpq, best) && better_tie_pair(p, q, c_x.unwrap(), c_y.unwrap(), nodes))
-                    {
+                    if c_x.is_none() || fuzzy_lt(qpq, best) {
                         c_x = Some(p);
                         c_y = Some(q);
                         best = qpq;
+                        best_leafs = leaf_count_pair(p, q, nodes, n_tax);
+                    } else if fuzzy_eq(qpq, best) && better_tie_pair(p, q, c_x.unwrap(), c_y.unwrap(), nodes) {
+                        let leafs = leaf_count_pair(p, q, nodes, n_tax);
+                        if leafs > best_leafs {
+                            c_x = Some(p);
+                            c_y = Some(q);
+                            best_leafs = leafs;
+                        }
                     }
 
                     q_opt = nodes[q].next;
@@ -201,6 +214,7 @@ fn join_nodes(
             (c_x.context("failed selecting Cx")?, c_y.context("failed selecting Cy")?, best)
         };
 
+        debug!("Cx {} Cy {} bestq {}", cx, cy, _bestq);
 
         // --- Rx for candidates (if needed) ---
         if nodes[cx].nbr.is_some() || nodes[cy].nbr.is_some() {
@@ -241,10 +255,12 @@ fn join_nodes(
         // --- Agglomeration ---
         match (nodes[x].nbr, nodes[y].nbr, num_active) {
             (None, None, _) => {               // 2-way
+                debug!("Join 2 way: x {} y {} num_active {}", x, y, num_active);
                 join2way(nodes, x, y);
                 num_clusters -= 1;
             }
             (None, Some(_), _) => {            // 3-way (x isolated)
+                debug!("Join 3(1) way: x {} y {} num_active {}", x, y, num_active);
                 join3way(x, y, nodes[y].nbr.context("expected y.nbr for 3-way agglomeration")?, &mut joins, d, nodes, head, &mut num_nodes)?;
                 num_nodes += 2;
                 num_active -= 1;
@@ -254,6 +270,7 @@ fn join_nodes(
                 let x2 = y;
                 let y2 = x;
                 let y2_nbr = nodes[y2].nbr.context("expected y2.nbr for 3-way agglomeration")?;
+                debug!("Join 3(2) way: x2 {} y2 {} num_active {}", x2, y2, num_active);
                 join3way(x2, y2, y2_nbr, &mut joins, d, nodes, head, &mut num_nodes)?;
                 num_nodes += 2;
                 num_active -= 1;
@@ -261,6 +278,7 @@ fn join_nodes(
             }
             (Some(xb), Some(_yb), _) => {       // 4-way
                 let yb = nodes[y].nbr.context("expected yb.nbr for 4-way agglomeration")?;
+                debug!("Join 4-way: xb {} x {} y {} yb {} num_active {}", xb, x, y, yb, num_active);
                 join4way(xb, x, y, yb, &mut joins, d, nodes, head, &mut num_nodes)?;
                 num_active -= 2;
                 num_clusters -= 1;
@@ -273,6 +291,13 @@ fn join_nodes(
 
 fn fuzzy_lt(a: f64, b: f64) -> bool { (a - b) < -EPS }
 fn fuzzy_eq(a: f64, b: f64) -> bool { (a - b).abs() <= EPS }
+
+#[inline]
+fn leaf_count_pair(p: usize, q: usize, nodes: &[NetNode], n_tax: usize) -> u8 {
+    let a = (nodes[p].id <= n_tax) as u8;
+    let b = (nodes[q].id <= n_tax) as u8;
+    a + b
+}
 
 /// Return true if (p,q) should replace (cx,cy) when qpq ~ best.
 /// Use lexicographic taxon-id order as a deterministic tiebreaker.
@@ -679,6 +704,81 @@ mod tests {
         let exp_ord = vec![0, 1, 2, 4, 8, 3, 7, 9, 5, 6, 10];
         let rev_ex_order = vec![0, 1, 10, 6, 5, 9, 7, 3, 8, 4, 2];
         assert!(ord == exp_ord || ord == rev_ex_order, "Unexpected order {:?} | {:?} OR {:?}", ord, exp_ord, rev_ex_order);
+    }
+
+    #[test]
+    fn smoke_15_1() {
+        // 15 taxa - [0, 1 4 15 11 10 12 14 2 3 7 8 13 5 9 6]
+        // a,b,c,d,e,f,g,h,i,j,k,l,m,n,o
+        // 0.0,3.0,9.0,2.0,8.0,1.0,7.0,13.0,6.0,12.0,5.0,11.0,4.0,10.0,3.0
+        // 3.0,0.0,2.0,9.0,3.0,10.0,4.0,11.0,5.0,12.0,6.0,13.0,7.0,1.0,8.0
+        // 9.0,2.0,0.0,3.0,11.0,6.0,1.0,9.0,4.0,12.0,7.0,2.0,10.0,5.0,13.0
+        // 2.0,9.0,3.0,0.0,6.0,2.0,11.0,7.0,3.0,12.0,8.0,4.0,13.0,9.0,5.0
+        // 8.0,3.0,11.0,6.0,0.0,11.0,8.0,5.0,2.0,12.0,9.0,6.0,3.0,13.0,10.0
+        // 1.0,10.0,6.0,2.0,11.0,0.0,5.0,3.0,1.0,12.0,10.0,8.0,6.0,4.0,2.0
+        // 7.0,4.0,1.0,11.0,8.0,5.0,0.0,1.0,13.0,12.0,11.0,10.0,9.0,8.0,7.0
+        // 13.0,11.0,9.0,7.0,5.0,3.0,1.0,0.0,12.0,12.0,12.0,12.0,12.0,12.0,12.0
+        // 6.0,5.0,4.0,3.0,2.0,1.0,13.0,12.0,0.0,12.0,13.0,1.0,2.0,3.0,4.0
+        // 12.0,12.0,12.0,12.0,12.0,12.0,12.0,12.0,12.0,0.0,1.0,3.0,5.0,7.0,9.0
+        // 5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0,13.0,1.0,0.0,5.0,8.0,11.0,1.0
+        // 11.0,13.0,2.0,4.0,6.0,8.0,10.0,12.0,1.0,3.0,5.0,0.0,11.0,2.0,6.0
+        // 4.0,7.0,10.0,13.0,3.0,6.0,9.0,12.0,2.0,5.0,8.0,11.0,0.0,6.0,11.0
+        // 10.0,1.0,5.0,9.0,13.0,4.0,8.0,12.0,3.0,7.0,11.0,2.0,6.0,0.0,3.0
+        // 3.0,8.0,13.0,5.0,10.0,2.0,7.0,12.0,4.0,9.0,1.0,6.0,11.0,3.0,0.0
+
+        let d = arr2(&[
+            [
+                0.0,3.0,9.0,2.0,8.0,1.0,7.0,13.0,6.0,12.0,5.0,11.0,4.0,10.0,3.0
+            ],
+            [
+                3.0,0.0,2.0,9.0,3.0,10.0,4.0,11.0,5.0,12.0,6.0,13.0,7.0,1.0,8.0
+            ],
+            [
+                9.0,2.0,0.0,3.0,11.0,6.0,1.0,9.0,4.0,12.0,7.0,2.0,10.0,5.0,13.0
+            ],
+            [
+                2.0,9.0,3.0,0.0,6.0,2.0,11.0,7.0,3.0,12.0,8.0,4.0,13.0,9.0,5.0
+            ],
+            [
+                8.0,3.0,11.0,6.0,0.0,11.0,8.0,5.0,2.0,12.0,9.0,6.0,3.0,13.0,10.0
+            ],
+            [
+                1.0,10.0,6.0,2.0,11.0,0.0,5.0,3.0,1.0,12.0,10.0,8.0,6.0,4.0,2.0
+            ],
+            [
+                7.0,4.0,1.0,11.0,8.0,5.0,0.0,1.0,13.0,12.0,11.0,10.0,9.0,8.0,7.0
+            ],
+            [
+                13.0,11.0,9.0,7.0,5.0,3.0,1.0,0.0,12.0,12.0,12.0,12.0,12.0,12.0,12.0
+            ],
+            [
+                6.0,5.0,4.0,3.0,2.0,1.0,13.0,12.0,0.0,12.0,13.0,1.0,2.0,3.0,4.0
+            ],
+            [
+                12.0,12.0,12.0,12.0,12.0,12.0,12.0,12.0,12.0,0.0,1.0,3.0,5.0,7.0,9.0
+            ],
+            [
+                5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0,13.0,1.0,0.0,5.0,8.0,11.0,1.0
+            ],
+            [
+                11.0,13.0,2.0,4.0,6.0,8.0,10.0,12.0,1.0,3.0,5.0,0.0,11.0,2.0,6.0
+            ],
+            [
+                4.0,7.0,10.0,13.0,3.0,6.0,9.0,12.0,2.0,5.0,8.0,11.0,0.0,6.0,11.0
+            ],
+            [
+                10.0,1.0,5.0,9.0,13.0,4.0,8.0,12.0,3.0,7.0,11.0,2.0,6.0,0.0,3.0
+            ],
+            [
+                3.0,8.0,13.0,5.0,10.0,2.0,7.0,12.0,4.0,9.0,1.0,6.0,11.0,3.0,0.0
+            ],
+        ]);
+
+        let ord = compute_order_splits_tree4(&d).context("computing order for smoke 15_1").unwrap();
+        assert_eq!(
+            ord,
+            vec![0, 1, 4, 15, 11, 10, 12, 14, 2, 3, 7, 8, 13, 5, 9, 6]
+        );
     }
 
 }
