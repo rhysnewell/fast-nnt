@@ -11,6 +11,11 @@ use crate::splits::asplit::ASplit; // <-- adjust path if needed
 
 const EPS: f64 = 1e-12;
 
+// TODO: There is some sort of floating point drift occuring in this algo
+// Specifically seems to be occuring in the cgnr function. The smoke_30 test
+// shows the drift specifically.
+// I'm not sure where it is happening, but the final results on real data end up looking pretty much the same so not sure if it is an issue?
+
 #[derive(Debug)]
 struct Scratch {
     p: Vec<f64>,
