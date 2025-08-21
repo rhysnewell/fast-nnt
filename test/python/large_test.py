@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 
-import fastnnt as fn
+import fastnntpy as fn
 import pandas as pd
 import os
 from collections import Counter

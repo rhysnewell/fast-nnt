@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 
-import fastnnt as fn
+import fastnntpy as fn
 import pandas as pd
 data = pd.read_csv("../test/data/small_10/small_10_1.csv")
 n = fn.run_neighbour_net(data, data.columns)

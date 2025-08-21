@@ -5,7 +5,7 @@ version = "0.2.0"
 edition = "2024"
 
 [lib]
-name = "fastnnt"              # Python import name: fastnnt
+name = "fastnntpy"              # Python import name: fastnntpy
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -13,4 +13,4 @@ pyo3 = { version = "0.25.1", features = ["extension-module"] }
 numpy = "0.25.0"
 ndarray = "0.16.1"
 anyhow = "1"
-fast_nnt = "0.2.0"
+fast-nnt = "0.2.0"
