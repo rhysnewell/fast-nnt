@@ -86,20 +86,24 @@ fn labels_from<'py>(obj: Bound<'py, PyAny>, n: usize) -> PyResult<Vec<String>> {
 }
 
 fn infer_labels<'py>(obj: Bound<'py, PyAny>, n: usize) -> PyResult<Vec<String>> {
-    // Try pandas Index if present
-    if obj.hasattr("index")? {
-        let idx = obj.getattr("index")?;
-        if idx.hasattr("tolist")? {
-            if let Ok(v) = idx.call_method0("tolist")?.extract::<Vec<String>>() {
-                if v.len() == n {
-                    return Ok(v);
-                }
+    // pandas: columns is an Index object with .tolist()
+    if obj.hasattr("columns")? {
+        let cols = obj.getattr("columns")?;
+        if cols.hasattr("tolist")? {
+            if let Ok(v) = cols.call_method0("tolist")?.extract::<Vec<String>>() {
+                if v.len() == n { return Ok(v); }
             }
+        } else if let Ok(v) = cols.extract::<Vec<String>>() {
+            if v.len() == n { return Ok(v); }
         }
     }
-    Ok((0..n).map(|i| format!("row_{i}")).collect())
+    // polars: .columns is a plain list[str]
+    if let Ok(v) = obj.getattr("columns")?.extract::<Vec<String>>() {
+        if v.len() == n { return Ok(v); }
+    }
+    // fallback
+    Ok((1..=n).map(|i| format!("col_{i}")).collect())
 }
-
 // ---- public API ----
 #[pyfunction]
 #[pyo3(signature = (x, labels=None))]

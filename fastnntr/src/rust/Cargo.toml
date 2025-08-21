@@ -1,0 +1,19 @@
+[package]
+name = 'fastnntr'
+publish = false
+version = '0.1.0'
+edition = '2024'
+
+[lib]
+crate-type = [ 'staticlib' ]
+name = 'fastnntr'
+
+[dependencies]
+extendr-api = '0.8.1'
+ndarray = "0.16.1"
+anyhow = "1"
+fast_nnt_core = { package = "fast-nnt", path = "../../../" } 
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -11,8 +11,8 @@ license = "GPL-3.0"
 keywords = ["phylogenetics", "neighbor-net", "splits-tree", "trees", "networks"]
 default-run = "fast_nnt"
 
-[workspace]
-members = ["fastnnt-py", "fastnntr"]
+# [workspace]
+# members = ["fastnnt-py", "fastnntr"]
 
 resolver = "2"
 
