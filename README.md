@@ -113,7 +113,8 @@ The output will include a nexus file containing the split network and network la
 ### Citations
 
 If you use this tool in your work, please cite the original authors work:
-- Daniel H. Huson and David Bryant. The SplitsTree App: interactive analysis and visualization using phylogenetic trees and networks. Nature Methods (2024) https://doi.org/10.1038/s41592-024-02406-3
+- Bryant & Huson 2023: D. Bryant and DH Huson, NeighborNet- improved algorithms and implementation. Front. Bioinform. 3, 2023.
+- Bryant & Moulton 2004: D. Bryant and V. Moulton. Neighbor-net: An agglomerative method for the construction of phylogenetic networks. Molecular Biology and Evolution, 21(2):255– 265, 2004.
 
 You can also cite this repository directly:
 - Newell, R. J. P., & McMaster, E. S. (2025). Fast-NNT: Fast NeighborNet Split Trees For Unrooted Phylogenetic Analysis (v0.1.0). Zenodo. https://doi.org/10.5281/zenodo.16907380
