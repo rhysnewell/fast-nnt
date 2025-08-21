@@ -27,9 +27,9 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           manylinux: "auto"
-          args: --release -m fastnnt-py/pyproject.toml
+          args: --release -m fastnnt-py/Cargo.toml
 
-      - name: Build wheels (macOS universal2)
+      - name: Build wheels (macOS)
         if: runner.os == 'macOS'
         uses: PyO3/maturin-action@v1
         with:
