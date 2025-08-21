@@ -40,7 +40,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-py${{ matrix.py }}
-          path: target/wheels/*.whl
+          path: fastnnt-py/target/wheels/*.whl
 
   publish:
     needs: build
