@@ -1,15 +1,45 @@
 
 # ---- deps ----
-library(fastnntr)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+install_if_missing <- function(pkgs) {
+  need <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+  if (length(need)) install.packages(need, quiet = TRUE)
+}
+
+# CRAN deps you use in the script
+install_if_missing(c("ggplot2", "ggrepel", "dplyr", "tidyr", "data.table", "svglite"))
+
+# Ensure fastnntr is installed; if not, install from the local repo path
+if (!requireNamespace("fastnntr", quietly = TRUE)) {
+  if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools", quiet = TRUE)
+  # Infer repo root from this script's path (works with Rscript)
+  args <- commandArgs(trailingOnly = FALSE)
+  script_path <- sub("^--file=", "", args[grep("^--file=", args)])
+  if (!length(script_path)) {
+    # fallback if run interactively or path not present
+    script_path <- "test/r/large_test.R"
+  }
+  script_dir <- normalizePath(dirname(script_path), winslash = "/", mustWork = FALSE)
+  repo_root  <- normalizePath(file.path(script_dir, "..", ".."), winslash = "/", mustWork = TRUE)
+  pkg_path   <- file.path(repo_root, "fastnntr")
+  devtools::install(pkg_path, upgrade = "never", quiet = TRUE)
+}
+
+# library(fastnntr)
 library(ggplot2)
 library(ggrepel)
 library(dplyr)
 library(tidyr)
+library(data.table)
+library(svglite)
+devtools::load_all("fastnntr")
+
 
 plot_fastnnt_from_matrix <- function(dist_mat,
                                      labels = NULL,            # character vector or NULL
-                                     out_png = "plots/fast_nnt_neighbornet.png",
-                                     out_svg = "plots/fast_nnt_neighbornet.svg",
+                                     out_png = "test/plots/fast_nnt_graph_R.png",
+                                     out_svg = "test/plots/fast_nnt_graph_R.svg",
                                      label_leaves_only = TRUE,
                                      width_by_weight = TRUE) {
 
@@ -61,7 +91,7 @@ plot_fastnnt_from_matrix <- function(dist_mat,
       geom_segment(
         data = edges_xy,
         aes(x = xu, y = yu, xend = xv, yend = yv),
-        lineend = "round", linewidth = 0.6, alpha = 0.9, colour = "black"
+        lineend = "round", linewidth = 0.01, alpha = 0.9, colour = "black"
       )
     }
 
@@ -95,7 +125,6 @@ plot_fastnnt_from_matrix <- function(dist_mat,
 # Build a toy symmetric distance matrix (labels taken from colnames)
 set.seed(1)
 # read in test/data/large/large_dist_matrix.csv
-m <- as.matrix(read.csv("test/data/large/large_dist_matrix.csv", row.names = 1))
-print(m)
+m <- data.table::fread("test/data/large/large_dist_matrix.csv", header = TRUE)
 
 plot_fastnnt_from_matrix(m)  # saves PNG+SVG into ./plots/

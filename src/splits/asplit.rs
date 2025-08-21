@@ -150,6 +150,7 @@ impl ASplit {
 
     /// Union of A and B (i.e., the full taxon set present in this split).
     pub fn get_all_taxa(&self) -> FixedBitSet {
+        
         union_1_based(self.get_a(), self.get_b())
     }
 

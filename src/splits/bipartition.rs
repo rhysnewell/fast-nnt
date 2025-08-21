@@ -20,6 +20,7 @@ impl BiPartition {
     /// This mirrors the Java constructor’s normalization: the set whose first set bit ≥1 is
     /// smaller becomes `A`.
     pub fn new(a: FixedBitSet, b: FixedBitSet) -> Self {
+        
         let ca = cardinality(&a);
         let cb = cardinality(&b);
         if ca == 0 || cb == 0 {

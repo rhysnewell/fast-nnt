@@ -10,23 +10,7 @@
 #' @useDynLib fastnntr, .registration = TRUE
 NULL
 
-run_neighbour_net <- function(x, labels, `_out_dir`) .Call(wrap__run_neighbour_net, x, labels, `_out_dir`)
-
-RNexus <- new.env(parent = emptyenv())
-
-RNexus$get_labels <- function() .Call(wrap__RNexus__get_labels, self)
-
-RNexus$get_node_translations <- function() .Call(wrap__RNexus__get_node_translations, self)
-
-RNexus$get_node_positions <- function() .Call(wrap__RNexus__get_node_positions, self)
-
-RNexus$get_graph_edges <- function() .Call(wrap__RNexus__get_graph_edges, self)
-
-#' @export
-`$.RNexus` <- function (self, name) { func <- RNexus[[name]]; environment(func) <- environment(); func }
-
-#' @export
-`[[.RNexus` <- `$.RNexus`
+run_neighbornet_networx <- function(x, labels, flip_y) .Call(wrap__run_neighbornet_networx, x, labels, flip_y)
 
 
 # nolint end
