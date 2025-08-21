@@ -1,6 +1,6 @@
-use fast_nnt_core::cli::NeighbourNetArgs;
-use fast_nnt_core::nexus::nexus::Nexus;
-use fast_nnt_core::run_fast_nnt_from_memory;
+use fast_nnt::cli::NeighbourNetArgs;
+use fast_nnt::nexus::nexus::Nexus;
+use fast_nnt::run_fast_nnt_from_memory;
 use ndarray::Array2;
 use numpy::PyReadonlyArray2;
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -136,7 +136,7 @@ fn run_neighbour_net<'py>(
 }
 
 #[pymodule]
-fn fastnnt(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn fastnntpy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNexus>()?;
     m.add_function(wrap_pyfunction!(run_neighbour_net, m)?)?;
     Ok(())

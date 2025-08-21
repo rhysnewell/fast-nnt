@@ -1,6 +1,6 @@
 use extendr_api::prelude::*;
 use ndarray::Array2;
-use fast_nnt_core::{run_fast_nnt_from_memory, cli::NeighbourNetArgs, nexus::nexus::Nexus};
+use fast_nnt::{run_fast_nnt_from_memory, cli::NeighbourNetArgs, nexus::nexus::Nexus};
 
 #[extendr]
 pub struct RNexus { inner: Nexus }

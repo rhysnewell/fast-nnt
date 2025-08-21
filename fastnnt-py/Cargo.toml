@@ -1,6 +1,7 @@
 [package]
 name = "fastnnt-py"
-version = "0.1.0"
+publish = false
+version = "0.2.0"
 edition = "2024"
 
 [lib]
@@ -12,6 +13,4 @@ pyo3 = { version = "0.25.1", features = ["extension-module"] }
 numpy = "0.25.0"
 ndarray = "0.16.1"
 anyhow = "1"
-
-# depend on your root crate
-fast_nnt_core = { package = "fast-nnt", path = ".." }  # <-- alias here
+fast_nnt = "0.2.0"
