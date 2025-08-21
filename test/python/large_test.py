@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 
 
-data = pd.read_csv("../test/data/large/large_dist_matrix.csv")
+data = pd.read_csv("test/data/large/large_dist_matrix.csv")
 n = fn.run_neighbour_net(data, data.columns)
 print("Labels")
 print(len(n.get_labels()))
@@ -25,7 +25,7 @@ print(len(n.get_graph_edges()))
 
 
 
-def plot_fast_nnt_networkx(nx_obj, out_path="plots/fast_nnt_nx.png",
+def plot_fast_nnt_networkx(nx_obj, out_path="test/plots/fast_nnt_nx.png",
                            shift=0, node_size=10, font_size=7,
                            scale_width_by_weight=False, dpi=300):
     # -- data from PyNexus --
@@ -76,7 +76,7 @@ def plot_fast_nnt_networkx(nx_obj, out_path="plots/fast_nnt_nx.png",
 plot_fast_nnt_networkx(n, out_path="test/plots/fast_nnt_graph_networkx.png")
 
 def save_neighbornet_plot(nx_obj,
-                          out_path="plots/fast_nnt_neighbornet.png",
+                          out_path="test/plots/fast_nnt_neighbornet.png",
                           shift=0,
                           label_leaves=True,
                           scale_width_by_weight=True,

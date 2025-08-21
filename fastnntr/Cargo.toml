@@ -11,4 +11,4 @@ extendr-api = "0.8.1"
 ndarray = "0.16.1"
 anyhow = "1"
 
-fast_nnt_core = { package = "fast-nnt", path = ".." }  # <-- alias here
+fast_nnt_core = { package = "fast-nnt", path = ".." } 

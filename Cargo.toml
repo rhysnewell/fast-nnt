@@ -12,7 +12,8 @@ keywords = ["phylogenetics", "neighbor-net", "splits-tree", "trees", "networks"]
 default-run = "fast_nnt"
 
 [workspace]
-members = ["fastnnt-py", "fastnnt-r"]
+members = ["fastnnt-py", "fastnntr"]
+
 resolver = "2"
 
 [dependencies]
