@@ -7,57 +7,75 @@ use serde::Serialize;
 use std::{fs, path::Path, time::Instant};
 
 use crate::algorithms::equal_angle::{EqualAngleOpts, equal_angle_apply};
-use crate::cli::NeighborNetArgs;
+use crate::cli::NeighbourNetArgs;
 use crate::data::splits_blocks::SplitsBlock;
+use crate::nexus::nexus::Nexus;
 use crate::nexus::nexus_writer::{NexusProperties, write_nexus_all_to_path};
 use crate::ordering::OrderingMethod;
 use crate::ordering::ordering_huson2023::compute_order_huson_2023;
 use crate::ordering::ordering_splitstree4::compute_order_splits_tree4;
 use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
+use crate::splits::asplit::ASplit;
 use crate::utils::compute_least_squares_fit;
 use crate::weights::active_set_weights::{NNLSParams, compute_asplits};
 
 pub struct NeighbourNet {
     out_dir: String,
-    args: NeighborNetArgs,
+    args: NeighbourNetArgs,
+    distance_matrix: Array2<f64>,
+    labels: Vec<String>,
+    parse_meta: ParseMeta,
 }
 
 impl NeighbourNet {
-    pub fn new(out_dir: String, args: NeighborNetArgs) -> Self {
-        NeighbourNet { out_dir, args }
+    pub fn new(out_dir: String, args: NeighbourNetArgs) -> Result<Self> {
+        let (distance_matrix, labels, parse_meta) = Self::
+            load_distance_matrix(&args.input)
+            .context("loading distance matrix")?;
+        Ok(NeighbourNet { out_dir, args, distance_matrix, labels, parse_meta })
+    }
+
+    pub fn from_distance_matrix(
+        dist: Array2<f64>,
+        labels: Vec<String>,
+        args: NeighbourNetArgs,
+    ) -> Self {
+        let n = dist.nrows();
+        if n != dist.ncols() {
+            panic!("Distance matrix must be square ({}x{})", n, dist.ncols());
+        }
+        NeighbourNet {
+            out_dir: "output".to_string(),
+            args,
+            distance_matrix: dist,
+            labels,
+            parse_meta: ParseMeta {
+                delimiter: ',',
+                has_header: false,
+                has_index: false,
+                symmetry_pairs_fixed: 0,
+                load_sec: 0.0,
+            },
+        }
     }
 
     pub fn run(&self) -> Result<()> {
         let t0 = Instant::now();
 
         // 1) Load distance matrix (+ labels + parse meta)
-        let (distance_matrix, labels, parse_meta) = self
-            .load_distance_matrix(&self.args.input)
-            .context("loading distance matrix")?;
-        let n = distance_matrix.nrows();
+        let n = self.distance_matrix.nrows();
         info!("Loaded distance matrix: {}x{}", n, n);
 
         // 2) Compute NeighborNet cycle (1-based with leading 0)
         let t_cycle = Instant::now();
-        let mut cycle = match self.args.ordering {
-            OrderingMethod::Huson2023 => compute_order_huson_2023(&distance_matrix),
-            OrderingMethod::SplitsTree4 => {
-                compute_order_splits_tree4(&distance_matrix).context("computing cycle")?
-            }
-        };
-        if cycle.first().copied() != Some(0) {
-            cycle = std::iter::once(0usize)
-                .chain(cycle.into_iter().map(|i| i + 1))
-                .collect();
-        }
+        let cycle = self.get_ordering().context("computing cycle")?;
         let cycle_sec = t_cycle.elapsed().as_secs_f64();
         info!("Computed cycle in {:.3}s", cycle_sec);
         debug!("Cycle (1-based): {:?}", &cycle[1..]);
 
         // 3) Active-Set NNLS
         let t_nnls = Instant::now();
-        let mut params = self.args.nnls_params.clone();
-        let splits = compute_asplits(&cycle, &distance_matrix, &mut params, None)
+        let (params, splits) = self.compute_asplits(&cycle)
             .context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
@@ -69,7 +87,7 @@ impl NeighbourNet {
 
         // 4) Least-squares fit
         let t_fit = Instant::now();
-        let fit = compute_least_squares_fit(&distance_matrix, &splits);
+        let fit = compute_least_squares_fit(&self.distance_matrix, &splits);
         let fit_sec = t_fit.elapsed().as_secs_f64();
         info!(
             "Least-squares fit: {:.4} % (computed in {:.3}s)",
@@ -78,10 +96,7 @@ impl NeighbourNet {
 
         // 5) Create splits blocks
         let t_spl = Instant::now();
-        let mut splits_blocks = SplitsBlock::new();
-        splits_blocks.set_splits(splits);
-        splits_blocks.set_fit(fit);
-        splits_blocks.set_cycle(cycle, true)?;
+        let splits_blocks = self.create_splits_block(splits, fit, cycle)?;
         let splits_sec = t_spl.elapsed().as_secs_f64();
         info!(
             "Created splits block with {} splits in {:.3}s",
@@ -91,28 +106,17 @@ impl NeighbourNet {
 
         // 6) Create phylogenetic splits graph
         let t_graph = Instant::now();
-        let mut graph = PhyloSplitsGraph::new();
-        // then:
-        let cycle = splits_blocks.cycle().expect("Cycle not yet set.");
-        let mut used_splits = FixedBitSet::with_capacity(splits_blocks.nsplits() + 1);
-        equal_angle_apply(
-            EqualAngleOpts::default(),
-            &labels,
-            &splits_blocks,
-            &mut graph,
-            None,
-            &mut used_splits,
-        )?;
+        let graph = self.create_graph(&splits_blocks)?;
         let graph_sec = t_graph.elapsed().as_secs_f64();
         info!("Created phylogenetic splits graph in {:.3}s", graph_sec);
 
         // 7) Outputs
         let t_out = Instant::now();
         self.output_results(
-            &cycle,
-            &labels,
+            &splits_blocks.cycle().expect("cycle should be set"),
+            &self.labels,
             &splits_blocks,
-            &distance_matrix,
+            &self.distance_matrix,
             &graph,
             fit,
         )
@@ -124,13 +128,13 @@ impl NeighbourNet {
         let run_log_path = Path::new(&self.out_dir).join("run_log.json");
 
         let stats = self.build_run_stats(
-            &parse_meta,
-            &labels,
+            &self.parse_meta,
+            &self.labels,
             &splits_blocks,
             &params,
             fit,
             RunTimings {
-                load_sec: parse_meta.load_sec,
+                load_sec: self.parse_meta.load_sec,
                 cycle_sec,
                 nnls_sec,
                 fit_sec,
@@ -147,11 +151,110 @@ impl NeighbourNet {
         Ok(())
     }
 
+    pub fn generate_nexus(&self) -> Result<Nexus> {
+        // 1) Load distance matrix (+ labels + parse meta)
+        let n = self.distance_matrix.nrows();
+        info!("Loaded distance matrix: {}x{}", n, n);
+
+        // 2) Compute NeighborNet cycle (1-based with leading 0)
+        let t_cycle = Instant::now();
+        let cycle = self.get_ordering().context("computing cycle")?;
+        let cycle_sec = t_cycle.elapsed().as_secs_f64();
+        info!("Computed cycle in {:.3}s", cycle_sec);
+        debug!("Cycle (1-based): {:?}", &cycle[1..]);
+
+        // 3) Active-Set NNLS
+        let t_nnls = Instant::now();
+        let (params, splits) = self.compute_asplits(&cycle)
+            .context("ASplits solved")?;
+        let nnls_sec = t_nnls.elapsed().as_secs_f64();
+        info!(
+            "Estimated {} splits (cutoff = {}) in {:.3}s",
+            splits.len(),
+            params.cutoff,
+            nnls_sec
+        );
+
+        // 4) Least-squares fit
+        let t_fit = Instant::now();
+        let fit = compute_least_squares_fit(&self.distance_matrix, &splits);
+        let fit_sec = t_fit.elapsed().as_secs_f64();
+        info!(
+            "Least-squares fit: {:.4} % (computed in {:.3}s)",
+            fit, fit_sec
+        );
+
+        // 5) Create splits blocks
+        let t_spl = Instant::now();
+        let splits_blocks = self.create_splits_block(splits, fit, cycle)?;
+        let splits_sec = t_spl.elapsed().as_secs_f64();
+        info!(
+            "Created splits block with {} splits in {:.3}s",
+            splits_blocks.nsplits(),
+            splits_sec
+        );
+
+        // 6) Create phylogenetic splits graph
+        let t_graph = Instant::now();
+        let graph = self.create_graph(&splits_blocks)?;
+        
+        let graph_sec = t_graph.elapsed().as_secs_f64();
+        info!("Created phylogenetic splits graph in {:.3}s", graph_sec);
+
+        let nexus = Nexus::new(self.labels.clone(), self.distance_matrix.clone(), splits_blocks, graph);
+        Ok(nexus)
+    }
+
+    pub fn get_ordering(&self) -> Result<Vec<usize>> {
+        let mut cycle = match self.args.ordering {
+            OrderingMethod::Huson2023 => compute_order_huson_2023(&self.distance_matrix),
+            OrderingMethod::SplitsTree4 => {
+                compute_order_splits_tree4(&self.distance_matrix).context("computing cycle")?
+            }
+        };
+        if cycle.first().copied() != Some(0) {
+            cycle = std::iter::once(0usize)
+                .chain(cycle.into_iter().map(|i| i + 1))
+                .collect();
+        }
+        Ok(cycle)
+    }
+
+    pub fn compute_asplits(&self, cycle: &[usize]) -> Result<(NNLSParams, Vec<ASplit>)> {
+        let mut params = self.args.nnls_params.clone();
+        let splits = compute_asplits(&cycle, &self.distance_matrix, &mut params, None)
+            .context("ASplits solved")?;
+        Ok((params, splits))
+    }
+
+    pub fn create_splits_block(&self, splits: Vec<ASplit>, fit: f32, cycle: Vec<usize>) -> Result<SplitsBlock> {
+        let mut splits_blocks = SplitsBlock::new();
+        splits_blocks.set_splits(splits);
+        splits_blocks.set_fit(fit);
+        splits_blocks.set_cycle(cycle, true)?;
+        Ok(splits_blocks)
+    }
+
+    pub fn create_graph(&self, splits_blocks: &SplitsBlock) -> Result<PhyloSplitsGraph> {
+        let mut graph = PhyloSplitsGraph::new();
+        let mut used_splits = FixedBitSet::with_capacity(splits_blocks.nsplits() + 1);
+        equal_angle_apply(
+            EqualAngleOpts::default(),
+            &self.labels,
+            &splits_blocks,
+            &mut graph,
+            None,
+            &mut used_splits,
+        )?;
+        graph.create_node_ids();
+        Ok(graph)
+    }
+
     /* ───────────── I/O ───────────── */
 
     /// Parse CSV/TSV/; / | / space; header/index row optional.
     /// Returns (n×n distances, labels[1..=n], parse meta incl. load time & symmetry fixes).
-    fn load_distance_matrix(&self, path: &str) -> Result<(Array2<f64>, Vec<String>, ParseMeta)> {
+    fn load_distance_matrix(path: &str) -> Result<(Array2<f64>, Vec<String>, ParseMeta)> {
         let t_load = Instant::now();
         let text = fs::read_to_string(path).with_context(|| format!("reading '{}'", path))?;
 
@@ -662,14 +765,14 @@ B,1,0,3
 C,2,3,0
 "#;
         with_temp(content, |p| {
-            let args = NeighborNetArgs {
+            let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 nnls_params: NNLSParams::default(),
             };
-            let nn = NeighbourNet::new("/tmp".to_string(), args);
-            let (mat, labels, meta) = nn.load_distance_matrix(&nn.args.input).unwrap();
+            // let nn = NeighbourNet::new("/tmp".to_string(), args);
+            let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
 
             assert_eq!(labels, vec!["A", "B", "C"]);
             assert!(meta.has_header);
@@ -691,14 +794,13 @@ C,2,3,0
 2,3,0
 "#;
         with_temp(content, |p| {
-            let args = NeighborNetArgs {
+            let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 nnls_params: NNLSParams::default(),
             };
-            let nn = NeighbourNet::new("/tmp".to_string(), args);
-            let (mat, labels, meta) = nn.load_distance_matrix(&nn.args.input).unwrap();
+            let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
 
             assert_eq!(labels, vec!["A", "B", "C"]);
             assert!(meta.has_header);
@@ -711,14 +813,13 @@ C,2,3,0
     fn tsv_index_no_header() {
         let content = "A\t0\t1\t2\nB\t1\t0\t3\nC\t2\t3\t0\n";
         with_temp(content, |p| {
-            let args = NeighborNetArgs {
+            let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 nnls_params: NNLSParams::default(),
             };
-            let nn = NeighbourNet::new("/tmp".to_string(), args);
-            let (mat, labels, meta) = nn.load_distance_matrix(&nn.args.input).unwrap();
+            let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
 
             assert_eq!(labels, vec!["A", "B", "C"]);
             assert!(!meta.has_header);
@@ -732,14 +833,13 @@ C,2,3,0
     fn space_delimited_no_header_no_index() {
         let content = "0 1 2\n1 0 3\n2 3 0\n";
         with_temp(content, |p| {
-            let args = NeighborNetArgs {
+            let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 nnls_params: NNLSParams::default(),
             };
-            let nn = NeighbourNet::new("/tmp".to_string(), args);
-            let (mat, labels, meta) = nn.load_distance_matrix(&nn.args.input).unwrap();
+            let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
 
             assert_eq!(labels, vec!["t1", "t2", "t3"]); // synthesized
             assert!(!meta.has_header);
@@ -752,14 +852,13 @@ C,2,3,0
     fn semicolon_header_no_index() {
         let content = "A;B;C\n0;1;2\n1;0;3\n2;3;0\n";
         with_temp(content, |p| {
-            let args = NeighborNetArgs {
+            let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 nnls_params: NNLSParams::default(),
             };
-            let nn = NeighbourNet::new("/tmp".to_string(), args);
-            let (mat, labels, meta) = nn.load_distance_matrix(&nn.args.input).unwrap();
+            let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
 
             assert_eq!(labels, vec!["A", "B", "C"]);
             assert!(meta.has_header);
@@ -777,14 +876,13 @@ C,2,3,0
 2.0,3.0,0
 "#;
         with_temp(content, |p| {
-            let args = NeighborNetArgs {
+            let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 nnls_params: NNLSParams::default(),
             };
-            let nn = NeighbourNet::new("/tmp".to_string(), args);
-            let (mat, labels, meta) = nn.load_distance_matrix(&nn.args.input).unwrap();
+            let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
 
             assert!(meta.symmetry_pairs_fixed >= 1);
             assert!(approx(mat[[0, 1]], 1.05, 1e-12));
@@ -798,14 +896,13 @@ C,2,3,0
         // 3x2 data after parsing ⇒ error
         let content = "A,B\n0,1\n1,0\n2,3\n";
         with_temp(content, |p| {
-            let args = NeighborNetArgs {
+            let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 nnls_params: NNLSParams::default(),
             };
-            let nn = NeighbourNet::new("/tmp".to_string(), args);
-            let err = nn.load_distance_matrix(&nn.args.input);
+            let err = NeighbourNet::load_distance_matrix(&args.input);
             assert!(err.is_err());
         });
     }

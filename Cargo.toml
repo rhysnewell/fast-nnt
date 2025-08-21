@@ -11,6 +11,10 @@ license = "GPL-3.0"
 keywords = ["phylogenetics", "neighbor-net", "splits-tree", "trees", "networks"]
 default-run = "fast_nnt"
 
+[workspace]
+members = ["fastnnt-py", "fastnnt-r"]
+resolver = "2"
+
 [dependencies]
 anyhow = "1.0.99"
 clap = { version="4.5", features = ["cargo", "derive"] }

@@ -71,7 +71,7 @@ impl Default for NNLSParams {
             proj_grad_bound: 1e-5, // will be reset from ‖Aᵀ d‖ below
             max_iterations: usize::MAX,
             max_time_ms: u64::MAX,
-            cgnr_iterations: 5000,
+            cgnr_iterations: 50,
             cgnr_tolerance: 1e-5 / 2.0,
             active_set_rho: 0.4,
         }

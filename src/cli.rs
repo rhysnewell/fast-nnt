@@ -47,11 +47,11 @@ pub enum ProgramSubcommand {
         name = "neighbour_net",
         about = "Run the SplitsTree NeighborNet algorithm"
     )]
-    NeighborNet(NeighborNetArgs),
+    NeighborNet(NeighbourNetArgs),
 }
 
 #[derive(Args, Debug)]
-pub struct NeighborNetArgs {
+pub struct NeighbourNetArgs {
     /// Input distance matrix file path
     #[arg(short, long, help = "Input distance matrix file path", required = true)]
     pub input: String,
@@ -66,9 +66,20 @@ pub struct NeighborNetArgs {
         short = 'O',
         long,
         help = "The ordering algorithm to use to get splits cycle",
-        default_value = "huson2023"
+        default_value = "splits-tree4"
     )]
     pub ordering: OrderingMethod,
     #[clap(flatten)]
     pub nnls_params: NNLSParams,
+}
+
+impl NeighbourNetArgs {
+    pub fn default() -> Self {
+        Self {
+            input: String::new(),
+            output_prefix: String::from("output"),
+            ordering: OrderingMethod::SplitsTree4,
+            nnls_params: NNLSParams::default(),
+        }
+    }
 }

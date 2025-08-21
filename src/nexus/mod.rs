@@ -5,6 +5,7 @@ use fixedbitset::FixedBitSet;
 
 pub mod network_writer;
 pub mod nexus_writer;
+pub mod nexus;
 
 /* ---------- helpers ---------- */
 
@@ -55,6 +56,10 @@ fn bitset_to_string(bs: &FixedBitSet) -> String {
         out.push_str(&t.to_string());
     }
     out
+}
+
+fn bitset_to_vec(bs: &FixedBitSet) -> Vec<usize> {
+    bs.ones().collect()
 }
 
 fn escape_label(s: &str) -> String {

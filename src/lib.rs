@@ -1,9 +1,11 @@
-use std::env;
+use std::{env, time::Instant};
 
+use anyhow::{Result, Context};
 use env_logger::Builder;
-use log::LevelFilter;
+use log::{LevelFilter, info};
+use ndarray::Array2;
 
-use crate::cli::ProgramArgs;
+use crate::{cli::{NeighbourNetArgs, ProgramArgs}, neighbour_net::neighbour_net::NeighbourNet, nexus::nexus::Nexus};
 
 pub mod algorithms;
 pub mod cli;
@@ -43,4 +45,24 @@ pub fn set_log_level(matches: &ProgramArgs, is_last: bool, program_name: &str, v
     if is_last {
         info!("{} version {}", program_name, version);
     }
+}
+
+
+/// The single entry point for bindings.
+///
+/// - `dist`: square distance matrix (n x n)
+/// - `labels`: length n
+/// - `args`: algorithm params (bindings can construct this or you add a smaller ArgsLite)
+pub fn run_fast_nnt_from_memory(
+    dist: Array2<f64>,
+    labels: Vec<String>,
+    args: NeighbourNetArgs
+) -> Result<Nexus> {
+    let t0 = Instant::now();
+
+    // Validate
+    let neighbour_net = NeighbourNet::from_distance_matrix(dist, labels, args);
+    let nexus = neighbour_net.generate_nexus().context("Performing neighbour net analysis")?;
+    info!("Finished NeighbourNet in {:?}", t0.elapsed());
+    Ok(nexus)
 }

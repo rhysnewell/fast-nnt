@@ -1,0 +1,17 @@
+[package]
+name = "fastnnt-py"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "fastnnt"              # Python import name: fastnnt
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.25.1", features = ["extension-module"] }
+numpy = "0.25.0"
+ndarray = "0.16.1"
+anyhow = "1"
+
+# depend on your root crate
+fast_nnt_core = { package = "fast-nnt", path = ".." }  # <-- alias here

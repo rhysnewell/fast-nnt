@@ -1,8 +1,11 @@
+use anyhow::Result;
 use fixedbitset::FixedBitSet;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{EdgeRef, NodeIndexable};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
+use crate::algorithms::equal_angle::{assign_coordinates_to_nodes, Pt};
+use crate::nexus::network_writer::{leaf_label, node_degree};
 use crate::phylo::phylo_graph::{DEFAULT_WEIGHT, PhyloGraph};
 
 #[inline]
@@ -37,6 +40,7 @@ pub struct PhyloSplitsGraph {
     taxon_cycle_map: Option<Vec<usize>>,
     // rotation system (cyclic order of incident edges)
     rotation: HashMap<NodeIndex, Vec<EdgeIndex>>,
+    pub node_ids: BTreeMap<NodeIndex, usize>,
 }
 
 impl PhyloSplitsGraph {
@@ -109,6 +113,15 @@ impl PhyloSplitsGraph {
         ids.sort_unstable();
         ids.dedup();
         ids
+    }
+
+    pub fn create_node_ids(&mut self) {
+        self.node_ids.clear();
+        let mut next = 1usize;
+        for v in self.base.graph.node_indices() {
+            self.node_ids.insert(v, next);
+            next += 1;
+        }
     }
 
     /* ---------------- copy / clone ---------------- */
@@ -683,10 +696,50 @@ impl PhyloSplitsGraph {
             false
         }
     }
+
+    /* ------ Nexus Based Funcs ------- */
+    pub fn get_node_translations(&self, taxa_labels_1based: &[String]) -> Result<Vec<(usize, String)>> {
+        let mut translations = Vec::new();
+        for v in self.base.graph.node_indices() {
+            if node_degree(&self.base, v) == 1 {
+                if let Some(lbl) = leaf_label(&self.base, v, taxa_labels_1based) {
+                    translations.push((self.node_ids[&v], lbl));
+                }
+            }
+        }
+        Ok(translations)
+    }
+
+    pub fn get_node_positions(&self) -> Result<Vec<(usize, f64, f64)>> {
+        let coords = assign_coordinates_to_nodes(true, &self, 1, 0);
+        let mut positions = Vec::new();
+        for v in self.base.graph.node_indices() {
+            let id = self.node_ids[&v];
+            let pt = coords.get(&v).copied().unwrap_or(Pt(0.0, 0.0));
+            positions.push((id, pt.0, pt.1));
+        }
+        Ok(positions)
+    }
+
+    pub fn get_graph_edges(&self) -> Result<Vec<(usize, usize, usize, i32, f64)>> {
+        let mut eid = 1usize;
+        let mut edges = Vec::new();
+        for e in self.base.graph.edge_indices() {
+            let (u, v) = self.base.graph.edge_endpoints(e).expect("valid endpoints");
+            let su = self.node_ids[&u];
+            let sv = self.node_ids[&v];
+            let sid = self.get_split(e);
+            let wgt = self.base.weight(e);
+            edges.push((eid, su, sv, sid, wgt));
+            eid += 1;
+        }
+        Ok(edges)
+    }
 }
 
 #[cfg(test)]
 mod phylo_splits_graph_tests {
+
     use super::*;
     use fixedbitset::FixedBitSet;
     use petgraph::stable_graph::{EdgeIndex, NodeIndex};
@@ -902,4 +955,6 @@ mod phylo_splits_graph_tests {
         // cycle mapping preserved
         assert_eq!(g.get_cycle(), cloned.get_cycle());
     }
+
+
 }
