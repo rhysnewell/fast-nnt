@@ -36,7 +36,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         py: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
 
     steps:
@@ -48,7 +47,7 @@ jobs:
         with:
           python-version: ${{ matrix.py }}
 
-      - name: Build wheels for fastnnt-py ${{ matrix.os }}-py${{ matrix.py }}
+      - name: Build wheels for fastnnt-py ${{ runner.os }}-py${{ matrix.py }}
         uses: PyO3/maturin-action@v1
         with:
           manylinux: "auto"
@@ -57,7 +56,7 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}-py${{ matrix.py }}
+          name: wheels-${{ runner.os }}-py${{ matrix.py }}
           path: fastnnt-py/target/wheels/*.whl
 
   publish:
