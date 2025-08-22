@@ -4,9 +4,9 @@ build-backend = "maturin"
 
 [project]
 name = "fastnntpy"
-version = "0.2.0"
+version = "0.2.1"
 requires-python = ">=3.9"
-description = "Fast NeighborNet (Rust) with Python bindings"
+description = "Fast NeighbourNet (Rust) with Python bindings"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Rhys Newell", email = "rhys.newell94@gmail.com" }]

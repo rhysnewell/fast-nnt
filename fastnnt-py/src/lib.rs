@@ -135,9 +135,20 @@ fn run_neighbour_net<'py>(
     Ok(PyNexus { inner: nexus })
 }
 
+#[pyfunction]
+#[pyo3(signature = (x, labels=None))]
+fn run_neighbor_net<'py>(
+    _py: Python<'py>,
+    x: Bound<'py, PyAny>,
+    labels: Option<Bound<'py, PyAny>>,
+) -> PyResult<PyNexus> {
+    run_neighbour_net(_py, x, labels)
+}
+
 #[pymodule]
 fn fastnntpy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNexus>()?;
     m.add_function(wrap_pyfunction!(run_neighbour_net, m)?)?;
+    m.add_function(wrap_pyfunction!(run_neighbor_net, m)?)?;
     Ok(())
 }
