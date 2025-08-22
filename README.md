@@ -120,5 +120,5 @@ If you use this tool in your work, please cite the original authors work:
 - Bryant & Moulton 2004: D. Bryant and V. Moulton. Neighbor-net: An agglomerative method for the construction of phylogenetic networks. Molecular Biology and Evolution, 21(2):255– 265, 2004.
 
 You can also cite this repository directly:
-- Newell, R. J. P., & McMaster, E. S. (2025). Fast-NNT: Fast NeighborNet Split Trees For Unrooted Phylogenetic Analysis (v0.1.0). Zenodo. https://doi.org/10.5281/zenodo.16907380
+- Newell, R. J. P., & McMaster, E. S. (2025). Fast-NNT: Fast NeighborNet Split Trees For Unrooted Phylogenetic Analysis (v0.2.0). Zenodo. https://doi.org/10.5281/zenodo.16907379
 
