@@ -1,9 +1,9 @@
 Package: fastnntr
-Title: Fast Rust-Based SplitsTree NeighborNet Algorithm
-Version: 0.1.0.9000
+Title: Fast Rust-Based SplitsTree NeighbourNet Algorithm
+Version: 0.2.1.9000
 Authors@R: 
     person("Rhys", "Newell", , "rhys.newell94@gmail.com", role = c("aut", "cre"))
-Description: This package provides a Rust implementation of the SplitsTree NeighborNet algorithm for phylogenetic analysis.
+Description: This package provides a Rust implementation of the SplitsTree NeighbourNet algorithm for phylogenetic analysis.
 License: `use_gpl3_license()`
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

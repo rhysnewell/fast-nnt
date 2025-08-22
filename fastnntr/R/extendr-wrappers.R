@@ -12,5 +12,7 @@ NULL
 
 run_neighbornet_networx <- function(x, labels, flip_y) .Call(wrap__run_neighbornet_networx, x, labels, flip_y)
 
+run_neighbournet_networx <- function(x, labels, flip_y) .Call(wrap__run_neighbournet_networx, x, labels, flip_y)
+
 
 # nolint end

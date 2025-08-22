@@ -1,11 +1,11 @@
 [![DOI](https://zenodo.org/badge/1037785550.svg)](https://doi.org/10.5281/zenodo.16907379)
 
 # fast-nnt
-fast-nnt (read Fast Ent) is a simple Rust implementation of the Neighbor Net algorithm with both R and Python bindings.
+fast-nnt (read Fast Ent) is a simple Rust implementation of the Neighbour Net algorithm with both R and Python bindings.
 
 ### Introduction
 
-Fast-NNT is a Rust implementation of the NeighborNet algorithm, designed for efficient phylogenetic analysis. It constructs split trees from distance matrices, providing a fast and reliable tool for researchers in evolutionary biology. R and Python bindings are provided so that users can easily integrate Fast-NNT into their existing workflows.
+Fast-NNT is a Rust implementation of the NeighbourNet algorithm, designed for efficient phylogenetic analysis. It constructs split trees from distance matrices, providing a fast and reliable tool for researchers in evolutionary biology. R and Python bindings are provided so that users can easily integrate Fast-NNT into their existing workflows.
 
 **Why does this exist when SplitsTree is available?**
 
@@ -22,13 +22,13 @@ Install Rust via [rustup](https://rustup.rs/).
 
 #### Python
 You can install the Python package via pip:
-```
+```bash
 pip install fastnntpy
 ```
 
 #### R
 You can install the R package via:
-```
+```R
 install.packages("fastnntr")
 
 # Or if CRAN is unavailable and you have Rust on your machine, i think this will work
@@ -37,12 +37,12 @@ devtools::install_github("rhysnewell/fast-nnt", subdir = "fastnntr")
 
 #### CLI
 
-```
+```bash
 cargo install fast-nnt
 ```
 
 Alternatively, you can build from source. Clone and install this repo via:
-```
+```bash
 git clone https://github.com/rhysnewell/fast-nnt.git
 cd fast-nnt
 cargo install --path .
@@ -120,5 +120,5 @@ If you use this tool in your work, please cite the original authors work:
 - Bryant & Moulton 2004: D. Bryant and V. Moulton. Neighbor-net: An agglomerative method for the construction of phylogenetic networks. Molecular Biology and Evolution, 21(2):255– 265, 2004.
 
 You can also cite this repository directly:
-- Newell, R. J. P., & McMaster, E. S. (2025). Fast-NNT: Fast NeighborNet Split Trees For Unrooted Phylogenetic Analysis (v0.2.0). Zenodo. https://doi.org/10.5281/zenodo.16907379
+- Newell, R. J. P., & McMaster, E. S. (2025). Fast-NNT: Fast NeighbourNet Split Trees For Unrooted Phylogenetic Analysis (v0.2.0). Zenodo. https://doi.org/10.5281/zenodo.16907379
 

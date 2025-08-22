@@ -211,7 +211,14 @@ fn run_neighbornet_networx(x: Robj, labels: Robj, flip_y: bool) -> extendr_api::
     nexus_to_networx(&nexus, flip_y)
 }
 
+#[extendr]
+fn run_neighbournet_networx(x: Robj, labels: Robj, flip_y: bool) -> extendr_api::Result<List> {
+    // Alias for backward compatibility
+    run_neighbornet_networx(x, labels, flip_y)
+}
+
 extendr_module! {
     mod fastnntr;
     fn run_neighbornet_networx;
+    fn run_neighbournet_networx;
 }
