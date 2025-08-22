@@ -30,6 +30,9 @@ pip install fastnntpy
 You can install the R package via:
 ```
 install.packages("fastnntr")
+
+# Or if CRAN is unavailable and you have Rust on your machine, i think this will work
+devtools::install_github("rhysnewell/fast-nnt", subdir = "fastnntr")
 ```
 
 #### CLI
@@ -118,3 +121,4 @@ If you use this tool in your work, please cite the original authors work:
 
 You can also cite this repository directly:
 - Newell, R. J. P., & McMaster, E. S. (2025). Fast-NNT: Fast NeighborNet Split Trees For Unrooted Phylogenetic Analysis (v0.1.0). Zenodo. https://doi.org/10.5281/zenodo.16907380
+
