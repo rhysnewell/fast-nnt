@@ -109,10 +109,8 @@ The output will include a nexus file containing the split network and network la
 
 
 ### TODO
-- R bindings for direct use within R
-- Python bindings for direct use within Python
 - Work on parallelism. Not a priority as the program is fast enough.
-- Test on giant datasets.
+- Test on giant datasets. (works >400 taxa in ~5s, but need to test bigger)
 
 
 ### Citations
