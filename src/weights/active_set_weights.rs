@@ -49,10 +49,10 @@ pub struct NNLSParams {
     #[arg(short, long, default_value = "1e-5")]
     pub proj_grad_bound: f64,
     /// Hard iteration cap (outer loops).
-    #[arg(short, long, default_value_t = usize::MAX)]
+    #[arg(short, long, default_value_t = 5000)]
     pub max_iterations: usize,
     /// Wall-clock cap in ms (use `u64::MAX` to disable).
-    #[arg(short, long, default_value_t = u64::MAX)]
+    #[arg(short, long, default_value_t = 5000)]
     pub max_time_ms: u64,
     // CGNR
     #[arg(short, long, default_value = "50")]
@@ -69,8 +69,8 @@ impl Default for NNLSParams {
         Self {
             cutoff: 1e-4,
             proj_grad_bound: 1e-5, // will be reset from ‖Aᵀ d‖ below
-            max_iterations: usize::MAX,
-            max_time_ms: u64::MAX,
+            max_iterations: 5000,
+            max_time_ms: 5000,
             cgnr_iterations: 50,
             cgnr_tolerance: 1e-5 / 2.0,
             active_set_rho: 0.4,
