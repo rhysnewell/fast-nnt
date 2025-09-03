@@ -61,7 +61,7 @@ Read data in via `numpy`, `pandas`, or `polars`:
 import fastnntpy as fn
 import pandas as pd
 data = pd.read_csv("test/data/large/large_dist_matrix.csv")
-n = fn.run_neighbour_net(data, data.columns)
+n = fn.run_neighbour_net(data)
 print("Labels")
 print(len(n.get_labels()))
 print("Splits Records")
@@ -81,7 +81,7 @@ library(fastnntr)
 library(data.table)
 data <- fread("test/data/large/large_dist_matrix.csv", header=TRUE)
 # Load network
-Nnet <- run_neighbornet_networx(data, names(data), TRUE)
+Nnet <- run_neighbornet_networx(data)
 ```
 
 The `run_neighbornet_networx` function will return an object almost identical to that produced by `phangorn`, so should be compatible with existing workflows.
