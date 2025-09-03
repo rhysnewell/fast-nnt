@@ -243,9 +243,7 @@ dependencies = [
 
 [[package]]
 name = "fast-nnt"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "208a248e0a1acfb610f4ae2e75c2a12a9d890ad3d0d1e9974188dd0ba694bbc0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",

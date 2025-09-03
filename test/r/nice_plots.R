@@ -28,7 +28,9 @@ devtools::load_all("fastnntr")
 make_splitstree_plot <- function(title=NULL) {
   data <- fread("test/data/large/large_dist_matrix.csv", header=TRUE)
   # Load network
-  Nnet <- run_neighbornet_networx(data, names(data), TRUE)
+  
+  Nnet <- run_neighbornet_networx(data, flip_y=TRUE, labels=names(data), max_iterations=5000, ordering_method="splitstree4")
+  # Nnet <- run_neighbornet_networx(data)
   
   # Prepare plotting data
   x <- data.frame(x = Nnet$.plot$vertices[,1],
@@ -57,7 +59,7 @@ make_splitstree_plot <- function(title=NULL) {
 
 #--- 2. Define input files ---#
 
-plot1 <- make_splitstree_plot(title="Fast-NNT - Huson2023 Ordering")
+plot1 <- make_splitstree_plot(title="Fast-NNT - SplitsTree4 Ordering")
 
 
 

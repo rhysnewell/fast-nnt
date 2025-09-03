@@ -1,6 +1,7 @@
 use fast_nnt::cli::NeighbourNetArgs;
 use fast_nnt::nexus::nexus::Nexus;
 use fast_nnt::run_fast_nnt_from_memory;
+use fast_nnt::ordering::OrderingMethod;
 use ndarray::Array2;
 use numpy::PyReadonlyArray2;
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -106,10 +107,12 @@ fn infer_labels<'py>(obj: Bound<'py, PyAny>, n: usize) -> PyResult<Vec<String>> 
 }
 // ---- public API ----
 #[pyfunction]
-#[pyo3(signature = (x, labels=None))]
+#[pyo3(signature = (x, max_iterations=5000, ordering_method=None, labels=None))]
 fn run_neighbour_net<'py>(
     _py: Python<'py>,
     x: Bound<'py, PyAny>,
+    max_iterations: usize,
+    ordering_method: Option<String>,
     labels: Option<Bound<'py, PyAny>>,
 ) -> PyResult<PyNexus> {
     let arr = coerce_to_numpy_2d(x.clone())?;
@@ -127,7 +130,9 @@ fn run_neighbour_net<'py>(
         infer_labels(x, n)?
     };
 
-    let args = NeighbourNetArgs::default(); // You can customize this if needed
+    let mut args = NeighbourNetArgs::default(); // You can customize this if needed
+    args.nnls_params.max_iterations = max_iterations;
+    args.ordering = OrderingMethod::from_option(ordering_method);
 
     let nexus = run_fast_nnt_from_memory(view, lbls, args)
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -136,10 +141,12 @@ fn run_neighbour_net<'py>(
 }
 
 #[pyfunction]
-#[pyo3(signature = (x, labels=None))]
+#[pyo3(signature = (x, max_iterations=5000, ordering_method=None, labels=None))]
 fn run_neighbor_net<'py>(
     _py: Python<'py>,
     x: Bound<'py, PyAny>,
+    max_iterations: usize,
+    ordering_method: Option<String>,
     labels: Option<Bound<'py, PyAny>>,
 ) -> PyResult<PyNexus> {
     run_neighbour_net(_py, x, labels)

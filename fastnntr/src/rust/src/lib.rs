@@ -2,8 +2,9 @@ use extendr_api::prelude::*;
 use ndarray::Array2;
 use std::collections::HashMap;
 
+
 // From your core:
-use fast_nnt::{run_fast_nnt_from_memory, cli::NeighbourNetArgs, nexus::nexus::Nexus};
+use fast_nnt::{run_fast_nnt_from_memory, cli::NeighbourNetArgs, nexus::nexus::Nexus, ordering::OrderingMethod};
 
 /// Coerce to numeric matrix.
 fn to_numeric_matrix(x: &Robj) -> extendr_api::Result<RMatrix<f64>> {
@@ -186,8 +187,8 @@ fn nexus_to_networx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
 }
 
 
-#[extendr]
-fn run_neighbornet_networx(x: Robj, labels: Robj, flip_y: bool) -> extendr_api::Result<List> {
+#[extendr()]
+fn run_neighbornet_networx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default = "NULL"] labels: Robj, #[default = "5000"] max_iterations: Robj, #[default = "NULL"] ordering_method: Robj) -> extendr_api::Result<List> {
     // Coerce & build Array2
     let mx = to_numeric_matrix(&x)?; let n = mx.nrows();
     if n != mx.ncols() {
@@ -204,17 +205,36 @@ fn run_neighbornet_networx(x: Robj, labels: Robj, flip_y: bool) -> extendr_api::
             .into_iter().map(|s| s.to_string()).collect()
     };
     // Run core
-    let args = NeighbourNetArgs::default();
+    let mut args = NeighbourNetArgs::default();
+
+    if !max_iterations.is_null() {
+        if let Some(max_iter) = max_iterations.as_integer() {
+            args.nnls_params.max_iterations = max_iter as usize;
+        }
+    }
+
+    if !ordering_method.is_null() {
+        args.ordering = OrderingMethod::from_option(ordering_method.as_str());
+    }
+
     let nexus = run_fast_nnt_from_memory(arr, lbls, args)
         .map_err(|e| Error::Other(e.to_string()))?;
     // Convert to networx-like list
-    nexus_to_networx(&nexus, flip_y)
+
+    let mut flip = true;
+    if !flip_y.is_null() {
+        if let Some(val) = flip_y.as_bool() {
+            flip = val;
+        }
+    }
+
+    nexus_to_networx(&nexus, flip)
 }
 
-#[extendr]
-fn run_neighbournet_networx(x: Robj, labels: Robj, flip_y: bool) -> extendr_api::Result<List> {
+#[extendr()]
+fn run_neighbournet_networx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default = "NULL"] labels: Robj, #[default = "5000"] max_iterations: Robj, #[default = "NULL"] ordering_method: Robj) -> extendr_api::Result<List> {
     // Alias for backward compatibility
-    run_neighbornet_networx(x, labels, flip_y)
+    run_neighbornet_networx(x, flip_y, labels, max_iterations, ordering_method)
 }
 
 extendr_module! {
