@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "fast-nnt"
-version = "0.2.2"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
