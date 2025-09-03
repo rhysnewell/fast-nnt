@@ -149,7 +149,7 @@ fn run_neighbor_net<'py>(
     ordering_method: Option<String>,
     labels: Option<Bound<'py, PyAny>>,
 ) -> PyResult<PyNexus> {
-    run_neighbour_net(_py, x, labels)
+    run_neighbour_net(_py, x, max_iterations, ordering_method, labels)
 }
 
 #[pymodule]
