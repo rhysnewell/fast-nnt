@@ -1,11 +1,15 @@
 use std::{env, time::Instant};
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use env_logger::Builder;
 use log::{LevelFilter, info};
 use ndarray::Array2;
 
-use crate::{cli::{NeighbourNetArgs, ProgramArgs}, neighbour_net::neighbour_net::NeighbourNet, nexus::nexus::Nexus};
+use crate::{
+    cli::{NeighbourNetArgs, ProgramArgs},
+    neighbour_net::neighbour_net::NeighbourNet,
+    nexus::nexus::Nexus,
+};
 
 pub mod algorithms;
 pub mod cli;
@@ -47,7 +51,6 @@ pub fn set_log_level(matches: &ProgramArgs, is_last: bool, program_name: &str, v
     }
 }
 
-
 /// The single entry point for bindings.
 ///
 /// - `dist`: square distance matrix (n x n)
@@ -56,13 +59,15 @@ pub fn set_log_level(matches: &ProgramArgs, is_last: bool, program_name: &str, v
 pub fn run_fast_nnt_from_memory(
     dist: Array2<f64>,
     labels: Vec<String>,
-    args: NeighbourNetArgs
+    args: NeighbourNetArgs,
 ) -> Result<Nexus> {
     let t0 = Instant::now();
 
     // Validate
     let neighbour_net = NeighbourNet::from_distance_matrix(dist, labels, args);
-    let nexus = neighbour_net.generate_nexus().context("Performing neighbour net analysis")?;
+    let nexus = neighbour_net
+        .generate_nexus()
+        .context("Performing neighbour net analysis")?;
     info!("Finished NeighbourNet in {:?}", t0.elapsed());
     Ok(nexus)
 }

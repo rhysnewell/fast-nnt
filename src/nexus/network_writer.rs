@@ -167,7 +167,11 @@ pub fn node_degree(g: &PhyloGraph, v: NodeIndex) -> usize {
 }
 
 /// Prefer taxon label if node maps to exactly one taxon; else use node label
-pub fn leaf_label(base: &PhyloGraph, v: NodeIndex, taxa_labels_1based: &[String]) -> Option<String> {
+pub fn leaf_label(
+    base: &PhyloGraph,
+    v: NodeIndex,
+    taxa_labels_1based: &[String],
+) -> Option<String> {
     // One mapped taxon?
     if let Some(n2t) = base.node2taxa() {
         if let Some(list) = n2t.get(&v) {

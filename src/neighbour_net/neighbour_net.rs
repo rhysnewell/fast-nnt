@@ -29,10 +29,15 @@ pub struct NeighbourNet {
 
 impl NeighbourNet {
     pub fn new(out_dir: String, args: NeighbourNetArgs) -> Result<Self> {
-        let (distance_matrix, labels, parse_meta) = Self::
-            load_distance_matrix(&args.input)
-            .context("loading distance matrix")?;
-        Ok(NeighbourNet { out_dir, args, distance_matrix, labels, parse_meta })
+        let (distance_matrix, labels, parse_meta) =
+            Self::load_distance_matrix(&args.input).context("loading distance matrix")?;
+        Ok(NeighbourNet {
+            out_dir,
+            args,
+            distance_matrix,
+            labels,
+            parse_meta,
+        })
     }
 
     pub fn from_distance_matrix(
@@ -75,8 +80,7 @@ impl NeighbourNet {
 
         // 3) Active-Set NNLS
         let t_nnls = Instant::now();
-        let (params, splits) = self.compute_asplits(&cycle)
-            .context("ASplits solved")?;
+        let (params, splits) = self.compute_asplits(&cycle).context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
             "Estimated {} splits (cutoff = {}) in {:.3}s",
@@ -165,8 +169,7 @@ impl NeighbourNet {
 
         // 3) Active-Set NNLS
         let t_nnls = Instant::now();
-        let (params, splits) = self.compute_asplits(&cycle)
-            .context("ASplits solved")?;
+        let (params, splits) = self.compute_asplits(&cycle).context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
             "Estimated {} splits (cutoff = {}) in {:.3}s",
@@ -197,11 +200,16 @@ impl NeighbourNet {
         // 6) Create phylogenetic splits graph
         let t_graph = Instant::now();
         let graph = self.create_graph(&splits_blocks)?;
-        
+
         let graph_sec = t_graph.elapsed().as_secs_f64();
         info!("Created phylogenetic splits graph in {:.3}s", graph_sec);
 
-        let nexus = Nexus::new(self.labels.clone(), self.distance_matrix.clone(), splits_blocks, graph);
+        let nexus = Nexus::new(
+            self.labels.clone(),
+            self.distance_matrix.clone(),
+            splits_blocks,
+            graph,
+        );
         Ok(nexus)
     }
 
@@ -227,7 +235,12 @@ impl NeighbourNet {
         Ok((params, splits))
     }
 
-    pub fn create_splits_block(&self, splits: Vec<ASplit>, fit: f32, cycle: Vec<usize>) -> Result<SplitsBlock> {
+    pub fn create_splits_block(
+        &self,
+        splits: Vec<ASplit>,
+        fit: f32,
+        cycle: Vec<usize>,
+    ) -> Result<SplitsBlock> {
         let mut splits_blocks = SplitsBlock::new();
         splits_blocks.set_splits(splits);
         splits_blocks.set_fit(fit);

@@ -4,7 +4,7 @@ use petgraph::stable_graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{EdgeRef, NodeIndexable};
 use std::collections::{BTreeMap, HashMap};
 
-use crate::algorithms::equal_angle::{assign_coordinates_to_nodes, Pt};
+use crate::algorithms::equal_angle::{Pt, assign_coordinates_to_nodes};
 use crate::nexus::network_writer::{leaf_label, node_degree};
 use crate::phylo::phylo_graph::{DEFAULT_WEIGHT, PhyloGraph};
 
@@ -698,7 +698,10 @@ impl PhyloSplitsGraph {
     }
 
     /* ------ Nexus Based Funcs ------- */
-    pub fn get_node_translations(&self, taxa_labels_1based: &[String]) -> Result<Vec<(usize, String)>> {
+    pub fn get_node_translations(
+        &self,
+        taxa_labels_1based: &[String],
+    ) -> Result<Vec<(usize, String)>> {
         let mut translations = Vec::new();
         for v in self.base.graph.node_indices() {
             if node_degree(&self.base, v) == 1 {
@@ -955,6 +958,4 @@ mod phylo_splits_graph_tests {
         // cycle mapping preserved
         assert_eq!(g.get_cycle(), cloned.get_cycle());
     }
-
-
 }

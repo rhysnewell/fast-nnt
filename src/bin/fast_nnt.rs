@@ -22,7 +22,9 @@ fn main() {
     // Dispatch subcommands
     let result = match app.subcommand {
         ProgramSubcommand::NeighborNet(args) => {
-            let runner = NeighbourNet::new(app.output_directory, args).context("creating NeighbourNet").expect("Failed to create NeighbourNet");
+            let runner = NeighbourNet::new(app.output_directory, args)
+                .context("creating NeighbourNet")
+                .expect("Failed to create NeighbourNet");
             runner.run()
         }
 

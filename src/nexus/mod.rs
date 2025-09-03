@@ -4,8 +4,8 @@ use anyhow::Result;
 use fixedbitset::FixedBitSet;
 
 pub mod network_writer;
-pub mod nexus_writer;
 pub mod nexus;
+pub mod nexus_writer;
 
 /* ---------- helpers ---------- */
 
