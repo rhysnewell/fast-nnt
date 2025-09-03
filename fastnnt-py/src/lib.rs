@@ -112,7 +112,7 @@ fn run_neighbour_net<'py>(
     _py: Python<'py>,
     x: Bound<'py, PyAny>,
     max_iterations: usize,
-    ordering_method: Option<String>,
+    ordering_method: Option<&str>,
     labels: Option<Bound<'py, PyAny>>,
 ) -> PyResult<PyNexus> {
     let arr = coerce_to_numpy_2d(x.clone())?;
@@ -146,7 +146,7 @@ fn run_neighbor_net<'py>(
     _py: Python<'py>,
     x: Bound<'py, PyAny>,
     max_iterations: usize,
-    ordering_method: Option<String>,
+    ordering_method: Option<&str>,
     labels: Option<Bound<'py, PyAny>>,
 ) -> PyResult<PyNexus> {
     run_neighbour_net(_py, x, max_iterations, ordering_method, labels)

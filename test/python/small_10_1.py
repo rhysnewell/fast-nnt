@@ -2,8 +2,8 @@
 
 import fastnntpy as fn
 import pandas as pd
-data = pd.read_csv("../test/data/small_10/small_10_1.csv")
-n = fn.run_neighbour_net(data, data.columns)
+data = pd.read_csv("test/data/small_10/small_10_1.csv")
+n = fn.run_neighbour_net(data)
 print("Labels")
 print(n.get_labels())
 print("Splits Records")

@@ -11,7 +11,8 @@ from matplotlib.collections import LineCollection
 
 
 data = pd.read_csv("test/data/large/large_dist_matrix.csv")
-n = fn.run_neighbour_net(data, data.columns)
+n = fn.run_neighbor_net(data, max_iterations=5000, ordering_method="splitstree4", labels=data.columns)
+n = fn.run_neighbour_net(data, max_iterations=5000, ordering_method="splitstree4", labels=data.columns)
 print("Labels")
 print(len(n.get_labels()))
 print("Splits Records")
