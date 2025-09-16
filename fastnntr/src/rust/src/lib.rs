@@ -78,10 +78,10 @@ fn vecvec_usize_cols_to_rmatrix_i32(cols: &[Vec<usize>]) -> Robj {
     r!(m)
 }
 
-/// Convert your in-memory `Nexus` into a networx-like R list.
+/// Convert your in-memory `Nexus` into a networkx-like R list.
 /// Returns a list with fields: edge, tip.label, edge.length, Nnode, splitIndex, splits, translate, and .plot$vertices.
 /// `flip_y` matches the example (`vert[,2] <- -vert[,2]`).
-fn nexus_to_networx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
+fn nexus_to_networkx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
     // 1) labels / ntaxa
     let tip_labels: Vec<String> = nexus.get_labels().to_vec();
     let ntaxa = tip_labels.len();
@@ -182,13 +182,13 @@ fn nexus_to_networx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
     obj.insert(".plot", r!(plot_list));
 
     let mut list = List::from_hashmap(obj).unwrap();
-    list.set_class(&["networx", "phylo"])?;
+    list.set_class(&["networkx", "phylo"])?;
     Ok(list)
 }
 
 
-#[extendr()]
-fn run_neighbornet_networx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default = "NULL"] labels: Robj, #[default = "5000"] max_iterations: Robj, #[default = "NULL"] ordering_method: Robj) -> extendr_api::Result<List> {
+#[extendr]
+fn run_neighbornet_networkx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default = "NULL"] labels: Robj, #[default = "5000"] max_iterations: Robj, #[default = "NULL"] ordering_method: Robj) -> extendr_api::Result<List> {
     // Coerce & build Array2
     let mx = to_numeric_matrix(&x)?; let n = mx.nrows();
     if n != mx.ncols() {
@@ -219,7 +219,7 @@ fn run_neighbornet_networx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default 
 
     let nexus = run_fast_nnt_from_memory(arr, lbls, args)
         .map_err(|e| Error::Other(e.to_string()))?;
-    // Convert to networx-like list
+    // Convert to networkx-like list
 
     let mut flip = true;
     if !flip_y.is_null() {
@@ -228,17 +228,17 @@ fn run_neighbornet_networx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default 
         }
     }
 
-    nexus_to_networx(&nexus, flip)
+    nexus_to_networkx(&nexus, flip)
 }
 
-#[extendr()]
-fn run_neighbournet_networx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default = "NULL"] labels: Robj, #[default = "5000"] max_iterations: Robj, #[default = "NULL"] ordering_method: Robj) -> extendr_api::Result<List> {
+#[extendr]
+fn run_neighbournet_networkx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default = "NULL"] labels: Robj, #[default = "5000"] max_iterations: Robj, #[default = "NULL"] ordering_method: Robj) -> extendr_api::Result<List> {
     // Alias for backward compatibility
-    run_neighbornet_networx(x, flip_y, labels, max_iterations, ordering_method)
+    run_neighbornet_networkx(x, flip_y, labels, max_iterations, ordering_method)
 }
 
 extendr_module! {
     mod fastnntr;
-    fn run_neighbornet_networx;
-    fn run_neighbournet_networx;
+    fn run_neighbornet_networkx;
+    fn run_neighbournet_networkx;
 }
