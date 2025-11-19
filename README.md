@@ -81,10 +81,10 @@ library(fastnntr)
 library(data.table)
 data <- fread("test/data/large/large_dist_matrix.csv", header=TRUE)
 # Load network
-Nnet <- run_neighbornet_networkx(data)
+Nnet <- fastnntr:::run_neighbournet_networkx(data)
 ```
 
-The `run_neighbornet_networkx` function will return an object almost identical to that produced by `phangorn`, so should be compatible with existing workflows.
+The `run_neighbournet_networkx` function will return an object almost identical to that produced by `phangorn`, so should be compatible with existing workflows.
 
 #### CLI
 Required input is a symmetrical distance matrix, ideally with a header row indicating the taxa labels. Can be separated by any delimiter.
