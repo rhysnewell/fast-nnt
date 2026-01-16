@@ -463,7 +463,7 @@ fn calc_atx(x: &[f64], y: &mut [f64], n: usize) {
     }
 
     // pass 2
-    s_index = 1;
+    let mut s_index = 1usize;
     for i in 1..=(n - 2) {
         y[s_index] = y[s_index - 1] + y[s_index + n - i - 1] - 2.0 * x[s_index - 1];
         s_index += n - i;
@@ -480,6 +480,7 @@ fn calc_atx(x: &[f64], y: &mut [f64], n: usize) {
         }
     }
 }
+
 
 /// Compute x from y for size `n` using the same index arithmetic as the Java version.
 /// - `y.len()` and `x.len()` must both be n*(n-1)/2 (upper triangle packed vector).
@@ -637,8 +638,8 @@ fn cgnr(
 
     // r = d - A x
     calc_ax(x, r, n);
-    r.par_iter_mut()
-        .zip(d.par_iter())
+    r.iter_mut()
+        .zip(d.iter())
         .for_each(|(ri, &di)| *ri = di - *ri);
 
     // z = Aᵀ r; mask actives
@@ -656,12 +657,10 @@ fn cgnr(
         let alpha = ztz / denom;
 
         // x += alpha p; r -= alpha w
-        x.par_iter_mut()
-            .zip(p.par_iter())
-            .for_each(|(xi, &pi)| *xi += alpha * pi);
-        r.par_iter_mut()
-            .zip(w.par_iter())
-            .for_each(|(ri, &wi)| *ri -= alpha * wi);
+        for i in 0..x.len() {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * w[i];
+        }
 
         // z = Aᵀ r; mask
         calc_atx(r, z, n);
@@ -678,9 +677,9 @@ fn cgnr(
         //     p[i] = z[i] + beta * p[i];
         // }
         // ztz = ztz2;
-        p.par_iter_mut()
-            .zip(z.par_iter())
-            .for_each(|(pi, &zi)| *pi = zi + beta * (*pi)); // correct: z + beta * old_p
+        for i in 0..p.len() {
+            p[i] = z[i] + beta * p[i]; // correct: z + beta * old_p
+        }
         // debug!("sum p {:?} sum z {:?}", p.iter().sum::<f64>(), z.iter().sum::<f64>());
 
         ztz = ztz_new;

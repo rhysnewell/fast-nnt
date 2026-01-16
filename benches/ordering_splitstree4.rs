@@ -23,6 +23,7 @@ fn make_distance_matrix(n: usize, seed: u64) -> Array2<f64> {
 
 fn bench_splitstree4_sx(c: &mut Criterion) {
     let mut group = c.benchmark_group("splitstree4_sx");
+    group.sample_size(10);
     for &n in &[80usize, 160, 320, 640] {
         let dist = make_distance_matrix(n, 42);
 

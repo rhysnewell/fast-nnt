@@ -47,6 +47,7 @@ fn distances_from_splits(ntax: usize, splits: &[ASplit]) -> Array2<f64> {
 
 fn bench_least_squares_fit(c: &mut Criterion) {
     let mut group = c.benchmark_group("least_squares_fit");
+    group.sample_size(10);
     for &ntax in &[50usize, 100, 200] {
         let mut rng = StdRng::seed_from_u64(7);
         let nsplits = ntax * 2;

@@ -22,7 +22,7 @@ fn make_distance_matrix(n: usize, seed: u64) -> Array2<f64> {
 
 fn bench_huson2023(c: &mut Criterion) {
     let mut group = c.benchmark_group("huson2023_ordering");
-    group.sample_size(20);
+    group.sample_size(10);
     group.measurement_time(Duration::from_secs(3));
     for &n in &[60usize, 120, 240] {
         let dist = make_distance_matrix(n, 1337);

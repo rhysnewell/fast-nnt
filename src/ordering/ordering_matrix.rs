@@ -8,25 +8,13 @@ pub struct NeighbourNetResult {
 
 type Matrix = Array2<f64>;
 
-fn mean_between_sets(d: &Matrix, a: &[usize], b: &[usize]) -> f64 {
-    let mut sum = 0.0;
-    let mut cnt = 0usize;
-    for &i in a {
-        for &j in b {
-            sum += unsafe { *d.uget((i, j)) };
-            cnt += 1;
-        }
-    }
-    if cnt == 0 { 0.0 } else { sum / cnt as f64 }
-}
-
 /// Update cluster distance matrix `dm` for row/col `j` given full `d` and cluster list `cl`.
-fn update_dm(dm: &mut Matrix, d: &Matrix, cl: &Vec<Vec<usize>>, j: usize) {
+fn update_dm(dm: &mut Matrix, cl: &Vec<Vec<usize>>, sums: &Vec<Vec<f64>>, j: usize) {
     let l = cl.len();
     // Compute all means to cluster j in parallel, then assign
     let col_vals: Vec<f64> = (0..l)
         .into_par_iter()
-        .map(|i| mean_between_sets(d, &cl[i], &cl[j]))
+        .map(|i| mean_between_clusters_cached(cl, sums, i, j))
         .collect();
 
     // Assign row j
@@ -41,7 +29,7 @@ fn update_dm(dm: &mut Matrix, d: &Matrix, cl: &Vec<Vec<usize>>, j: usize) {
 }
 
 /// Rx helper from the R code.
-fn rx(d: &Matrix, x: &[usize], cl: &Vec<Vec<usize>>) -> Vec<f64> {
+fn rx(d: &Matrix, x: &[usize], cl: &Vec<Vec<usize>>, sums: &Vec<Vec<f64>>) -> Vec<f64> {
     let lx = x.len();
     let mut res = vec![0.0; lx];
     for (i, &xi) in x.iter().enumerate() {
@@ -53,8 +41,8 @@ fn rx(d: &Matrix, x: &[usize], cl: &Vec<Vec<usize>>) -> Vec<f64> {
             }
         }
         // plus mean to each other cluster
-        for c in cl.iter() {
-            tmp += mean_between_sets(d, std::slice::from_ref(&xi), c);
+        for (c_idx, _c) in cl.iter().enumerate() {
+            tmp += mean_single_to_cluster_cached(cl, sums, c_idx, xi);
         }
         res[i] = tmp;
     }
@@ -153,10 +141,17 @@ fn choose_pair(dm: &Matrix, r: &[f64]) -> (usize, usize) {
     (bi, bj)
 }
 
-fn remove_e2(cl: &mut Vec<Vec<usize>>, ord: &mut Vec<Vec<usize>>, dm: &mut Matrix, e2: usize) {
+fn remove_e2(
+    cl: &mut Vec<Vec<usize>>,
+    ord: &mut Vec<Vec<usize>>,
+    dm: &mut Matrix,
+    sums: &mut Vec<Vec<f64>>,
+    e2: usize,
+) {
     cl.remove(e2);
     ord.remove(e2);
     *dm = remove_row_col(dm, e2);
+    sums.remove(e2);
 }
 
 /// The main ordering routine.
@@ -170,6 +165,7 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
     // Clusters & per-cluster linear orders
     let mut cl: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
     let mut ord: Vec<Vec<usize>> = cl.clone();
+    let mut sums: Vec<Vec<f64>> = (0..n).map(|i| d.row(i).to_vec()).collect();
 
     // Cluster distance matrix (start with singleton distances)
     let mut dm = d.clone();
@@ -203,14 +199,17 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
             cl[e1] = new_cl;
             ord[e1] = new_ord;
 
-            update_dm(&mut dm, &d, &cl, e1);
-            remove_e2(&mut cl, &mut ord, &mut dm, e2);
+            merge_cluster_sums(&mut sums, e1, e2);
+            update_dm(&mut dm, &cl, &sums, e1);
+            remove_e2(&mut cl, &mut ord, &mut dm, &mut sums, e2);
         } else {
             // Build "others" (all clusters except e1,e2)
             let mut others: Vec<Vec<usize>> = Vec::with_capacity(cl.len().saturating_sub(2));
+            let mut others_sums: Vec<Vec<f64>> = Vec::with_capacity(cl.len().saturating_sub(2));
             for (idx, c) in cl.iter().enumerate() {
                 if idx != e1 && idx != e2 {
                     others.push(c.clone());
+                    others_sums.push(sums[idx].clone());
                 }
             }
 
@@ -219,7 +218,7 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
             cltmp2.extend_from_slice(&cl[e1]);
             cltmp2.extend_from_slice(&cl[e2]);
 
-            let mut rtmp2 = rx(&d, &cltmp2, &others);
+            let mut rtmp2 = rx(&d, &cltmp2, &others, &others_sums);
             let ltmp = cl[e1].len() + cl[e2].len() + others.len();
             if ltmp > 2 {
                 let scale = 1.0 / ((ltmp as f64) - 2.0);
@@ -335,12 +334,57 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
             ord[e1] = new_ord;
             cl[e1] = new_cl;
 
-            update_dm(&mut dm, &d, &cl, e1);
-            remove_e2(&mut cl, &mut ord, &mut dm, e2);
+            recompute_cluster_sum(&d, &cl, &mut sums, e1);
+            update_dm(&mut dm, &cl, &sums, e1);
+            remove_e2(&mut cl, &mut ord, &mut dm, &mut sums, e2);
         }
     }
 
     ord.into_iter().next().unwrap_or_default()
+}
+
+fn mean_between_clusters_cached(
+    cl: &Vec<Vec<usize>>,
+    sums: &Vec<Vec<f64>>,
+    i: usize,
+    j: usize,
+) -> f64 {
+    let ai = cl[i].len();
+    let bj = cl[j].len();
+    if ai == 0 || bj == 0 {
+        return 0.0;
+    }
+    let (small, large) = if ai <= bj { (i, j) } else { (j, i) };
+    let sum: f64 = cl[small].iter().map(|&t| sums[large][t]).sum();
+    let denom = (ai * bj) as f64;
+    if denom == 0.0 { 0.0 } else { sum / denom }
+}
+
+fn mean_single_to_cluster_cached(cl: &Vec<Vec<usize>>, sums: &Vec<Vec<f64>>, c_idx: usize, xi: usize) -> f64 {
+    let size = cl[c_idx].len();
+    if size == 0 {
+        0.0
+    } else {
+        sums[c_idx][xi] / (size as f64)
+    }
+}
+
+fn merge_cluster_sums(sums: &mut Vec<Vec<f64>>, e1: usize, e2: usize) {
+    let add = sums[e2].clone();
+    for (v, a) in sums[e1].iter_mut().zip(add.iter()) {
+        *v += a;
+    }
+}
+
+fn recompute_cluster_sum(d: &Matrix, cl: &Vec<Vec<usize>>, sums: &mut Vec<Vec<f64>>, idx: usize) {
+    let mut out = vec![0.0f64; d.ncols()];
+    for &t in cl[idx].iter() {
+        let row = d.row(t);
+        for (k, v) in row.iter().enumerate() {
+            out[k] += *v;
+        }
+    }
+    sums[idx] = out;
 }
 
 pub fn neighbor_net_ordering(x: &Matrix) -> NeighbourNetResult {

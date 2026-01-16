@@ -54,3 +54,7 @@ harness = false
 [[bench]]
 name = "least_squares_fit"
 harness = false
+
+[[bench]]
+name = "ordering_matrix"
+harness = false

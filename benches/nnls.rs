@@ -21,14 +21,15 @@ fn make_distance_matrix(n: usize, seed: u64) -> Array2<f64> {
 
 fn bench_nnls(c: &mut Criterion) {
     let mut group = c.benchmark_group("nnls");
-    for &n in &[40usize, 60, 80] {
+    group.sample_size(10);
+    for &n in &[40usize, 80, 160, 320] {
         let dist = make_distance_matrix(n, 2024);
         let mut cycle = Vec::with_capacity(n + 1);
         cycle.push(0);
         cycle.extend(1..=n);
 
         let max_threads = num_cpus::get();
-        let thread_counts: Vec<usize> = [1usize, 2, 4, 8, 16]
+        let thread_counts: Vec<usize> = [1usize]
             .into_iter()
             .filter(|&t| t <= max_threads)
             .collect();
