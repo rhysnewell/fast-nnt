@@ -110,10 +110,6 @@ fast_nnt neighbour_net -t 4 -i test/data/large_dist_matrix.csv -d output_dir -o 
 
 The output will include a nexus file containing the split network and network layout.
 
-### Known issues
-- (Resolved) Floating point drift in the CGNR function (smoke_30).
-- Not sure where it is happening, but the final results on real data end up looking pretty much the same so not sure if it is an issue. Will need to be fixed at some point.
-
 
 ### TODO
 - Work on parallelism. Not a priority as the program is fast enough.

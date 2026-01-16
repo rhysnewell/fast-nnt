@@ -1,6 +1,7 @@
 use ndarray::Array2;
 use petgraph::Undirected;
 use petgraph::graph::{Graph, NodeIndex};
+use rayon::prelude::*;
 use std::cmp::min;
 
 // --- components: always singleton or pair ---
@@ -269,37 +270,55 @@ fn select_closest_pair(components: &[Component], d: &Array2<f64>) -> (usize, usi
         }
     }
 
-    let mut best_val = f64::INFINITY;
-    let mut best_ip = 0usize;
-    let mut best_iq = 1usize;
-    for ip in 0..m {
-        let p = components[ip];
-        for iq in (ip + 1)..m {
-            let q = components[iq];
+    let (_best_val, best_ip, best_iq) = (0..m)
+        .into_par_iter()
+        .filter(|&ip| ip + 1 < m)
+        .map(|ip| {
+            let p = components[ip];
+            let mut local_best_val = f64::INFINITY;
+            let mut local_best_iq = ip + 1;
 
-            // sums over all S != P,Q
-            let mut sum_p = 0.0;
-            let mut sum_q = 0.0;
-            for is in 0..m {
-                if is == ip || is == iq {
-                    continue;
+            for iq in (ip + 1)..m {
+                let q = components[iq];
+
+                // sums over all S != P,Q
+                let mut sum_p = 0.0;
+                let mut sum_q = 0.0;
+                for is in 0..m {
+                    if is == ip || is == iq {
+                        continue;
+                    }
+                    let s = components[is];
+                    sum_p += avg_d_comp_comp(d, &p, &s);
+                    sum_q += avg_d_comp_comp(d, &q, &s);
                 }
-                let s = components[is];
-                sum_p += avg_d_comp_comp(d, &p, &s);
-                sum_q += avg_d_comp_comp(d, &q, &s);
+
+                let pq = avg_d_comp_comp(d, &p, &q);
+                let adjusted = (m as f64 - 2.0) * pq - sum_p - sum_q;
+
+                if adjusted < local_best_val {
+                    local_best_val = adjusted;
+                    local_best_iq = iq;
+                }
             }
 
-            let pq = avg_d_comp_comp(d, &p, &q);
-            let adjusted = (m as f64 - 2.0) * pq - sum_p - sum_q;
-
-            // strict <, so ties keep the first hit (Java behavior)
-            if adjusted < best_val {
-                best_val = adjusted;
-                best_ip = ip;
-                best_iq = iq;
-            }
-        }
-    }
+            (local_best_val, ip, local_best_iq)
+        })
+        .reduce(
+            || (f64::INFINITY, 0usize, 1usize),
+            |a, b| {
+                let cmp = a.0.total_cmp(&b.0);
+                if cmp == std::cmp::Ordering::Less {
+                    a
+                } else if cmp == std::cmp::Ordering::Greater {
+                    b
+                } else if a.1 < b.1 || (a.1 == b.1 && a.2 <= b.2) {
+                    a
+                } else {
+                    b
+                }
+            },
+        );
 
     // Ensure |P| <= |Q|
     if components[best_ip].size() > components[best_iq].size() {

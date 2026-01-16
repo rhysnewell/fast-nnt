@@ -593,7 +593,6 @@ pub fn sum_array_squared(x: &[f64], n: usize) -> f64 {
         x.len(),
         expected
     );
-
     let mut total = 0.0f64;
     let mut index = 0usize;
 
