@@ -3,6 +3,7 @@ use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::ThreadPoolBuilder;
+use std::time::Duration;
 
 use fast_nnt::ordering::ordering_huson2023::compute_order_huson_2023;
 
@@ -21,11 +22,13 @@ fn make_distance_matrix(n: usize, seed: u64) -> Array2<f64> {
 
 fn bench_huson2023(c: &mut Criterion) {
     let mut group = c.benchmark_group("huson2023_ordering");
-    for &n in &[80usize, 160, 320] {
+    group.sample_size(20);
+    group.measurement_time(Duration::from_secs(3));
+    for &n in &[60usize, 120, 240] {
         let dist = make_distance_matrix(n, 1337);
 
         let max_threads = num_cpus::get();
-        let thread_counts: Vec<usize> = [1usize, 2, 4, 8, 16]
+        let thread_counts: Vec<usize> = [4, 8, 16]
             .into_iter()
             .filter(|&t| t <= max_threads)
             .collect();

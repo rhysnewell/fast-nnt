@@ -13,12 +13,12 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
     let n = distances.nrows();
     assert_eq!(n, distances.ncols(), "distances must be square");
 
-    // Build the split-induced distance matrix S (0-based) in parallel:
+    // Build split-induced distances for the packed upper triangle (i<j) in parallel:
     // S[i,j] = Σ_{splits} weight * [i∈A && j∈B or i∈B && j∈A]
     let split_dist = splits
         .par_iter()
         .map(|s| {
-            let mut m = Array2::<f64>::zeros((n, n));
+            let mut acc = vec![0.0_f64; n * (n - 1) / 2];
             let w = s.get_weight();
             let a: &FixedBitSet = s.get_a();
             let b: &FixedBitSet = s.get_b();
@@ -33,16 +33,19 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
                         continue;
                     }
                     let jj = j1 - 1;
-                    m[[ii, jj]] += w;
-                    m[[jj, ii]] += w; // symmetric
+                    let (i, j) = if ii < jj { (ii, jj) } else { (jj, ii) };
+                    let idx = pair_index(i, j, n);
+                    acc[idx] += w;
                 }
             }
-            m
+            acc
         })
         .reduce(
-            || Array2::<f64>::zeros((n, n)),
+            || vec![0.0_f64; n * (n - 1) / 2],
             |mut acc, m| {
-                acc.zip_mut_with(&m, |a, b| *a += *b);
+                for (a, b) in acc.iter_mut().zip(m.iter()) {
+                    *a += b;
+                }
                 acc
             },
         );
@@ -53,8 +56,10 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
         .map(|i| {
             let mut diff_sum = 0.0;
             let mut d_sum = 0.0;
+            let start = row_start(i, n);
             for j in (i + 1)..n {
-                let sij = split_dist[[i, j]];
+                let idx = start + (j - i - 1);
+                let sij = split_dist[idx];
                 let dij = distances[[i, j]];
                 let diff = sij - dij;
                 diff_sum += diff * diff;
@@ -71,6 +76,17 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
     };
 
     fit as f32
+}
+
+#[inline]
+fn row_start(i: usize, n: usize) -> usize {
+    i * (2 * n - i - 1) / 2
+}
+
+#[inline]
+fn pair_index(i: usize, j: usize, n: usize) -> usize {
+    debug_assert!(i < j && j < n);
+    row_start(i, n) + (j - i - 1)
 }
 
 #[cfg(test)]

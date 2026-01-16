@@ -50,3 +50,7 @@ harness = false
 [[bench]]
 name = "nnls"
 harness = false
+
+[[bench]]
+name = "least_squares_fit"
+harness = false
