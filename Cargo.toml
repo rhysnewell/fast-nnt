@@ -42,3 +42,11 @@ rand = "0.8"
 [[bench]]
 name = "ordering_splitstree4"
 harness = false
+
+[[bench]]
+name = "ordering_huson2023"
+harness = false
+
+[[bench]]
+name = "nnls"
+harness = false

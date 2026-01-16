@@ -334,19 +334,25 @@ fn select_closest_1_vs_2(ip: usize, iq: usize, d: &Array2<f64>, components: &[Co
     let q1 = components[iq].first();
     let q2 = components[iq].second();
 
-    let mut p_r = d[[q1, p]] + d[[q2, p]];
-    let mut q1_r = d[[q1, q2]] + d[[q1, p]];
-    let mut q2_r = d[[q1, q2]] + d[[q2, p]];
+    let (p_r_extra, q1_r_extra, q2_r_extra) = (0..m)
+        .into_par_iter()
+        .filter(|&i| i != ip && i != iq)
+        .map(|i| {
+            let other = components[i];
+            (
+                avg_d_p_comp(d, p, &other),
+                avg_d_p_comp(d, q1, &other),
+                avg_d_p_comp(d, q2, &other),
+            )
+        })
+        .reduce(
+            || (0.0, 0.0, 0.0),
+            |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
+        );
 
-    for i in 0..m {
-        if i == ip || i == iq {
-            continue;
-        }
-        let other = components[i];
-        p_r += avg_d_p_comp(d, p, &other);
-        q1_r += avg_d_p_comp(d, q1, &other);
-        q2_r += avg_d_p_comp(d, q2, &other);
-    }
+    let p_r = d[[q1, p]] + d[[q2, p]] + p_r_extra;
+    let q1_r = d[[q1, q2]] + d[[q1, p]] + q1_r_extra;
+    let q2_r = d[[q1, q2]] + d[[q2, p]] + q2_r_extra;
 
     let mm1 = m as f64 - 1.0;
     let q1p_adj = mm1 * d[[q1, p]] - q1_r - p_r;
@@ -373,21 +379,27 @@ fn select_closest_2_vs_2(
     let q1 = components[iq].first();
     let q2 = components[iq].second();
 
-    let mut p1_r = d[[p1, q1]] + d[[p1, q2]];
-    let mut p2_r = d[[p2, q1]] + d[[p2, q2]];
-    let mut q1_r = d[[p1, q1]] + d[[p2, q1]];
-    let mut q2_r = d[[p1, q2]] + d[[p2, q2]];
+    let (p1_r_extra, p2_r_extra, q1_r_extra, q2_r_extra) = (0..m)
+        .into_par_iter()
+        .filter(|&i| i != ip && i != iq)
+        .map(|i| {
+            let other = components[i];
+            (
+                avg_d_p_comp(d, p1, &other),
+                avg_d_p_comp(d, p2, &other),
+                avg_d_p_comp(d, q1, &other),
+                avg_d_p_comp(d, q2, &other),
+            )
+        })
+        .reduce(
+            || (0.0, 0.0, 0.0, 0.0),
+            |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3),
+        );
 
-    for i in 0..m {
-        if i == ip || i == iq {
-            continue;
-        }
-        let other = components[i];
-        p1_r += avg_d_p_comp(d, p1, &other);
-        p2_r += avg_d_p_comp(d, p2, &other);
-        q1_r += avg_d_p_comp(d, q1, &other);
-        q2_r += avg_d_p_comp(d, q2, &other);
-    }
+    let p1_r = d[[p1, q1]] + d[[p1, q2]] + p1_r_extra;
+    let p2_r = d[[p2, q1]] + d[[p2, q2]] + p2_r_extra;
+    let q1_r = d[[p1, q1]] + d[[p2, q1]] + q1_r_extra;
+    let q2_r = d[[p1, q2]] + d[[p2, q2]] + q2_r_extra;
 
     // m * D[p][q] - pR - qR
     let m_f = m as f64;

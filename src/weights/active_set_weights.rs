@@ -637,8 +637,8 @@ fn cgnr(
 
     // r = d - A x
     calc_ax(x, r, n);
-    r.iter_mut()
-        .zip(d.iter())
+    r.par_iter_mut()
+        .zip(d.par_iter())
         .for_each(|(ri, &di)| *ri = di - *ri);
 
     // z = Aᵀ r; mask actives
@@ -656,10 +656,12 @@ fn cgnr(
         let alpha = ztz / denom;
 
         // x += alpha p; r -= alpha w
-        for i in 0..x.len() {
-            x[i] += alpha * p[i];
-            r[i] -= alpha * w[i];
-        }
+        x.par_iter_mut()
+            .zip(p.par_iter())
+            .for_each(|(xi, &pi)| *xi += alpha * pi);
+        r.par_iter_mut()
+            .zip(w.par_iter())
+            .for_each(|(ri, &wi)| *ri -= alpha * wi);
 
         // z = Aᵀ r; mask
         calc_atx(r, z, n);
@@ -676,9 +678,9 @@ fn cgnr(
         //     p[i] = z[i] + beta * p[i];
         // }
         // ztz = ztz2;
-        for i in 0..p.len() {
-            p[i] = z[i] + beta * p[i]; // correct: z + beta * old_p
-        }
+        p.par_iter_mut()
+            .zip(z.par_iter())
+            .for_each(|(pi, &zi)| *pi = zi + beta * (*pi)); // correct: z + beta * old_p
         // debug!("sum p {:?} sum z {:?}", p.iter().sum::<f64>(), z.iter().sum::<f64>());
 
         ztz = ztz_new;
