@@ -37,6 +37,13 @@ install.packages("fastnntr")
 devtools::install_github("rhysnewell/fast-nnt", subdir = "fastnntr")
 ```
 
+If you are developing locally and have changed the R bindings:
+```R
+rextendr::document()
+devtools::load_all()
+devtools::install_local("fastnntr")
+```
+
 #### CLI
 
 ```bash
@@ -81,7 +88,7 @@ library(fastnntr)
 library(data.table)
 data <- fread("test/data/large/large_dist_matrix.csv", header=TRUE)
 # Load network
-Nnet <- fastnntr:::run_neighbournet_networkx(data)
+Nnet <- fastnntr::run_neighbournet_networkx(data)
 ```
 
 The `run_neighbournet_networkx` function will return an object almost identical to that produced by `phangorn`, so should be compatible with existing workflows.
