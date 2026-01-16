@@ -104,7 +104,7 @@ fast_nnt neighbour_net -t 4 -i test/data/large_dist_matrix.csv -d output_dir -o 
 The output will include a nexus file containing the split network and network layout.
 
 ### Known issues
-- Floating point drift in the CGNR function, as observed in the smoke_30 test.
+- (Resolved) Floating point drift in the CGNR function (smoke_30).
 - Not sure where it is happening, but the final results on real data end up looking pretty much the same so not sure if it is an issue. Will need to be fixed at some point.
 
 
@@ -121,4 +121,3 @@ If you use this tool in your work, please cite the original authors work:
 
 You can also cite this repository directly:
 - Newell, R. J. P., & McMaster, E. S. (2025). Fast-NNT: Fast NeighbourNet Split Trees For Unrooted Phylogenetic Analysis (v0.2.0). Zenodo. https://doi.org/10.5281/zenodo.16907379
-

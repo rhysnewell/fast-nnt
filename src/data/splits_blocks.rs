@@ -317,20 +317,21 @@ mod tests {
         // Q: {2,3} | {1,4,5}
         let q = sb.push(mk_split(&[2, 3], ntax, 1.0));
 
-        // A(P) ∩ A(Q) = {2}
+        // A(P) ∩ A(Q) = {1} (A is normalized to the side with the lowest taxon)
         let a_and_a = sb.intersect2(p, true, q, true);
-        assert!(a_and_a.contains(2));
+        assert!(a_and_a.contains(1));
         assert_eq!(
             a_and_a.count_ones(..) - if a_and_a.contains(0) { 1 } else { 0 },
             1
         );
 
-        // B(P) ∩ A(Q) = {3}
+        // B(P) ∩ A(Q) = {4,5}
         let b_and_a = sb.intersect2(p, false, q, true);
-        assert!(b_and_a.contains(3));
+        assert!(b_and_a.contains(4));
+        assert!(b_and_a.contains(5));
         assert_eq!(
             b_and_a.count_ones(..) - if b_and_a.contains(0) { 1 } else { 0 },
-            1
+            2
         );
     }
 }
