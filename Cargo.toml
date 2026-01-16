@@ -36,3 +36,9 @@ libc = "0.2.175"
 [dev-dependencies]
 tempfile = "3"
 pretty_assertions = "1"   # optional, nicer diffs
+criterion = "0.5"
+rand = "0.8"
+
+[[bench]]
+name = "ordering_splitstree4"
+harness = false

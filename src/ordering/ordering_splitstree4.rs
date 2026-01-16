@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use ndarray::Array2;
+use rayon::prelude::*;
 
 const EPS: f64 = 1e-12;
 
@@ -7,6 +8,22 @@ const EPS: f64 = 1e-12;
 /// - `dist` is 0-based, shape n×n, symmetric with 0 on the diagonal.
 /// - Returns a 1-based cycle with a leading 0 sentinel: `[0, t1, t2, ..., tn]`.
 pub fn compute_order_splits_tree4(dist: &Array2<f64>) -> Result<Vec<usize>> {
+    let n_tax = dist.nrows();
+    let sx_mode = default_sx_mode(n_tax);
+    compute_order_splits_tree4_with_sx(dist, sx_mode)
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SxMode {
+    Serial,
+    Parallel,
+}
+
+/// Same as `compute_order_splits_tree4`, but allows selecting the Sx computation mode.
+pub fn compute_order_splits_tree4_with_sx(
+    dist: &Array2<f64>,
+    sx_mode: SxMode,
+) -> Result<Vec<usize>> {
     let n_tax = dist.nrows();
     ensure!(dist.ncols() == n_tax, "Distance matrix must be square");
 
@@ -49,10 +66,14 @@ pub fn compute_order_splits_tree4(dist: &Array2<f64>) -> Result<Vec<usize>> {
     }
     debug!("Matrix size: {:?} {}", mat.len(), mat[0].len());
     // 3) Agglomerate
-    let joins = join_nodes(&mut mat, &mut nodes, 0, n_tax)?;
+    let joins = join_nodes(&mut mat, &mut nodes, 0, n_tax, sx_mode)?;
 
     // 4) Expand joins to a circular ordering of leaves
     expand_nodes(n_tax, &mut nodes, 0, joins)
+}
+
+fn default_sx_mode(n_tax: usize) -> SxMode {
+    if n_tax < 300 { SxMode::Serial } else { SxMode::Parallel }
 }
 
 /* ---------------------------- core structures ---------------------------- */
@@ -102,6 +123,7 @@ fn join_nodes(
     nodes: &mut [NetNode],
     head: usize,
     n_tax: usize,
+    sx_mode: SxMode,
 ) -> Result<Vec<usize>> {
     let mut joins: Vec<usize> = Vec::new();
 
@@ -132,44 +154,9 @@ fn join_nodes(
         }
 
         // --- Compute Sx ---
-        {
-            // zero Sx for all actives
-            let mut p_opt = nodes[head].next;
-            while let Some(p) = p_opt {
-                nodes[p].sx = 0.0;
-                p_opt = nodes[p].next;
-            }
-
-            // p walks active list
-            let mut p_opt = nodes[head].next;
-            while let Some(p) = p_opt {
-                // evaluate only one per cluster: (p.nbr == null) || (p.nbr.id > p.id)
-                let eval_p = nodes[p].nbr.map_or(true, |nb| nodes[nb].id > nodes[p].id);
-                if eval_p {
-                    // q walks from p.next forward
-                    let mut q_opt = nodes[p].next;
-                    while let Some(q) = q_opt {
-                        // Java: if (q.nbr == null || ((q.nbr.id > q.id) && (q.nbr != p)))
-                        let eval_q = match nodes[q].nbr {
-                            None => true,
-                            Some(nb) => nodes[nb].id > nodes[q].id && nodes[q].nbr != Some(p),
-                        };
-                        if eval_q {
-                            let dpq = avg_cluster_dist(d, nodes, p, q);
-                            nodes[p].sx += dpq;
-                            if let Some(pb) = nodes[p].nbr {
-                                nodes[pb].sx += dpq;
-                            }
-                            nodes[q].sx += dpq;
-                            if let Some(qb) = nodes[q].nbr {
-                                nodes[qb].sx += dpq;
-                            }
-                        }
-                        q_opt = nodes[q].next;
-                    }
-                }
-                p_opt = nodes[p].next;
-            }
+        match sx_mode {
+            SxMode::Serial => compute_sx_serial(d, nodes, head),
+            SxMode::Parallel => compute_sx_parallel(d, nodes, head),
         }
 
         // --- Choose representatives ---
@@ -515,6 +502,107 @@ fn avg_cluster_dist(mat: &[Vec<f64>], nodes: &[NetNode], p: usize, q: usize) -> 
                 + mat[nodes[pb].id][nodes[q].id]
                 + mat[nodes[pb].id][nodes[qb].id])
         }
+    }
+}
+
+fn compute_sx_serial(d: &[Vec<f64>], nodes: &mut [NetNode], head: usize) {
+    // zero Sx for all actives
+    let mut p_opt = nodes[head].next;
+    while let Some(p) = p_opt {
+        nodes[p].sx = 0.0;
+        p_opt = nodes[p].next;
+    }
+
+    // p walks active list
+    let mut p_opt = nodes[head].next;
+    while let Some(p) = p_opt {
+        // evaluate only one per cluster: (p.nbr == null) || (p.nbr.id > p.id)
+        let eval_p = nodes[p].nbr.map_or(true, |nb| nodes[nb].id > nodes[p].id);
+        if eval_p {
+            // q walks from p.next forward
+            let mut q_opt = nodes[p].next;
+            while let Some(q) = q_opt {
+                // Java: if (q.nbr == null || ((q.nbr.id > q.id) && (q.nbr != p)))
+                let eval_q = match nodes[q].nbr {
+                    None => true,
+                    Some(nb) => nodes[nb].id > nodes[q].id && nodes[q].nbr != Some(p),
+                };
+                if eval_q {
+                    let dpq = avg_cluster_dist(d, nodes, p, q);
+                    nodes[p].sx += dpq;
+                    if let Some(pb) = nodes[p].nbr {
+                        nodes[pb].sx += dpq;
+                    }
+                    nodes[q].sx += dpq;
+                    if let Some(qb) = nodes[q].nbr {
+                        nodes[qb].sx += dpq;
+                    }
+                }
+                q_opt = nodes[q].next;
+            }
+        }
+        p_opt = nodes[p].next;
+    }
+}
+
+fn compute_sx_parallel(d: &[Vec<f64>], nodes: &mut [NetNode], head: usize) {
+    let mut actives = Vec::new();
+    let mut p_opt = nodes[head].next;
+    while let Some(p) = p_opt {
+        nodes[p].sx = 0.0;
+        actives.push(p);
+        p_opt = nodes[p].next;
+    }
+
+    let nodes_ro = &*nodes;
+    let eligible: Vec<bool> = actives
+        .iter()
+        .map(|&p| nodes_ro[p].nbr.map_or(true, |nb| nodes_ro[nb].id > nodes_ro[p].id))
+        .collect();
+
+    let deltas = (0..actives.len())
+        .into_par_iter()
+        .fold(
+            || vec![0.0f64; nodes_ro.len()],
+            |mut acc, p_idx| {
+                if !eligible[p_idx] {
+                    return acc;
+                }
+                let p = actives[p_idx];
+                for q_idx in (p_idx + 1)..actives.len() {
+                    let q = actives[q_idx];
+                    let eval_q = match nodes_ro[q].nbr {
+                        None => true,
+                        Some(nb) => nodes_ro[nb].id > nodes_ro[q].id && nodes_ro[q].nbr != Some(p),
+                    };
+                    if !eval_q {
+                        continue;
+                    }
+                    let dpq = avg_cluster_dist(d, nodes_ro, p, q);
+                    acc[p] += dpq;
+                    if let Some(pb) = nodes_ro[p].nbr {
+                        acc[pb] += dpq;
+                    }
+                    acc[q] += dpq;
+                    if let Some(qb) = nodes_ro[q].nbr {
+                        acc[qb] += dpq;
+                    }
+                }
+                acc
+            },
+        )
+        .reduce(
+            || vec![0.0f64; nodes_ro.len()],
+            |mut a, b| {
+                for i in 0..a.len() {
+                    a[i] += b[i];
+                }
+                a
+            },
+        );
+
+    for p in actives {
+        nodes[p].sx = deltas[p];
     }
 }
 
