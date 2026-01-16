@@ -142,16 +142,15 @@ pub fn compute_use_1d(
         }
     }
 
-    // Threshold from ||Aᵀ d||.
-    let mut a_t_d = vec![0.0; npairs];
-    calc_atx(&d, &mut a_t_d, n);
-    let norm_atd = sum_array_squared(&a_t_d, n).sqrt();
+    // Threshold from ||Aᵀ d|| (reuse `x` as workspace to avoid an extra allocation).
+    let mut x = vec![0.0; npairs];
+    calc_atx(&d, &mut x, n);
+    let norm_atd = sum_array_squared(&x, n).sqrt();
     params.proj_grad_bound = (1e-4 * norm_atd).powi(2);
 
     // var x = new double[npairs]; //array of split weights
     // calcAinv_y(d, x, n); //Compute unconstrained solution
     // var minVal = minArray(x);
-    let mut x = vec![0.0; npairs];
     calc_ainv_y(&d, &mut x, n);
     let min_val = x.iter().copied().fold(f64::INFINITY, f64::min);
     if min_val < 0.0 {
@@ -162,8 +161,12 @@ pub fn compute_use_1d(
 
         let mut scratch = Scratch::new(npairs); // p, r, z, w
         let mut splits_idx = vec![0usize; npairs];
-        let mut order_idx: Vec<usize> = (0..npairs).collect();
+        let mut order_idx: Vec<usize> = vec![0usize; npairs];
+        for (i, v) in order_idx.iter_mut().enumerate() {
+            *v = i;
+        }
         let mut vals = vec![0.0; npairs];
+        let mut xstar = vec![0.0; npairs];
 
         params.cgnr_tolerance = params.proj_grad_bound / 2.0;
         params.cgnr_iterations = max(params.cgnr_iterations, n * (n - 1) / 2);
@@ -171,6 +174,7 @@ pub fn compute_use_1d(
 
         active_set_method(
             &mut x,
+            &mut xstar,
             &d,
             n,
             params,
@@ -185,7 +189,7 @@ pub fn compute_use_1d(
     }
 
     // Build ASplit-compatible pairs: (bitset A, weight)
-    let mut out_pairs = Vec::new();
+    let mut out_pairs = Vec::with_capacity(npairs);
     let mut idx = 0usize;
     for i in 1..=n {
         let mut a = FixedBitSet::with_capacity(n + 1);
@@ -209,7 +213,8 @@ pub fn compute_use_1d(
 /* ===================== Active-Set + CGNR ===================== */
 
 fn active_set_method(
-    x: &mut [f64], // feasible (x >= 0)
+    x: &mut [f64],      // feasible (x >= 0)
+    xstar: &mut [f64],  // workspace for candidate solution
     d: &[f64],
     n: usize,
     params: &mut NNLSParams,
@@ -222,7 +227,6 @@ fn active_set_method(
     started: Instant,
 ) -> Result<()> {
     let npairs = x.len();
-    let mut xstar = vec![0.0; npairs];
     let mut k_outer = 0usize;
     debug!("active set {:?}", active);
     debug!("==============================");
@@ -231,10 +235,10 @@ fn active_set_method(
     loop {
         debug!("Outer Loop {}", k_outer);
         loop {
-            xstar.copy_from_slice(x);
+            xstar[..npairs].copy_from_slice(x);
 
             let iters = cgnr(
-                &mut xstar,
+                xstar,
                 d,
                 active,
                 n,
@@ -249,7 +253,14 @@ fn active_set_method(
             k_outer += 1;
 
             let ok = feasible_move_active_set(
-                x, &xstar, active, tmp_splits, idx_sorted, vals, n, params,
+                x,
+                &xstar[..npairs],
+                active,
+                tmp_splits,
+                idx_sorted,
+                vals,
+                n,
+                params,
             );
 
             debug!(
@@ -268,7 +279,7 @@ fn active_set_method(
             }
         }
 
-        x.copy_from_slice(&xstar);
+        x.copy_from_slice(&xstar[..npairs]);
         // projected gradient check at current x
         let (p, r) = (&mut scratch.p, &mut scratch.r);
 
