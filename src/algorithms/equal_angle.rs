@@ -775,7 +775,6 @@ mod tests {
         let ordered = get_nontrivial_splits_ordered(&splits_blocks);
         assert_eq!(ordered, vec![2, 3, 11, 9, 16, 4, 8, 15, 7, 14, 19, 21]);
         let ntax = labels.len();
-        let mut all_used = true;
         for &sid in &ordered {
             if is_circular_by_cycle(&splits_blocks, sid, &norm_cycle) {
                 // Wrap split sid around the cycle
@@ -783,17 +782,8 @@ mod tests {
                 // Placeholder: log and mark used. We don’t modify graph topology here yet.
                 used_splits.grow(splits_blocks.nsplits() + 1);
                 used_splits.insert(sid);
-                println!("====================");
-                println!("used split {}", sid);
-                println!("{}", graph.base.graph.node_count());
-                println!("{}", graph.base.graph.edge_count());
-            } else {
-                all_used = false;
             }
         }
-        println!("all_used = {}", all_used);
-        println!("{}", graph.base.graph.node_count());
-        println!("{}", graph.base.graph.edge_count());
         assert!(graph.base.graph.node_count() == 41);
         assert!(graph.base.graph.edge_count() == 58);
 

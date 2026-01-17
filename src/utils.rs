@@ -192,8 +192,6 @@ mod lsq_tests {
         let splits = compute_asplits(&ord, &d, &mut params, None).expect("ASplits solved");
         let fit = compute_least_squares_fit(&d, &splits);
 
-        println!("Fit: {}", fit);
-
         assert_eq!(fit, 93.477936, "Expected perfect fit for this example");
     }
 }
