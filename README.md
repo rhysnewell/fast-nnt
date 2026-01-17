@@ -111,10 +111,6 @@ fast_nnt neighbour_net -t 4 -i test/data/large_dist_matrix.csv -d output_dir -o 
 The output will include a nexus file containing the split network and network layout.
 
 
-### TODO
-- Work on parallelism. Not a priority as the program is fast enough.
-- Test on giant datasets. (works >400 taxa in ~5s, but need to test bigger)
-
 
 ### Citations
 
