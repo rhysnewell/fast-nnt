@@ -628,25 +628,13 @@ fn peak_rss_bytes() -> Option<u64> {
 
 #[cfg(target_os = "macos")]
 fn peak_rss_bytes() -> Option<u64> {
-    // ru_maxrss is bytes on macOS
-    unsafe {
-        let mut ru: libc::rusage = std::mem::zeroed();
-        if libc::getrusage(libc::RUSAGE_SELF, &mut ru) == 0 {
-            return Some(ru.ru_maxrss as u64);
-        }
-    }
+    // Safe fallback: peak RSS is not available without platform-specific syscalls.
     None
 }
 
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 fn peak_rss_bytes() -> Option<u64> {
-    // ru_maxrss is kilobytes on *BSD
-    unsafe {
-        let mut ru: libc::rusage = std::mem::zeroed();
-        if libc::getrusage(libc::RUSAGE_SELF, &mut ru) == 0 {
-            return Some((ru.ru_maxrss as u64) * 1024);
-        }
-    }
+    // Safe fallback: peak RSS is not available without platform-specific syscalls.
     None
 }
 

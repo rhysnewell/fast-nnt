@@ -41,7 +41,6 @@ If you are developing locally and have changed the R bindings:
 ```R
 rextendr::document()
 devtools::load_all()
-devtools::install_local("fastnntr")
 ```
 
 #### CLI

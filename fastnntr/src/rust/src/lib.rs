@@ -1,6 +1,6 @@
 use extendr_api::prelude::*;
 use ndarray::Array2;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 
 // From your core:
@@ -24,15 +24,12 @@ fn colnames_or_default(x: &Robj, n: usize) -> Vec<String> {
 }
 
 /// Build an integer matrix (n x 2) from two integer columns (column-major)
-fn int_mat2(col1: &[i32], col2: &[i32]) -> Robj {
+fn int_mat2(col1: &[i32], col2: &[i32]) -> extendr_api::Result<Robj> {
     let n = col1.len();
     let mut data = Vec::<i32>::with_capacity(n * 2);
     data.extend_from_slice(col1);
     data.extend_from_slice(col2);
-    let mut robj = r!(data);
-    // set dim attribute: c(n, 2)
-    robj.set_attrib("dim", r!( [ n as i32, 2i32 ] )).unwrap();
-    robj
+    call!("matrix", r!(data), r!(n as i32), r!(2i32))
 }
 
 /// Build a numeric matrix (rows = max_id, cols = 2) from id->(x,y) map (column-major)
@@ -89,10 +86,20 @@ fn nexus_to_networkx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
     // 2) translations (node -> label) as data.frame
     let translations = nexus.get_node_translations()
         .map_err(|e| Error::Other(e.to_string()))?;
+    let label_to_tip: HashMap<&str, usize> = tip_labels
+        .iter()
+        .enumerate()
+        .map(|(i, lbl)| (lbl.as_str(), i + 1))
+        .collect();
+    let mut id_map: HashMap<usize, usize> = HashMap::new();
     let mut trans_ids: Vec<i32> = Vec::with_capacity(translations.len());
     let mut trans_lbl: Vec<String> = Vec::with_capacity(translations.len());
-    for (id, lbl) in translations {
-        trans_ids.push(id as i32); // already 1-based
+    for (old_id, lbl) in translations {
+        let tip_idx = *label_to_tip
+            .get(lbl.as_str())
+            .ok_or_else(|| Error::Other(format!("unknown label in translations: {lbl}")))?;
+        id_map.insert(old_id, tip_idx);
+        trans_ids.push(tip_idx as i32);
         trans_lbl.push(lbl);
     }
     // data.frame(node=..., label=..., stringsAsFactors=FALSE)
@@ -101,16 +108,40 @@ fn nexus_to_networkx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
     // 3) positions → vertices matrix, and id->(x,y) map
     let positions = nexus.get_node_positions()
         .map_err(|e| Error::Other(e.to_string()))?;
-    let mut xy_by_id: HashMap<usize, (f64, f64)> = HashMap::with_capacity(positions.len());
-    let mut max_id: usize = 0;
-    for (id, x, y) in positions {
-        xy_by_id.insert(id, (x, y));
-        if id > max_id { max_id = id; }
+    let mut all_ids: HashSet<usize> = HashSet::with_capacity(positions.len());
+    for (id, _x, _y) in &positions {
+        all_ids.insert(*id);
     }
 
     // 4) edges (edge_id, u, v, split_id, weight) → edge matrix, splitIndex, edge.length
     let edges = nexus.get_graph_edges()
         .map_err(|e| Error::Other(e.to_string()))?;
+    for (_eid, u, v, _sid, _w) in &edges {
+        all_ids.insert(*u);
+        all_ids.insert(*v);
+    }
+
+    let mut internal_ids: Vec<usize> = all_ids
+        .iter()
+        .copied()
+        .filter(|id| !id_map.contains_key(id))
+        .collect();
+    internal_ids.sort_unstable();
+    let mut next_internal = ntaxa + 1;
+    for old_id in internal_ids {
+        id_map.insert(old_id, next_internal);
+        next_internal += 1;
+    }
+
+    let mut xy_by_id: HashMap<usize, (f64, f64)> = HashMap::with_capacity(positions.len());
+    let mut max_id: usize = 0;
+    for (old_id, x, y) in positions {
+        let new_id = *id_map
+            .get(&old_id)
+            .ok_or_else(|| Error::Other(format!("missing node id mapping for {old_id}")))?;
+        xy_by_id.insert(new_id, (x, y));
+        if new_id > max_id { max_id = new_id; }
+    }
 
     let mut us: Vec<i32> = Vec::with_capacity(edges.len());
     let mut vs: Vec<i32> = Vec::with_capacity(edges.len());
@@ -119,21 +150,27 @@ fn nexus_to_networkx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
     let mut max_node_in_edges: usize = 0;
 
     for (_eid, u, v, sid, _w) in edges {
-        us.push(u as i32);
-        vs.push(v as i32);
+        let u_new = *id_map
+            .get(&u)
+            .ok_or_else(|| Error::Other(format!("missing node id mapping for edge node {u}")))?;
+        let v_new = *id_map
+            .get(&v)
+            .ok_or_else(|| Error::Other(format!("missing node id mapping for edge node {v}")))?;
+        us.push(u_new as i32);
+        vs.push(v_new as i32);
         split_index.push(sid);
         // edge length from vertices
-        let (xu, yu) = *xy_by_id.get(&u).unwrap_or(&(f64::NAN, f64::NAN));
-        let (xv, yv) = *xy_by_id.get(&v).unwrap_or(&(f64::NAN, f64::NAN));
+        let (xu, yu) = *xy_by_id.get(&u_new).unwrap_or(&(f64::NAN, f64::NAN));
+        let (xv, yv) = *xy_by_id.get(&v_new).unwrap_or(&(f64::NAN, f64::NAN));
         let yu2 = if flip_y { -yu } else { yu };
         let yv2 = if flip_y { -yv } else { yv };
         edge_length.push(((xu - xv).powi(2) + (yu2 - yv2).powi(2)).sqrt());
 
-        if u > max_node_in_edges { max_node_in_edges = u; }
-        if v > max_node_in_edges { max_node_in_edges = v; }
+        if u_new > max_node_in_edges { max_node_in_edges = u_new; }
+        if v_new > max_node_in_edges { max_node_in_edges = v_new; }
     }
 
-    let edge_mat = int_mat2(&us, &vs);
+    let edge_mat = int_mat2(&us, &vs)?;
     let vertices_mat = num_mat_vertices(max_node_in_edges.max(max_id), &xy_by_id, flip_y);
 
     // 5) splits: convert to list<int> (indices of taxa on one side).
@@ -159,30 +196,30 @@ fn nexus_to_networkx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
         edge_lty   = r!(1i32)
     );
 
-    // 8) assemble main list
-    // let mut obj = list!(
-    //     edge        = edge_mat,
-    //     tip.label   = r!(tip_labels),
-    //     edge.length = r!(edge_length),
-    //     Nnode       = r!(nnode),
-    //     splitIndex  = r!(split_index),
-    //     splits      = splits_list,
-    //     translate   = translate_df
-
-    // );
-
-    let mut obj = HashMap::new();
-    obj.insert("edge", r!(edge_mat));
-    obj.insert("tip.label", r!(tip_labels));
-    obj.insert("edge.length", r!(edge_length));
-    obj.insert("Nnode", r!(nnode));
-    obj.insert("splitIndex", r!(split_index));
-    obj.insert("splits", splits_mat);
-    obj.insert("translate", translate_df);
-    obj.insert(".plot", r!(plot_list));
-
-    let mut list = List::from_hashmap(obj).unwrap();
-    list.set_class(&["networkx", "phylo"])?;
+    // 8) assemble main list (use safe names, then set R names with dots)
+    let mut list = list!(
+        edge        = edge_mat,
+        tip_label   = r!(tip_labels),
+        edge_length = r!(edge_length),
+        Nnode       = r!(nnode),
+        splitIndex  = r!(split_index),
+        splits      = splits_mat,
+        translate   = translate_df,
+        plot        = r!(plot_list)
+    );
+    let names = vec![
+        "edge",
+        "tip.label",
+        "edge.length",
+        "Nnode",
+        "splitIndex",
+        "splits",
+        "translate",
+        ".plot",
+    ];
+    list.set_attrib("names", r!(names))?;
+    // Match tanggle's S3 method naming so ggplot2 dispatches fortify.networx.
+    list.set_class(&["networx", "phylo"])?;
     Ok(list)
 }
 

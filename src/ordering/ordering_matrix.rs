@@ -37,7 +37,7 @@ fn rx(d: &Matrix, x: &[usize], cl: &Vec<Vec<usize>>, sums: &Vec<Vec<f64>>) -> Ve
         // sum to other x's
         for (j, &xj) in x.iter().enumerate() {
             if j != i {
-                tmp += unsafe { *d.uget((xi, xj)) };
+                tmp += d[(xi, xj)];
             }
         }
         // plus mean to each other cluster
@@ -125,7 +125,7 @@ fn choose_pair(dm: &Matrix, r: &[f64]) -> (usize, usize) {
         let mut best = f64::INFINITY;
         let mut best_j = i + 1;
         for j in (i + 1)..l {
-            let q = unsafe { *dm.uget((i, j)) } - r[i] - r[j];
+            let q = dm[(i, j)] - r[i] - r[j];
             if q < best {
                 best = q;
                 best_j = j;
@@ -236,7 +236,7 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
                 for row in 0..n1 {
                     let i = cltmp2[row];
                     let j = cltmp2[n1 + col];
-                    let v = unsafe { *d.uget((i, j)) } - (rtmp2[row] + rtmp2[n1 + col]);
+                    let v = d[(i, j)] - (rtmp2[row] + rtmp2[n1 + col]);
                     if v < best_val {
                         best_val = v;
                         best_row = row;
