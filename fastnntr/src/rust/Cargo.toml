@@ -14,8 +14,8 @@ ndarray = "0.16.1"
 anyhow = "1"
 fast-nnt = ">=0.2.3"
 
-[patch.crates-io]
-fast-nnt = { path = "../../.." }
+# [patch.crates-io]
+# fast-nnt = { path = "../../.." }
 
 [profile.release]
 lto = true
