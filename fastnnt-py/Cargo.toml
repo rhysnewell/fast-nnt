@@ -1,7 +1,7 @@
 [package]
 name = "fastnnt-py"
 publish = false
-version = "0.2.1"
+version = "0.2.3"
 edition = "2024"
 
 [lib]
@@ -13,4 +13,7 @@ pyo3 = { version = "0.25.1", features = ["extension-module"] }
 numpy = "0.25.0"
 ndarray = "0.16.1"
 anyhow = "1"
-fast-nnt = ">=0.2.1"
+fast-nnt = ">=0.2.3"
+
+[patch.crates-io]
+fast-nnt = { path = ".." }

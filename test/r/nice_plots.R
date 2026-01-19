@@ -24,6 +24,7 @@ library(ggnewscale)
 library(ggpubr)
 library(data.table)
 devtools::load_all("fastnntr")
+set_fastnnt_threads(8)
 
 #--- 1. Function to make one plot from a file ---#
 plot_networx <- function(Nnet, title=NULL) {

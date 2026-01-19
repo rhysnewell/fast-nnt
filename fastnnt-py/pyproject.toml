@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "fastnntpy"
-version = "0.2.1"
+version = "0.2.3"
 requires-python = ">=3.9"
 description = "Fast NeighbourNet (Rust) with Python bindings"
 readme = "README.md"

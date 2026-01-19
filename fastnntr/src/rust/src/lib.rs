@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 
 // From your core:
-use fast_nnt::{run_fast_nnt_from_memory, cli::NeighbourNetArgs, nexus::nexus::Nexus, ordering::OrderingMethod};
+use fast_nnt::{init_rayon_threads, run_fast_nnt_from_memory, cli::NeighbourNetArgs, nexus::nexus::Nexus, ordering::OrderingMethod, RayonInitStatus};
 
 /// Coerce to numeric matrix.
 fn to_numeric_matrix(x: &Robj) -> extendr_api::Result<RMatrix<f64>> {
@@ -58,19 +58,6 @@ fn vecvec_usize_rows_to_rmatrix_i32(rows: &[Vec<usize>]) -> Robj {
 
     let m: RMatrix<i32> = RMatrix::new_matrix(nrows, ncols, |r, c| {
         rows[r][c] as i32
-    });
-    r!(m)
-}
-
-fn vecvec_usize_cols_to_rmatrix_i32(cols: &[Vec<usize>]) -> Robj {
-    let ncols = cols.len();
-    let nrows = cols.first().map_or(0, |v| v.len());
-    assert!(cols.iter().all(|v| v.len() == nrows), "ragged input");
-
-    // new_matrix expects a value for (row=r, col=c)
-    let m: RMatrix<i32> = RMatrix::new_matrix(nrows, ncols, |r, c| {
-        // If you worry about overflow, use i32::try_from(...) and handle Err.
-        cols[c][r] as i32
     });
     r!(m)
 }
@@ -180,7 +167,6 @@ fn nexus_to_networkx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
         splits_list[i] = split_vec;
     }
     // assert they are all the same length
-    let first_len = splits_list[0].len();
 
     let splits_mat = vecvec_usize_rows_to_rmatrix_i32(&splits_list);
 
@@ -225,7 +211,56 @@ fn nexus_to_networkx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
 
 
 #[extendr]
-fn run_neighbornet_networkx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default = "NULL"] labels: Robj, #[default = "5000"] max_iterations: Robj, #[default = "NULL"] ordering_method: Robj) -> extendr_api::Result<List> {
+fn set_fastnnt_threads(threads: Robj) -> extendr_api::Result<()> {
+    if threads.is_null() {
+        return Err(Error::Other("threads must be numeric".into()));
+    }
+    let threads_val: Option<usize> = if let Some(t) = threads.as_integer() {
+        Some(t as usize)
+    } else if let Some(t) = threads.as_real() {
+        if t.is_nan() {
+            None
+        } else {
+            let rounded = t.round();
+            if (t - rounded).abs() < f64::EPSILON {
+                Some(rounded as usize)
+            } else {
+                return Err(Error::Other("threads must be an integer value".into()));
+            }
+        }
+    } else {
+        return Err(Error::Other("threads must be numeric".into()));
+    };
+
+    let t = threads_val.ok_or_else(|| Error::Other("threads must be numeric".into()))?;
+    if t < 1 {
+        return Err(Error::Other("threads must be >= 1".into()));
+    }
+
+    match init_rayon_threads(t).map_err(|e| Error::Other(e.to_string()))? {
+        RayonInitStatus::Initialized => Ok(()),
+        RayonInitStatus::AlreadyInitializedSame => {
+            call!("warning", "threads already set; threads can only be set once per session")?;
+            Ok(())
+        }
+        RayonInitStatus::AlreadyInitializedDifferent { current } => {
+            call!(
+                "warning",
+                format!("threads already set to {current}; threads can only be set once per session")
+            )?;
+            Ok(())
+        }
+    }
+}
+
+#[extendr]
+fn run_neighbornet_networkx(
+    x: Robj,
+    #[default = "TRUE"] flip_y: Robj,
+    #[default = "NULL"] labels: Robj,
+    #[default = "5000"] max_iterations: Robj,
+    #[default = "NULL"] ordering_method: Robj,
+) -> extendr_api::Result<List> {
     // Coerce & build Array2
     let mx = to_numeric_matrix(&x)?; let n = mx.nrows();
     if n != mx.ncols() {
@@ -269,13 +304,20 @@ fn run_neighbornet_networkx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default
 }
 
 #[extendr]
-fn run_neighbournet_networkx(x: Robj, #[default = "TRUE"] flip_y: Robj, #[default = "NULL"] labels: Robj, #[default = "5000"] max_iterations: Robj, #[default = "NULL"] ordering_method: Robj) -> extendr_api::Result<List> {
+fn run_neighbournet_networkx(
+    x: Robj,
+    #[default = "TRUE"] flip_y: Robj,
+    #[default = "NULL"] labels: Robj,
+    #[default = "5000"] max_iterations: Robj,
+    #[default = "NULL"] ordering_method: Robj,
+) -> extendr_api::Result<List> {
     // Alias for backward compatibility
     run_neighbornet_networkx(x, flip_y, labels, max_iterations, ordering_method)
 }
 
 extendr_module! {
     mod fastnntr;
+    fn set_fastnnt_threads;
     fn run_neighbornet_networkx;
     fn run_neighbournet_networkx;
 }

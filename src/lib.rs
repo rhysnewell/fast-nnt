@@ -71,3 +71,36 @@ pub fn run_fast_nnt_from_memory(
     info!("Finished NeighbourNet in {:?}", t0.elapsed());
     Ok(nexus)
 }
+
+/// Initialize the global Rayon thread pool (call once per process).
+pub enum RayonInitStatus {
+    Initialized,
+    AlreadyInitializedSame,
+    AlreadyInitializedDifferent { current: usize },
+}
+
+pub fn init_rayon_threads(threads: usize) -> Result<RayonInitStatus> {
+    if threads == 0 {
+        return Ok(RayonInitStatus::Initialized);
+    }
+
+    match rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+    {
+        Ok(()) => Ok(RayonInitStatus::Initialized),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("global thread pool has already been initialized") {
+                let current = rayon::current_num_threads();
+                if current == threads {
+                    Ok(RayonInitStatus::AlreadyInitializedSame)
+                } else {
+                    Ok(RayonInitStatus::AlreadyInitializedDifferent { current })
+                }
+            } else {
+                Err(e.into())
+            }
+        }
+    }
+}

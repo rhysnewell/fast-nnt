@@ -1,3 +1,10 @@
+#' Set the global thread count for fastnnt (call once per session).
+#'
+#' @export
+set_fastnnt_threads <- function(threads) {
+    .Call(wrap__set_fastnnt_threads, threads)
+}
+
 #' Run NeighborNet and return a networkx-like list.
 #'
 #' @export

@@ -1,10 +1,12 @@
 use fast_nnt::cli::NeighbourNetArgs;
 use fast_nnt::nexus::nexus::Nexus;
-use fast_nnt::run_fast_nnt_from_memory;
+use fast_nnt::{init_rayon_threads, run_fast_nnt_from_memory, RayonInitStatus};
 use fast_nnt::ordering::OrderingMethod;
 use ndarray::Array2;
 use numpy::PyReadonlyArray2;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::{PyTypeError, PyUserWarning, PyValueError};
+use pyo3::ffi;
+use std::ffi::CString;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 
@@ -107,6 +109,34 @@ fn infer_labels<'py>(obj: Bound<'py, PyAny>, n: usize) -> PyResult<Vec<String>> 
 }
 // ---- public API ----
 #[pyfunction]
+#[pyo3(signature = (threads))]
+fn set_fastnnt_threads(py: Python<'_>, threads: usize) -> PyResult<()> {
+    if threads < 1 {
+        return Err(PyValueError::new_err("threads must be >= 1"));
+    }
+    match init_rayon_threads(threads).map_err(|e| PyValueError::new_err(e.to_string()))? {
+        RayonInitStatus::Initialized => Ok(()),
+        RayonInitStatus::AlreadyInitializedSame => {
+            PyErr::warn(
+                py,
+                &py.get_type::<PyUserWarning>(),
+                ffi::c_str!("threads already set; threads can only be set once per session"),
+                1,
+            )?;
+            Ok(())
+        }
+        RayonInitStatus::AlreadyInitializedDifferent { current } => {
+            let msg = CString::new(format!(
+                "threads already set to {current}; threads can only be set once per session"
+            ))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            PyErr::warn(py, &py.get_type::<PyUserWarning>(), msg.as_c_str(), 1)?;
+            Ok(())
+        }
+    }
+}
+
+#[pyfunction]
 #[pyo3(signature = (x, max_iterations=5000, ordering_method=None, labels=None))]
 fn run_neighbour_net<'py>(
     _py: Python<'py>,
@@ -155,6 +185,7 @@ fn run_neighbor_net<'py>(
 #[pymodule]
 fn fastnntpy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNexus>()?;
+    m.add_function(wrap_pyfunction!(set_fastnnt_threads, m)?)?;
     m.add_function(wrap_pyfunction!(run_neighbour_net, m)?)?;
     m.add_function(wrap_pyfunction!(run_neighbor_net, m)?)?;
     Ok(())
