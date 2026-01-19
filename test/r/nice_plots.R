@@ -24,11 +24,11 @@ library(data.table)
 devtools::load_all("fastnntr")
 
 #--- 1. Function to make one plot from a file ---#
-make_splitstree_plot <- function(title=NULL) {
+make_splitstree_plot <- function(title=NULL, ordering_method="splitstree4") {
   data <- fread("test/data/large/large_dist_matrix.csv", header=TRUE)
   # Load network
   
-  Nnet <- run_neighbornet_networkx(data, flip_y=TRUE, labels=names(data), max_iterations=5000, ordering_method="splitstree4")
+  Nnet <- run_neighbornet_networkx(data, flip_y=TRUE, labels=names(data), max_iterations=5000, ordering_method=ordering_method)
   # Nnet <- run_neighbornet_networkx(data)
 
   message("debug: edge class=", paste(class(Nnet$edge), collapse = ","), 
@@ -104,11 +104,14 @@ make_splitstree_plot <- function(title=NULL) {
 
 #--- 2. Define input files ---#
 
-plot1 <- make_splitstree_plot(title="Fast-NNT - SplitsTree4 Ordering")
+plot1 <- make_splitstree_plot(title="Fast-NNT - SplitsTree4 Ordering", ordering_method="splitstree4")
+plot2 <- make_splitstree_plot(title="Fast-NNT - Huson2023 Ordering", ordering_method="huson2023")
 
 
 
 #--- 4. Arrange together ---#
 
-ggsave('test/fast_nnt_graph_R.png',plot1, 
-       width=22, height=15, units='cm', bg='white')
+combined <- ggpubr::ggarrange(plot1, plot2, ncol=2, nrow=1, align="hv")
+
+ggsave('test/r/fast_nnt_graph_R.png', combined,
+       width=44, height=15, units='cm', bg='white')
