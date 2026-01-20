@@ -62,7 +62,7 @@ For `Python` and `R`, complete usage examples can be found in `test/python` and 
 
 #### Ordering and inference methods
 Fast-NNT exposes two knobs that match the algorithmic choices in SplitsTree:
-- Ordering (`ordering_method` / `-O`): the cycle construction step. Options are `splitstree4` (SplitsTree4-style ordering) and `huson2023` (the improved ordering from Bryant & Huson 2023). The default is `huson2023`.
+- Ordering (`ordering_method` / `-O`): the cycle construction step. Options are `splitstree4` (SplitsTree4-style ordering) and `huson2023` (the improved ordering from Bryant & Huson 2023).
 - Inference (`inference_method` / `--inference`): the split-weight solver. Options are `active-set` (active-set NNLS, default) and `splitstree4` (SplitsTree4-style optimizer).
 - For SplitsTree6-style defaults, use `ordering_method="splitstree4"` with `inference_method="active-set"` (or `-O splits-tree4 --inference active-set` in the CLI).
 - For SplitsTree4-style defaults, use `ordering_method="splitstree4"` with `inference_method="splitstree4"` (or `-O splits-tree4 --inference splitstree4` in the CLI).
