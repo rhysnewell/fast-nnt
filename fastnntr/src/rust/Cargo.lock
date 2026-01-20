@@ -243,7 +243,9 @@ dependencies = [
 
 [[package]]
 name = "fast-nnt"
-version = "0.2.3"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eee34799fb6678e8be01eaeafdcbc2a65f317ee6afb5ddfae97181835de2b6c1"
 dependencies = [
  "anyhow",
  "clap",
@@ -263,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "fastnntr"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "extendr-api",
