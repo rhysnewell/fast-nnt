@@ -60,6 +60,13 @@ cargo install --path .
 
 For `Python` and `R`, complete usage examples can be found in `test/python` and `test/R`. But a brief summary is as follows.
 
+#### Ordering and inference methods
+Fast-NNT exposes two knobs that match the algorithmic choices in SplitsTree:
+- Ordering (`ordering_method` / `-O`): the cycle construction step. Options are `splitstree4` (SplitsTree4-style ordering) and `huson2023` (the improved ordering from Bryant & Huson 2023). The default is `huson2023`.
+- Inference (`inference_method` / `--inference`): the split-weight solver. Options are `active-set` (active-set NNLS, default) and `splitstree4` (SplitsTree4-style optimizer).
+- For SplitsTree6-style defaults, use `ordering_method="splitstree4"` with `inference_method="active-set"` (or `-O splits-tree4 --inference active-set` in the CLI).
+- For SplitsTree4-style defaults, use `ordering_method="splitstree4"` with `inference_method="splitstree4"` (or `-O splits-tree4 --inference splitstree4` in the CLI).
+
 #### Python
 Read data in via `numpy`, `pandas`, or `polars`:
 
@@ -67,7 +74,11 @@ Read data in via `numpy`, `pandas`, or `polars`:
 import fastnntpy as fn
 import pandas as pd
 data = pd.read_csv("test/data/large/large_dist_matrix.csv")
-n = fn.run_neighbour_net(data)
+n = fn.run_neighbour_net(
+    data,
+    ordering_method="huson2023",
+    inference_method="active-set",
+)
 print("Labels")
 print(len(n.get_labels()))
 print("Splits Records")
@@ -87,7 +98,11 @@ library(fastnntr)
 library(data.table)
 data <- fread("test/data/large/large_dist_matrix.csv", header=TRUE)
 # Load network
-Nnet <- fastnntr::run_neighbournet_networkx(data)
+Nnet <- fastnntr::run_neighbournet_networkx(
+  data,
+  ordering_method="huson2023",
+  inference_method="active-set"
+)
 ```
 
 The `run_neighbournet_networkx` function will return an object almost identical to that produced by `phangorn`, so should be compatible with existing workflows.
@@ -103,6 +118,12 @@ fast_nnt neighbour_net -t 4 -i test/data/large_dist_matrix.csv -d output_dir -o 
 Use the new Huson 2023 ordering algorithm (default):
 ```
 fast_nnt neighbour_net -t 4 -i test/data/large_dist_matrix.csv -d output_dir -o prefix -O huson2023
+```
+
+Select the split-weight inference method:
+```
+fast_nnt neighbour_net -t 4 -i test/data/large_dist_matrix.csv -d output_dir -o prefix --inference active-set
+fast_nnt neighbour_net -t 4 -i test/data/large_dist_matrix.csv -d output_dir -o prefix --inference splitstree4
 ```
 
 ### Output
