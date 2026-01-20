@@ -1,6 +1,9 @@
 use clap::{Args, Parser, Subcommand};
 
-use crate::{ordering::OrderingMethod, weights::active_set_weights::NNLSParams};
+use crate::{
+    ordering::OrderingMethod,
+    weights::{InferenceMethod, active_set_weights::NNLSParams},
+};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -69,6 +72,12 @@ pub struct NeighbourNetArgs {
         default_value = "splits-tree4"
     )]
     pub ordering: OrderingMethod,
+    #[arg(
+        long,
+        help = "Split-weight inference algorithm",
+        default_value = "active-set"
+    )]
+    pub inference: InferenceMethod,
     #[clap(flatten)]
     pub nnls_params: NNLSParams,
 }
@@ -79,6 +88,7 @@ impl NeighbourNetArgs {
             input: String::new(),
             output_prefix: String::from("output"),
             ordering: OrderingMethod::SplitsTree4,
+            inference: InferenceMethod::ActiveSet,
             nnls_params: NNLSParams::default(),
         }
     }

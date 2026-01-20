@@ -11,18 +11,29 @@ from matplotlib.collections import LineCollection
 
 
 data = pd.read_csv("test/data/large/large_dist_matrix.csv")
-n = fn.run_neighbor_net(data, max_iterations=5000, ordering_method="splitstree4", labels=data.columns)
-n = fn.run_neighbour_net(data, max_iterations=5000, ordering_method="splitstree4", labels=data.columns)
-print("Labels")
-print(len(n.get_labels()))
-print("Splits Records")
-print(len(n.get_splits_records()))
-print("Node Translations")
-print(len(n.get_node_translations()))
-print("Node Positions")
-print(len(n.get_node_positions()))
-print("Graph Edges")
-print(len(n.get_graph_edges()))
+
+configs = [
+    {
+        "title": "splitstree4_active-set",
+        "ordering_method": "splitstree4",
+        "inference_method": "active-set",
+    },
+    {
+        "title": "splitstree4_splitstree4",
+        "ordering_method": "splitstree4",
+        "inference_method": "splitstree4",
+    },
+    {
+        "title": "huson2023_active-set",
+        "ordering_method": "huson2023",
+        "inference_method": "active-set",
+    },
+    {
+        "title": "huson2023_splitstree4",
+        "ordering_method": "huson2023",
+        "inference_method": "splitstree4",
+    },
+]
 
 
 
@@ -73,8 +84,6 @@ def plot_fast_nnt_networkx(nx_obj, out_path="test/plots/fast_nnt_nx.png",
     plt.savefig(base + ".svg", bbox_inches="tight", pad_inches=0.01)
     plt.close()
     return out_path
-
-plot_fast_nnt_networkx(n, out_path="test/plots/fast_nnt_graph_networkx.png")
 
 def save_neighbornet_plot(nx_obj,
                           out_path="test/plots/fast_nnt_neighbornet.png",
@@ -142,4 +151,36 @@ def save_neighbornet_plot(nx_obj,
     plt.close(fig)
     return out_path
 
-save_neighbornet_plot(n, "test/plots/fast_nnt_graph_matplotlib.png", shift=2)
+for idx, cfg in enumerate(configs):
+    if idx == 0:
+        n = fn.run_neighbor_net(
+            data,
+            max_iterations=5000,
+            ordering_method=cfg["ordering_method"],
+            inference_method=cfg["inference_method"],
+            labels=data.columns,
+        )
+    else:
+        n = fn.run_neighbour_net(
+            data,
+            max_iterations=5000,
+            ordering_method=cfg["ordering_method"],
+            inference_method=cfg["inference_method"],
+            labels=data.columns,
+        )
+
+    print("Labels")
+    print(len(n.get_labels()))
+    print("Splits Records")
+    print(len(n.get_splits_records()))
+    print("Node Translations")
+    print(len(n.get_node_translations()))
+    print("Node Positions")
+    print(len(n.get_node_positions()))
+    print("Graph Edges")
+    print(len(n.get_graph_edges()))
+
+    plot_fast_nnt_networkx(
+        n,
+        out_path=f"test/plots/fast_nnt_graph_networkx_{cfg['title']}.png",
+    )

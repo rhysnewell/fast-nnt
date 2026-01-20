@@ -4,7 +4,15 @@ use std::collections::{HashMap, HashSet};
 
 
 // From your core:
-use fast_nnt::{init_rayon_threads, run_fast_nnt_from_memory, cli::NeighbourNetArgs, nexus::nexus::Nexus, ordering::OrderingMethod, RayonInitStatus};
+use fast_nnt::{
+    cli::NeighbourNetArgs,
+    init_rayon_threads,
+    nexus::nexus::Nexus,
+    ordering::OrderingMethod,
+    run_fast_nnt_from_memory,
+    weights::InferenceMethod,
+    RayonInitStatus,
+};
 
 /// Coerce to numeric matrix.
 fn to_numeric_matrix(x: &Robj) -> extendr_api::Result<RMatrix<f64>> {
@@ -260,6 +268,7 @@ fn run_neighbornet_networkx(
     #[default = "NULL"] labels: Robj,
     #[default = "5000"] max_iterations: Robj,
     #[default = "NULL"] ordering_method: Robj,
+    #[default = "NULL"] inference_method: Robj,
 ) -> extendr_api::Result<List> {
     // Coerce & build Array2
     let mx = to_numeric_matrix(&x)?; let n = mx.nrows();
@@ -288,6 +297,9 @@ fn run_neighbornet_networkx(
     if !ordering_method.is_null() {
         args.ordering = OrderingMethod::from_option(ordering_method.as_str());
     }
+    if !inference_method.is_null() {
+        args.inference = InferenceMethod::from_option(inference_method.as_str());
+    }
 
     let nexus = run_fast_nnt_from_memory(arr, lbls, args)
         .map_err(|e| Error::Other(e.to_string()))?;
@@ -310,9 +322,17 @@ fn run_neighbournet_networkx(
     #[default = "NULL"] labels: Robj,
     #[default = "5000"] max_iterations: Robj,
     #[default = "NULL"] ordering_method: Robj,
+    #[default = "NULL"] inference_method: Robj,
 ) -> extendr_api::Result<List> {
     // Alias for backward compatibility
-    run_neighbornet_networkx(x, flip_y, labels, max_iterations, ordering_method)
+    run_neighbornet_networkx(
+        x,
+        flip_y,
+        labels,
+        max_iterations,
+        ordering_method,
+        inference_method,
+    )
 }
 
 extendr_module! {

@@ -32,6 +32,7 @@ def run_once(threads, data, labels):
         data,
         max_iterations=5000,
         ordering_method="splitstree4",
+        inference_method="active-set",
         labels=labels,
     )
 

@@ -17,7 +17,9 @@ use crate::ordering::ordering_splitstree4::compute_order_splits_tree4;
 use crate::phylo::phylo_splits_graph::PhyloSplitsGraph;
 use crate::splits::asplit::ASplit;
 use crate::utils::compute_least_squares_fit;
+use crate::weights::InferenceMethod;
 use crate::weights::active_set_weights::{NNLSParams, compute_asplits};
+use crate::weights::splitstree4_weights::{DEFAULT_CUTOFF, compute_splits as compute_splitstree4_splits};
 
 pub struct NeighbourNet {
     out_dir: String,
@@ -78,14 +80,14 @@ impl NeighbourNet {
         info!("Computed cycle in {:.3}s", cycle_sec);
         debug!("Cycle (1-based): {:?}", &cycle[1..]);
 
-        // 3) Active-Set NNLS
+        // 3) Split weight inference
         let t_nnls = Instant::now();
         let (params, splits) = self.compute_asplits(&cycle).context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
             "Estimated {} splits (cutoff = {}) in {:.3}s",
             splits.len(),
-            params.cutoff,
+            self.effective_cutoff(),
             nnls_sec
         );
 
@@ -167,14 +169,14 @@ impl NeighbourNet {
         info!("Computed cycle in {:.3}s", cycle_sec);
         debug!("Cycle (1-based): {:?}", &cycle[1..]);
 
-        // 3) Active-Set NNLS
+        // 3) Split weight inference
         let t_nnls = Instant::now();
-        let (params, splits) = self.compute_asplits(&cycle).context("ASplits solved")?;
+        let (_params, splits) = self.compute_asplits(&cycle).context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
             "Estimated {} splits (cutoff = {}) in {:.3}s",
             splits.len(),
-            params.cutoff,
+            self.effective_cutoff(),
             nnls_sec
         );
 
@@ -229,10 +231,28 @@ impl NeighbourNet {
     }
 
     pub fn compute_asplits(&self, cycle: &[usize]) -> Result<(NNLSParams, Vec<ASplit>)> {
-        let mut params = self.args.nnls_params.clone();
-        let splits = compute_asplits(&cycle, &self.distance_matrix, &mut params, None)
-            .context("ASplits solved")?;
-        Ok((params, splits))
+        match self.args.inference {
+            InferenceMethod::ActiveSet => {
+                let mut params = self.args.nnls_params.clone();
+                let splits = compute_asplits(&cycle, &self.distance_matrix, &mut params, None)
+                    .context("ASplits solved")?;
+                Ok((params, splits))
+            }
+            InferenceMethod::SplitsTree4 => {
+                let splits = compute_splitstree4_splits(cycle, &self.distance_matrix)
+                    .context("SplitsTree4 weights solved")?;
+                let mut params = self.args.nnls_params.clone();
+                params.cutoff = DEFAULT_CUTOFF;
+                Ok((params, splits))
+            }
+        }
+    }
+
+    fn effective_cutoff(&self) -> f64 {
+        match self.args.inference {
+            InferenceMethod::ActiveSet => self.args.nnls_params.cutoff,
+            InferenceMethod::SplitsTree4 => DEFAULT_CUTOFF,
+        }
     }
 
     pub fn create_splits_block(
@@ -406,8 +426,9 @@ impl NeighbourNet {
         let meta = serde_json::json!({
             "fit_percent": fit,
             "ntax": labels.len(),
-            "cutoff": self.args.nnls_params.cutoff,
+            "cutoff": self.effective_cutoff(),
             "input": self.args.input,
+            "inference": self.args.inference.as_str(),
         });
         fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
 
@@ -497,7 +518,7 @@ impl NeighbourNet {
                 symmetry_pairs_fixed: parse.symmetry_pairs_fixed,
             },
             nnls: NNLSMeta {
-                cutoff: nnls.cutoff,
+                cutoff: self.effective_cutoff(),
                 proj_grad_bound: nnls.proj_grad_bound,
                 cgnr_iterations: nnls.cgnr_iterations,
                 cgnr_tolerance: nnls.cgnr_tolerance,
@@ -510,6 +531,7 @@ impl NeighbourNet {
             fit_percent,
             timings,
             system: sys,
+            inference: self.args.inference.as_str().to_string(),
         }
     }
 }
@@ -576,6 +598,7 @@ struct RunLog {
     out_dir: String,
     matrix: MatrixMeta,
     nnls: NNLSMeta,
+    inference: String,
     fit_percent: f32,
     timings: RunTimings,
     system: SystemStats,
@@ -738,6 +761,7 @@ fn sniff_header_index(rows: &[Vec<String>]) -> anyhow::Result<(bool, bool)> {
 #[cfg(test)]
 mod read_matrix_tests {
     use crate::ordering::OrderingMethod;
+    use crate::weights::InferenceMethod;
 
     use super::*;
     use pretty_assertions::assert_eq;
@@ -770,6 +794,7 @@ C,2,3,0
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
+                inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
             // let nn = NeighbourNet::new("/tmp".to_string(), args);
@@ -799,6 +824,7 @@ C,2,3,0
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
+                inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -818,6 +844,7 @@ C,2,3,0
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
+                inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -838,6 +865,7 @@ C,2,3,0
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
+                inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -857,6 +885,7 @@ C,2,3,0
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
+                inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -881,6 +910,7 @@ C,2,3,0
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
+                inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -901,6 +931,7 @@ C,2,3,0
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
+                inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
             let err = NeighbourNet::load_distance_matrix(&args.input);

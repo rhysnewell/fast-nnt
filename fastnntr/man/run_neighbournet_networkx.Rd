@@ -9,7 +9,8 @@ run_neighbournet_networkx(
   flip_y = TRUE,
   labels = NULL,
   max_iterations = 5000,
-  ordering_method = NULL
+  ordering_method = NULL,
+  inference_method = NULL
 )
 }
 \description{

@@ -67,11 +67,18 @@ plot_networx <- function(Nnet, title=NULL) {
   return(p)
 }
 
-make_splitstree_plot <- function(title=NULL, ordering_method="splitstree4") {
+make_splitstree_plot <- function(title=NULL, ordering_method="splitstree4", inference_method="active-set") {
   data <- fread("test/data/large/large_dist_matrix.csv", header=TRUE)
   # Load network
   
-  Nnet <- run_neighbornet_networkx(data, flip_y=TRUE, labels=names(data), max_iterations=5000, ordering_method=ordering_method)
+  Nnet <- run_neighbornet_networkx(
+    data,
+    flip_y=TRUE,
+    labels=names(data),
+    max_iterations=5000,
+    ordering_method=ordering_method,
+    inference_method=inference_method
+  )
   # Nnet <- run_neighbornet_networkx(data)
   plot_networx(Nnet, title=title)
 }
@@ -87,16 +94,34 @@ make_nexus_plot <- function(path, title=NULL) {
 
 #--- 2. Define input files ---#
 
-plot1 <- make_splitstree_plot(title="Fast-NNT - SplitsTree4 Ordering", ordering_method="splitstree4")
-plot2 <- make_splitstree_plot(title="Fast-NNT - Huson2023 Ordering", ordering_method="huson2023")
-plot3 <- make_nexus_plot("test/data/large/euc_splitstree4.nex", title="NEXUS - SplitsTree4 Ordering")
-plot4 <- make_nexus_plot("test/data/large/st6_huson2023.stree6", title="SplitsTree6 - Huson2023 Ordering")
+plot1 <- make_splitstree_plot(
+  title="Fast-NNT - SplitsTree4 Ordering (Active-Set Inference)",
+  ordering_method="splitstree4",
+  inference_method="active-set"
+)
+plot2 <- make_splitstree_plot(
+  title="Fast-NNT - SplitsTree4 Ordering (SplitsTree4 Inference)",
+  ordering_method="splitstree4",
+  inference_method="splitstree4"
+)
+plot3 <- make_splitstree_plot(
+  title="Fast-NNT - Huson2023 Ordering (Active-Set Inference)",
+  ordering_method="huson2023",
+  inference_method="active-set"
+)
+plot4 <- make_splitstree_plot(
+  title="Fast-NNT - Huson2023 Ordering (SplitsTree4 Inference)",
+  ordering_method="huson2023",
+  inference_method="splitstree4"
+)
+plot5 <- make_nexus_plot("test/data/large/euc_splitstree4.nex", title="NEXUS - SplitsTree4 Ordering")
+plot6 <- make_nexus_plot("test/data/large/st6_huson2023.stree6", title="SplitsTree6 - Huson2023 Ordering")
 
 
 
 #--- 4. Arrange together ---#
 
-combined <- ggpubr::ggarrange(plot1, plot2, plot3, plot4, ncol=2, nrow=2, align="hv")
+combined <- ggpubr::ggarrange(plot1, plot2, plot3, plot4, plot5, plot6, ncol=3, nrow=2, align="hv")
 
 ggsave('test/r/fast_nnt_graph_R.png', combined,
        width=44, height=30, units='cm', bg='white')
