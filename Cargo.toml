@@ -1,5 +1,5 @@
 [package]
-name = "fast-nnt"
+name = "fastnnt"
 version = "0.2.4"
 edition = "2024"
 authors = ["Rhys Newell <rhys.newell94@gmail.com>"]
@@ -58,3 +58,11 @@ harness = false
 [[bench]]
 name = "ordering_matrix"
 harness = false
+
+[[bin]]
+name = "fast_nnt"
+path = "src/bin/fast_nnt.rs"
+
+[[bin]]
+name = "fastnnt"
+path = "src/bin/fast_nnt.rs"

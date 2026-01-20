@@ -69,7 +69,7 @@ pub struct NeighbourNetArgs {
         short = 'O',
         long,
         help = "The ordering algorithm to use to get splits cycle",
-        default_value = "splits-tree4"
+        default_value = "splitstree4"
     )]
     pub ordering: OrderingMethod,
     #[arg(

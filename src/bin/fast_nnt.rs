@@ -1,7 +1,7 @@
 use anyhow::{Context, anyhow};
 use clap::{Parser, crate_name, crate_version};
 
-use fast_nnt::{
+use fastnnt::{
     cli::{ProgramArgs, ProgramSubcommand},
     neighbour_net::neighbour_net::NeighbourNet,
     set_log_level,

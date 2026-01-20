@@ -47,6 +47,7 @@ devtools::load_all()
 
 ```bash
 cargo install fast-nnt
+fast_nnt --help # or fastnnt --help
 ```
 
 Alternatively, you can build from source. Clone and install this repo via:
@@ -54,6 +55,7 @@ Alternatively, you can build from source. Clone and install this repo via:
 git clone https://github.com/rhysnewell/fast-nnt.git
 cd fast-nnt
 cargo install --path .
+fast_nnt --help # or fastnnt --help
 ```
 
 ### Usage
@@ -64,8 +66,8 @@ For `Python` and `R`, complete usage examples can be found in `test/python` and 
 Fast-NNT exposes two knobs that match the algorithmic choices in SplitsTree:
 - Ordering (`ordering_method` / `-O`): the cycle construction step. Options are `splitstree4` (SplitsTree4-style ordering) and `huson2023` (the improved ordering from Bryant & Huson 2023).
 - Inference (`inference_method` / `--inference`): the split-weight solver. Options are `active-set` (active-set NNLS, default) and `splitstree4` (SplitsTree4-style optimizer).
-- For SplitsTree6-style defaults, use `ordering_method="splitstree4"` with `inference_method="active-set"` (or `-O splits-tree4 --inference active-set` in the CLI).
-- For SplitsTree4-style defaults, use `ordering_method="splitstree4"` with `inference_method="splitstree4"` (or `-O splits-tree4 --inference splitstree4` in the CLI).
+- For SplitsTree6-style defaults, use `ordering_method="splitstree4"` with `inference_method="active-set"` (or `-O splitstree4 --inference active-set` in the CLI).
+- For SplitsTree4-style defaults, use `ordering_method="splitstree4"` with `inference_method="splitstree4"` (or `-O splitstree4 --inference splitstree4` in the CLI).
 
 #### Python
 Read data in via `numpy`, `pandas`, or `polars`:
@@ -112,7 +114,7 @@ Required input is a symmetrical distance matrix, ideally with a header row indic
 
 To generate a split nexus file (mostly) identical to SplitsTree4 and SplitsTree6:
 ```
-fast_nnt neighbour_net -t 4 -i test/data/large_dist_matrix.csv -d output_dir -o prefix -O splits-tree4
+fast_nnt neighbour_net -t 4 -i test/data/large_dist_matrix.csv -d output_dir -o prefix -O splitstree4
 ```
 
 Use the new Huson 2023 ordering algorithm (default):
