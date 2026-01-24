@@ -29,10 +29,7 @@ impl InferenceMethod {
     }
 
     pub fn from_option(opt: Option<&str>) -> Self {
-        match opt {
-            Some(s) => InferenceMethod::from_str(s),
-            None => InferenceMethod::default(),
-        }
+        opt.map_or_else(InferenceMethod::default, InferenceMethod::from_str)
     }
 }
 

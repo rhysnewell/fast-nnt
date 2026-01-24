@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::splits::asplit::ASplit; // <-- adjust path if needed
+use crate::splits::asplit::ASplit;
 
 const EPS: f64 = 1e-12;
 
@@ -74,16 +74,10 @@ impl Default for NNLSParams {
 }
 
 /// Flattened weights (mainly for printlnging/validation).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SplitWeights {
     /// x[(i,j)] for 1 ≤ i < j ≤ n, flattened by blocks (1,2..n), (2,3..n), ...
     pub x: Vec<f64>,
-}
-
-impl PartialEq for SplitWeights {
-    fn eq(&self, other: &Self) -> bool {
-        self.x == other.x
-    }
 }
 
 /// Public API: return **ASplit**s directly (wired).
@@ -161,10 +155,7 @@ pub fn compute_use_1d(
 
         let mut scratch = Scratch::new(npairs); // p, r, z, w
         let mut splits_idx = vec![0usize; npairs];
-        let mut order_idx: Vec<usize> = vec![0usize; npairs];
-        for (i, v) in order_idx.iter_mut().enumerate() {
-            *v = i;
-        }
+        let mut order_idx: Vec<usize> = (0..npairs).collect();
         let mut vals = vec![0.0; npairs];
         let mut xstar = vec![0.0; npairs];
 
@@ -342,7 +333,7 @@ pub fn feasible_move_active_set(
 ) -> bool {
     let npairs = n * (n - 1) / 2;
 
-    // Basic sanity checks to match Java's expectations
+    // Length checks to match Java's expectations.
     assert_eq!(x.len(), npairs, "x len must be n*(n-1)/2");
     assert_eq!(xstar.len(), npairs, "xstar len must be n*(n-1)/2");
     assert_eq!(active_set.len(), npairs, "active_set len must be n*(n-1)/2");
@@ -391,10 +382,8 @@ pub fn feasible_move_active_set(
     let tmin = vals[indices[0]];
 
     // Java: max(1, ceil(count * activeSetRho))
-    let num_to_make_active = max(
-        1,
-        (f64::from(count as u32) * params.active_set_rho).ceil() as usize,
-    );
+    let num_to_make_active =
+        max(1, (count as f64 * params.active_set_rho).ceil() as usize);
 
     // Mark chosen split positions active
     for i in 0..num_to_make_active {
@@ -763,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    fn pair_idx_sanity_n5() {
+    fn pair_idx_n5() {
         let n = 5;
         // Expected contiguous blocks: (1,2..5)=4, (2,3..5)=3, (3,4..5)=2, (4,5)=1
         assert_eq!(pair_idx(1, 2, n), 0);

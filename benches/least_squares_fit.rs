@@ -4,8 +4,8 @@ use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use fast_nnt::splits::asplit::ASplit;
-use fast_nnt::utils::compute_least_squares_fit;
+use fastnnt::splits::asplit::ASplit;
+use fastnnt::utils::compute_least_squares_fit;
 
 fn make_random_split(ntax: usize, rng: &mut StdRng) -> ASplit {
     let mut a = FixedBitSet::with_capacity(ntax + 1);

@@ -27,7 +27,7 @@ impl Component {
     }
 
     fn size(&self) -> usize {
-        if self.second.is_some() { 2 } else { 1 }
+        1 + usize::from(self.second.is_some())
     }
 
     fn values(&self) -> [Option<usize>; 2] {
@@ -55,9 +55,6 @@ impl Component {
         self.second.expect("not a pair")
     }
 
-    fn _is_singleton(&self) -> bool {
-        self.second.is_none()
-    }
 }
 
 /// Computes the circular ordering using the 2023 NeighborNet cycle algorithm.
@@ -222,9 +219,7 @@ fn create_array_upward_count(n: usize) -> Vec<usize> {
     // followed by 1..n for small n:
     let mut v = Vec::with_capacity(n + 1);
     v.push(0);
-    for t in 1..=n {
-        v.push(t);
-    }
+    v.extend(1..=n);
     v
 }
 

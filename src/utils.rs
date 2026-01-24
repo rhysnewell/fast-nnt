@@ -1,4 +1,4 @@
-use crate::splits::asplit::ASplit; // adjust path if needed
+use crate::splits::asplit::ASplit;
 use fixedbitset::FixedBitSet;
 use ndarray::Array2;
 use rayon::prelude::*;
@@ -15,10 +15,11 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
 
     // Build split-induced distances for the packed upper triangle (i<j) in parallel:
     // S[i,j] = Σ_{splits} weight * [i∈A && j∈B or i∈B && j∈A]
+    let tri_len = n * (n - 1) / 2;
     let split_dist = splits
         .par_iter()
         .map(|s| {
-            let mut acc = vec![0.0_f64; n * (n - 1) / 2];
+            let mut acc = vec![0.0_f64; tri_len];
             let w = s.get_weight();
             let a: &FixedBitSet = s.get_a();
             let b: &FixedBitSet = s.get_b();
@@ -41,7 +42,7 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
             acc
         })
         .reduce(
-            || vec![0.0_f64; n * (n - 1) / 2],
+            || vec![0.0_f64; tri_len],
             |mut acc, m| {
                 for (a, b) in acc.iter_mut().zip(m.iter()) {
                     *a += b;

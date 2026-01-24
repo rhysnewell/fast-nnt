@@ -82,8 +82,8 @@ pub struct NeighbourNetArgs {
     pub nnls_params: NNLSParams,
 }
 
-impl NeighbourNetArgs {
-    pub fn default() -> Self {
+impl Default for NeighbourNetArgs {
+    fn default() -> Self {
         Self {
             input: String::new(),
             output_prefix: String::from("output"),

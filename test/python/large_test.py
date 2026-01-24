@@ -3,6 +3,7 @@
 import fastnntpy as fn
 import pandas as pd
 import os
+import re
 from collections import Counter
 import networkx as nx
 import numpy as np
@@ -17,21 +18,25 @@ configs = [
         "title": "splitstree4_active-set",
         "ordering_method": "splitstree4",
         "inference_method": "active-set",
+        "nexus_path": "test/data/large/euc_splitstree4.nex",
     },
     {
         "title": "splitstree4_splitstree4",
         "ordering_method": "splitstree4",
         "inference_method": "splitstree4",
+        "nexus_path": "test/data/large/euc_splitstree4.nex",
     },
     {
         "title": "huson2023_active-set",
         "ordering_method": "huson2023",
         "inference_method": "active-set",
+        "nexus_path": "test/data/large/euc_huson2023.nex",
     },
     {
         "title": "huson2023_splitstree4",
         "ordering_method": "huson2023",
         "inference_method": "splitstree4",
+        "nexus_path": "test/data/large/euc_huson2023.nex",
     },
 ]
 
@@ -80,8 +85,6 @@ def plot_fast_nnt_networkx(nx_obj, out_path="test/plots/fast_nnt_nx.png",
 
     plt.axis("equal"); plt.axis("off"); plt.tight_layout(pad=0.02)
     plt.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
-    base, _ = os.path.splitext(out_path)
-    plt.savefig(base + ".svg", bbox_inches="tight", pad_inches=0.01)
     plt.close()
     return out_path
 
@@ -151,6 +154,104 @@ def save_neighbornet_plot(nx_obj,
     plt.close(fig)
     return out_path
 
+def plot_nexus_matplotlib(nexus_obj,
+                          out_path="test/plots/fast_nnt_graph_matplotlib.png",
+                          shift=0,
+                          label_leaves=True,
+                          scale_width_by_weight=True,
+                          node_size=8,
+                          font_size=6,
+                          dpi=300):
+    """Example: draw a Nexus graph directly with matplotlib."""
+    labels = {i + shift: s for i, s in nexus_obj.get_node_translations()}
+    pos = {i + shift: (x, y) for i, x, y in nexus_obj.get_node_positions()}
+    edges = [(u + shift, v + shift, w) for (_eid, u, v, _sid, w) in nexus_obj.get_graph_edges()]
+
+    edges = [(u, v, w) for (u, v, w) in edges if u in pos and v in pos]
+    if not edges:
+        raise ValueError("No drawable edges (endpoints missing positions).")
+
+    deg = Counter()
+    for u, v, _ in edges:
+        deg[u] += 1
+        deg[v] += 1
+    leaves = [n for n, d in deg.items() if d == 1]
+
+    segs = [[pos[u], pos[v]] for (u, v, _w) in edges]
+
+    if scale_width_by_weight:
+        ws = np.array([w for *_ , w in edges], dtype=float)
+        wmin, wptp = np.nanmin(ws), np.ptp(ws)
+        widths = 0.5 + 2.5 * ((ws - wmin) / (wptp if wptp else 1.0))
+    else:
+        widths = 0.8
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    fig, ax = plt.subplots(figsize=(8, 8), dpi=dpi)
+    ax.add_collection(LineCollection(segs, colors="black", linewidths=widths, alpha=0.9))
+
+    if label_leaves and leaves:
+        xs = [pos[n][0] for n in leaves]
+        ys = [pos[n][1] for n in leaves]
+        ax.scatter(xs, ys, s=node_size, c="black", zorder=3)
+        for n in leaves:
+            x, y = pos[n]
+            ax.text(x, y, labels.get(n, str(n)),
+                    fontsize=font_size, ha="center", va="center", zorder=4)
+
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.autoscale()
+    ax.margins(0.02)
+    ax.grid(True, alpha=0.15)
+    fig.savefig(out_path, bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
+    return out_path
+
+def plot_nexus_matplotlib_minimal(nexus_obj,
+                                  out_path="test/plots/fast_nnt_graph_matplotlib_minimal.png",
+                                  dpi=300):
+    """Minimal, paper-ready matplotlib example without extra options."""
+    labels = {i: s for i, s in nexus_obj.get_node_translations()}
+    pos = {i: (x, y) for i, x, y in nexus_obj.get_node_positions()}
+    edges = [(u, v, w) for (_eid, u, v, _sid, w) in nexus_obj.get_graph_edges()]
+
+    edges = [(u, v, w) for (u, v, w) in edges if u in pos and v in pos]
+    if not edges:
+        raise ValueError("No drawable edges (endpoints missing positions).")
+
+    deg = Counter()
+    for u, v, _ in edges:
+        deg[u] += 1
+        deg[v] += 1
+    leaves = [n for n, d in deg.items() if d == 1]
+
+    segs = [[pos[u], pos[v]] for (u, v, _w) in edges]
+    widths = 0.8
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    fig, ax = plt.subplots(figsize=(8, 8), dpi=dpi)
+    ax.add_collection(LineCollection(segs, colors="black", linewidths=widths, alpha=0.9))
+
+    xs = [pos[n][0] for n in leaves]
+    ys = [pos[n][1] for n in leaves]
+    ax.scatter(xs, ys, s=8, c="black", zorder=3)
+    for n in leaves:
+        x, y = pos[n]
+        ax.text(x, y, labels.get(n, str(n)),
+                fontsize=6, ha="center", va="center", zorder=4)
+
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.autoscale()
+    ax.margins(0.02)
+    ax.grid(True, alpha=0.15)
+    fig.savefig(out_path, bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
+    return out_path
+
 for idx, cfg in enumerate(configs):
     if idx == 0:
         n = fn.run_neighbor_net(
@@ -183,4 +284,12 @@ for idx, cfg in enumerate(configs):
     plot_fast_nnt_networkx(
         n,
         out_path=f"test/plots/fast_nnt_graph_networkx_{cfg['title']}.png",
+    )
+    plot_nexus_matplotlib(
+        n,
+        out_path=f"test/plots/fast_nnt_graph_matplotlib_{cfg['title']}.png",
+    )
+    plot_nexus_matplotlib_minimal(
+        n,
+        out_path=f"test/plots/fast_nnt_graph_matplotlib_minimal_{cfg['title']}.png",
     )

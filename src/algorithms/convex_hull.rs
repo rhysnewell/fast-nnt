@@ -45,7 +45,7 @@ pub fn convex_hull_apply_with_used(
             graph.base.add_taxon(v, t);
         }
     } else {
-        // lightweight sanity (optional)
+        // Warn on missing taxa or split ids in pre-populated graphs.
         for t in 1..=n_tax {
             if graph.base.get_taxon_node(t).is_none() {
                 log::warn!("ConvexHull: taxon {} has no node", t);

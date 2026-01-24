@@ -33,7 +33,7 @@ pub struct SplitsFormat {
 }
 
 /// Container of circular splits for Equal-Angle / NEXUS writing.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SplitsBlock {
     pub splits: Vec<ASplit>, // 1-based access via get(i)
     compatibility: Compatibility,
@@ -160,7 +160,7 @@ impl SplitsBlock {
         if normalize {
             cycle = normalize_cycle_1based(&cycle)?;
         }
-        // sanity: ensure it's a permutation (rough check)
+        // Ensure it's a permutation (rough check).
         let mut seen = FixedBitSet::with_capacity(cycle.len() + 1);
         for &v in &cycle {
             if v >= seen.len() {
@@ -226,6 +226,12 @@ impl SplitsBlock {
     }
 }
 
+impl Default for SplitsBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /* ---------- FixedBitSet helpers ---------- */
 
 // fn fb_grow_to(mut bs: FixedBitSet, len: usize) -> FixedBitSet {
@@ -235,8 +241,6 @@ impl SplitsBlock {
 
 fn fb_and(a: &FixedBitSet, b: &FixedBitSet) -> FixedBitSet {
     let len = a.len().max(b.len());
-    let mut out = FixedBitSet::with_capacity(len);
-    out.grow(len);
     // Make owned copies grown to same length to use bitwise ops
     let mut ca = a.clone();
     ca.grow(len);
@@ -300,7 +304,6 @@ mod tests {
         sb.set_cycle(cycle.clone(), true).expect("valid cycle");
 
         let angs = assign_angles_to_splits(ntax, &sb, sb.cycle().unwrap(), 360.0);
-        // sanity: we got angles for 2 splits
         assert_eq!(angs.len(), sb.nsplits() + 1);
         // angles must be in [0,360)
         for s in 1..=sb.nsplits() {

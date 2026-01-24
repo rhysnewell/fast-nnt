@@ -297,22 +297,6 @@ impl PhyloSplitsGraph {
                 _ => {}
             }
 
-            // merge labels w -> v (unchanged)
-            let vlab = self.base.node_label(v).map(|s| s.to_string());
-            let wlab = self.base.node_label(w).map(|s| s.to_string());
-            match (vlab, wlab) {
-                (None, Some(wl)) if !wl.is_empty() => self.base.set_node_label(v, wl),
-                (Some(vl), Some(wl)) if !wl.is_empty() => {
-                    let mut merged = vl;
-                    if !merged.is_empty() {
-                        merged.push_str(", ");
-                    }
-                    merged.push_str(&wl);
-                    self.base.set_node_label(v, merged);
-                }
-                _ => {}
-            }
-
             // --- FIX: copy taxa first to end the immutable borrow before mutating
             let taxa_to_move: Vec<usize> = self
                 .base

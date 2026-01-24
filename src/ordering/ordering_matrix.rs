@@ -9,7 +9,7 @@ pub struct NeighbourNetResult {
 type Matrix = Array2<f64>;
 
 /// Update cluster distance matrix `dm` for row/col `j` given full `d` and cluster list `cl`.
-fn update_dm(dm: &mut Matrix, cl: &Vec<Vec<usize>>, sums: &Vec<Vec<f64>>, j: usize) {
+fn update_dm(dm: &mut Matrix, cl: &[Vec<usize>], sums: &[Vec<f64>], j: usize) {
     let l = cl.len();
     // Compute all means to cluster j in parallel, then assign
     let col_vals: Vec<f64> = (0..l)
@@ -29,7 +29,7 @@ fn update_dm(dm: &mut Matrix, cl: &Vec<Vec<usize>>, sums: &Vec<Vec<f64>>, j: usi
 }
 
 /// Rx helper from the R code.
-fn rx(d: &Matrix, x: &[usize], cl: &Vec<Vec<usize>>, sums: &Vec<Vec<f64>>) -> Vec<f64> {
+fn rx(d: &Matrix, x: &[usize], cl: &[Vec<usize>], sums: &[Vec<f64>]) -> Vec<f64> {
     let lx = x.len();
     let mut res = vec![0.0; lx];
     for (i, &xi) in x.iter().enumerate() {
@@ -41,7 +41,7 @@ fn rx(d: &Matrix, x: &[usize], cl: &Vec<Vec<usize>>, sums: &Vec<Vec<f64>>) -> Ve
             }
         }
         // plus mean to each other cluster
-        for (c_idx, _c) in cl.iter().enumerate() {
+        for c_idx in 0..cl.len() {
             tmp += mean_single_to_cluster_cached(cl, sums, c_idx, xi);
         }
         res[i] = tmp;
@@ -249,14 +249,14 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
             let (new_cl, new_ord) = match (n1, n2) {
                 (2, 1) => {
                     if best_row == 1 {
-                        // blub == 2
+                        // Attach e2 to the second element of e1.
                         reduc(&mut d, cl[e1][0], cl[e1][1], cl[e2][0]);
                         let nc = vec![cl[e1][0], cl[e2][0]];
                         let mut no = ord[e1].clone();
                         no.extend_from_slice(&ord[e2]);
                         (nc, no)
                     } else {
-                        // else
+                        // Attach e2 to the first element of e1.
                         reduc(&mut d, cl[e2][0], cl[e1][0], cl[e1][1]);
                         let nc = vec![cl[e2][0], cl[e1][1]];
                         let mut no = ord[e2].clone();
@@ -266,14 +266,14 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
                 }
                 (1, 2) => {
                     if best_col == 0 {
-                        // blub == 1
+                        // Attach e1 to the second element of e2.
                         reduc(&mut d, cl[e1][0], cl[e2][0], cl[e2][1]);
                         let nc = vec![cl[e1][0], cl[e2][1]];
                         let mut no = ord[e1].clone();
                         no.extend_from_slice(&ord[e2]);
                         (nc, no)
                     } else {
-                        // else
+                        // Attach e1 to the first element of e2.
                         reduc(&mut d, cl[e2][0], cl[e2][1], cl[e1][0]);
                         let nc = vec![cl[e2][0], cl[e1][0]];
                         let mut no = ord[e2].clone();
@@ -283,7 +283,7 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
                 }
                 (2, 2) => match (best_row, best_col) {
                     (0, 0) => {
-                        // blub == 1
+                        // Connect e1[1] with e2[0].
                         reduc(&mut d, cl[e1][1], cl[e1][0], cl[e2][0]);
                         reduc(&mut d, cl[e1][1], cl[e2][0], cl[e2][1]);
                         let nc = vec![cl[e1][1], cl[e2][1]];
@@ -293,7 +293,7 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
                         (nc, no)
                     }
                     (1, 0) => {
-                        // blub == 2
+                        // Connect e1[0] with e2[0].
                         reduc(&mut d, cl[e1][0], cl[e1][1], cl[e2][0]);
                         reduc(&mut d, cl[e1][0], cl[e2][0], cl[e2][1]);
                         let nc = vec![cl[e1][0], cl[e2][1]];
@@ -302,7 +302,7 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
                         (nc, no)
                     }
                     (0, 1) => {
-                        // blub == 3
+                        // Connect e1[1] with e2[1].
                         reduc(&mut d, cl[e1][1], cl[e1][0], cl[e2][1]);
                         reduc(&mut d, cl[e1][1], cl[e2][1], cl[e2][0]);
                         let nc = vec![cl[e1][1], cl[e2][0]];
@@ -343,12 +343,7 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
     ord.into_iter().next().unwrap_or_default()
 }
 
-fn mean_between_clusters_cached(
-    cl: &Vec<Vec<usize>>,
-    sums: &Vec<Vec<f64>>,
-    i: usize,
-    j: usize,
-) -> f64 {
+fn mean_between_clusters_cached(cl: &[Vec<usize>], sums: &[Vec<f64>], i: usize, j: usize) -> f64 {
     let ai = cl[i].len();
     let bj = cl[j].len();
     if ai == 0 || bj == 0 {
@@ -360,7 +355,12 @@ fn mean_between_clusters_cached(
     if denom == 0.0 { 0.0 } else { sum / denom }
 }
 
-fn mean_single_to_cluster_cached(cl: &Vec<Vec<usize>>, sums: &Vec<Vec<f64>>, c_idx: usize, xi: usize) -> f64 {
+fn mean_single_to_cluster_cached(
+    cl: &[Vec<usize>],
+    sums: &[Vec<f64>],
+    c_idx: usize,
+    xi: usize,
+) -> f64 {
     let size = cl[c_idx].len();
     if size == 0 {
         0.0
@@ -376,7 +376,7 @@ fn merge_cluster_sums(sums: &mut Vec<Vec<f64>>, e1: usize, e2: usize) {
     }
 }
 
-fn recompute_cluster_sum(d: &Matrix, cl: &Vec<Vec<usize>>, sums: &mut Vec<Vec<f64>>, idx: usize) {
+fn recompute_cluster_sum(d: &Matrix, cl: &[Vec<usize>], sums: &mut Vec<Vec<f64>>, idx: usize) {
     let mut out = vec![0.0f64; d.ncols()];
     for &t in cl[idx].iter() {
         let row = d.row(t);

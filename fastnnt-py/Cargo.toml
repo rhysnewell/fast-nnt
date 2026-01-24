@@ -13,7 +13,7 @@ pyo3 = { version = "0.25.1", features = ["extension-module"] }
 numpy = "0.25.0"
 ndarray = "0.16.1"
 anyhow = "1"
-fast-nnt = ">=0.2.3"
+fast-nnt = ">=0.2.4"
 
 [patch.crates-io]
 fast-nnt = { path = ".." }

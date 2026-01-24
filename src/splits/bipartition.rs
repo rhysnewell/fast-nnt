@@ -22,9 +22,7 @@ impl BiPartition {
     pub fn new(a: FixedBitSet, b: FixedBitSet) -> Self {
         let ca = cardinality(&a);
         let cb = cardinality(&b);
-        if ca == 0 || cb == 0 {
-            eprintln!("Internal error: A.size()={}, B.size()={}", ca, cb);
-        }
+        debug_assert!(ca > 0 && cb > 0, "invalid split: |A|={ca}, |B|={cb}");
         let a_first = first_set_at_or_after(&a, 1).unwrap_or(usize::MAX);
         let b_first = first_set_at_or_after(&b, 1).unwrap_or(usize::MAX);
 
@@ -138,9 +136,7 @@ impl BiPartition {
 
     /// Does this split separate taxa `a` and `b` (1-based)?
     pub fn separates(&self, a: usize, b: usize) -> bool {
-        let in_a = self.part_containing(a) as *const _;
-        let in_b = self.part_containing(b) as *const _;
-        in_a != in_b
+        !std::ptr::eq(self.part_containing(a), self.part_containing(b))
     }
 }
 
@@ -345,7 +341,7 @@ mod tests {
         let p1 = BiPartition::new(bs_from(&[2, 4], 5), bs_from(&[1, 3, 5], 5));
         let p2 = BiPartition::new(bs_from(&[3, 5], 5), bs_from(&[1, 2, 4], 5));
         // Compare by A then B as lexicographic lists:
-        assert!(p1 < p2 || p1 > p2 || p1 == p2); // sanity
+        assert_eq!(p1.cmp(&p2), BiPartition::compare(&p1, &p2));
     }
 
     #[test]

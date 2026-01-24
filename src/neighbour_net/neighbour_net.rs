@@ -386,7 +386,7 @@ impl NeighbourNet {
             );
         }
 
-        // Labels sanity
+        // Validate labels.
         let labels = if labels.len() == n {
             labels
         } else {

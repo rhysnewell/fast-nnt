@@ -3,7 +3,7 @@ use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use fast_nnt::ordering::ordering_splitstree4::{
+use fastnnt::ordering::ordering_splitstree4::{
     SxMode, compute_order_splits_tree4_with_sx,
 };
 use rayon::ThreadPoolBuilder;

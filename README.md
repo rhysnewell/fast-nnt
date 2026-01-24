@@ -70,6 +70,12 @@ Fast-NNT exposes two knobs that match the algorithmic choices in SplitsTree:
 - For SplitsTree4-style defaults, use `ordering_method="splitstree4"` with `inference_method="splitstree4"` (or `-O splitstree4 --inference splitstree4` in the CLI).
 
 #### Python
+Set the thread count once per session:
+```
+import fastnntpy as fn
+fn.set_fastnnt_threads(4)
+```
+
 Read data in via `numpy`, `pandas`, or `polars`:
 
 ```
@@ -94,6 +100,12 @@ print(len(n.get_graph_edges()))
 ```
 
 #### R
+Set the thread count once per session:
+```
+library(fastnntr)
+fastnntr::set_fastnnt_threads(4)
+```
+
 Read your distance matrix in using your preferred method (e.g., `data.table`):
 ```
 library(fastnntr)

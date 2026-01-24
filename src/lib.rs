@@ -39,8 +39,8 @@ pub fn set_log_level(matches: &ProgramArgs, is_last: bool, program_name: &str, v
     if specified || is_last {
         let mut builder = Builder::new();
         builder.filter_level(log_level);
-        if env::var("RUST_LOG").is_ok() {
-            builder.parse_filters(&env::var("RUST_LOG").unwrap());
+        if let Ok(rust_log) = env::var("RUST_LOG") {
+            builder.parse_filters(&rust_log);
         }
         if builder.try_init().is_err() {
             panic!("Failed to set log level - has it been specified multiple times?")

@@ -11,10 +11,13 @@ use log::{error, info};
 fn main() {
     let app = ProgramArgs::parse();
 
-    rayon::ThreadPoolBuilder::new()
+    if let Err(err) = rayon::ThreadPoolBuilder::new()
         .num_threads(app.threads)
         .build_global()
-        .unwrap();
+    {
+        error!("Failed to initialize Rayon thread pool: {:#}", err);
+        std::process::exit(1);
+    }
 
     set_log_level(&app, true, crate_name!(), crate_version!());
     info!("Rayon threads: {}", rayon::current_num_threads());

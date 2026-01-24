@@ -28,13 +28,7 @@ impl OrderingMethod {
     }
 
     pub fn from_option(opt: Option<&str>) -> Self {
-        match opt {
-            Some("Huson2023") | Some("huson2023") => OrderingMethod::Huson2023,
-            Some("SplitsTree4") | Some("splitstree4") | Some("splits-tree4") => {
-                OrderingMethod::SplitsTree4
-            }
-            _ => OrderingMethod::default(),
-        }
+        opt.map_or_else(OrderingMethod::default, OrderingMethod::from_str)
     }
 }
 

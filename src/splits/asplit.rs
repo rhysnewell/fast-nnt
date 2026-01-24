@@ -86,13 +86,12 @@ impl ASplit {
 
     /// Copy constructor (like Java).
     pub fn from_other(src: &ASplit) -> Self {
-        Self::new_full(
-            src.get_a().clone(),
-            src.get_b().clone(),
-            src.weight,
-            src.confidence,
-            src.label.clone(),
-        )
+        Self {
+            base: src.base.clone(),
+            weight: src.weight,
+            confidence: src.confidence,
+            label: src.label.clone(),
+        }
     }
 
     /* -------- getters / setters -------- */
@@ -231,13 +230,7 @@ fn union_1_based(a: &FixedBitSet, b: &FixedBitSet) -> FixedBitSet {
     out
 }
 
-/* ---------------- Minimal adapter over your split type ---------------- */
-
-/// If your ASplit stores weight/confidence differently, adapt here.
-/// We assume ASplit provides:
-///  - fn weight(&self) -> f64
-///  - fn size(&self) -> usize
-///  - fn smaller_part(&self) -> &FixedBitSet
+/* ---------------- Minimal adapter for split consumers ---------------- */
 pub trait ASplitView {
     fn weight(&self) -> f64;
     fn size(&self) -> usize;
