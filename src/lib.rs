@@ -56,7 +56,7 @@ pub fn set_log_level(matches: &ProgramArgs, is_last: bool, program_name: &str, v
 /// - `dist`: square distance matrix (n x n)
 /// - `labels`: length n
 /// - `args`: algorithm params (bindings can construct this or you add a smaller ArgsLite)
-pub fn run_fast_nnt_from_memory(
+pub fn run_anon_nnt_from_memory(
     dist: Array2<f64>,
     labels: Vec<String>,
     args: NeighbourNetArgs,

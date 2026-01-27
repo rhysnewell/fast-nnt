@@ -1,11 +1,11 @@
 [package]
-name = "fastnnt-py"
+name = "anon-nnt-py"
 publish = false
 version = "0.2.4"
 edition = "2024"
 
 [lib]
-name = "fastnntpy"              # Python import name: fastnntpy
+name = "anon_nntpy"              # Python import name: anon_nntpy
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -13,7 +13,7 @@ pyo3 = { version = "0.25.1", features = ["extension-module"] }
 numpy = "0.25.0"
 ndarray = "0.16.1"
 anyhow = "1"
-fast-nnt = ">=0.2.4"
+anon_nnt = ">=0.2.4"
 
 [patch.crates-io]
-fast-nnt = { path = ".." }
+anon_nnt = { path = ".." }

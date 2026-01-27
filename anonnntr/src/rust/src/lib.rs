@@ -4,12 +4,12 @@ use std::collections::{HashMap, HashSet};
 
 
 // From your core:
-use fast_nnt::{
+use anon_nnt::{
     cli::NeighbourNetArgs,
     init_rayon_threads,
     nexus::nexus::Nexus,
     ordering::OrderingMethod,
-    run_fast_nnt_from_memory,
+    run_anon_nnt_from_memory,
     weights::InferenceMethod,
     RayonInitStatus,
 };
@@ -219,7 +219,7 @@ fn nexus_to_networkx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
 
 
 #[extendr]
-fn set_fastnnt_threads(threads: Robj) -> extendr_api::Result<()> {
+fn set_anon_nnt_threads(threads: Robj) -> extendr_api::Result<()> {
     if threads.is_null() {
         return Err(Error::Other("threads must be numeric".into()));
     }
@@ -301,7 +301,7 @@ fn run_neighbornet_networkx(
         args.inference = InferenceMethod::from_option(inference_method.as_str());
     }
 
-    let nexus = run_fast_nnt_from_memory(arr, lbls, args)
+    let nexus = run_anon_nnt_from_memory(arr, lbls, args)
         .map_err(|e| Error::Other(e.to_string()))?;
     // Convert to networkx-like list
 
@@ -336,8 +336,8 @@ fn run_neighbournet_networkx(
 }
 
 extendr_module! {
-    mod fastnntr;
-    fn set_fastnnt_threads;
+    mod anonnntr;
+    fn set_anon_nnt_threads;
     fn run_neighbornet_networkx;
     fn run_neighbournet_networkx;
 }

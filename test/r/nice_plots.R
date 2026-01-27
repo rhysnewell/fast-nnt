@@ -23,8 +23,8 @@ library(ggforce)
 library(ggnewscale)
 library(ggpubr)
 library(data.table)
-devtools::load_all("fastnntr")
-set_fastnnt_threads(8)
+devtools::load_all("anonnntr")
+set_anon_nnt_threads(8)
 
 #--- 1. Function to make one plot from a file ---#
 plot_networx <- function(Nnet, title=NULL) {
@@ -95,22 +95,22 @@ make_nexus_plot <- function(path, title=NULL) {
 #--- 2. Define input files ---#
 
 plot1 <- make_splitstree_plot(
-  title="Fast-NNT - SplitsTree4 Ordering (Active-Set Inference)",
+  title="Anon-NNT - SplitsTree4 Ordering (Active-Set Inference)",
   ordering_method="splitstree4",
   inference_method="active-set"
 )
 plot2 <- make_splitstree_plot(
-  title="Fast-NNT - SplitsTree4 Ordering (SplitsTree4 Inference)",
+  title="Anon-NNT - SplitsTree4 Ordering (SplitsTree4 Inference)",
   ordering_method="splitstree4",
   inference_method="splitstree4"
 )
 plot3 <- make_splitstree_plot(
-  title="Fast-NNT - Huson2023 Ordering (Active-Set Inference)",
+  title="Anon-NNT - Huson2023 Ordering (Active-Set Inference)",
   ordering_method="huson2023",
   inference_method="active-set"
 )
 plot4 <- make_splitstree_plot(
-  title="Fast-NNT - Huson2023 Ordering (SplitsTree4 Inference)",
+  title="Anon-NNT - Huson2023 Ordering (SplitsTree4 Inference)",
   ordering_method="huson2023",
   inference_method="splitstree4"
 )
@@ -123,5 +123,5 @@ plot6 <- make_nexus_plot("test/data/large/st6_huson2023.stree6", title="SplitsTr
 
 combined <- ggpubr::ggarrange(plot1, plot2, plot3, plot4, plot5, plot6, ncol=3, nrow=2, align="hv")
 
-ggsave('test/r/fast_nnt_graph_R.png', combined,
+ggsave('test/r/anon_nnt_graph_R.png', combined,
        width=44, height=30, units='cm', bg='white')

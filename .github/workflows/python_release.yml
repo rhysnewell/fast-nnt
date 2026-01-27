@@ -47,17 +47,17 @@ jobs:
         with:
           python-version: ${{ matrix.py }}
 
-      - name: Build wheels for fastnnt-py ${{ runner.os }}-py${{ matrix.py }}
+      - name: Build wheels for anon-nnt-py ${{ runner.os }}-py${{ matrix.py }}
         uses: PyO3/maturin-action@v1
         with:
           manylinux: "auto"
-          args: --release -m fastnnt-py/Cargo.toml -i python${{ matrix.py }}
+          args: --release -m anon-nnt-py/Cargo.toml -i python${{ matrix.py }}
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ runner.os }}-py${{ matrix.py }}
-          path: fastnnt-py/target/wheels/*.whl
+          path: anon-nnt-py/target/wheels/*.whl
 
   publish:
     needs: build

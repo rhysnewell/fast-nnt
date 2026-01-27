@@ -3,13 +3,13 @@ requires = ["maturin>=1.5,<2"]
 build-backend = "maturin"
 
 [project]
-name = "fastnntpy"
+name = "anon_nntpy"
 version = "0.2.4"
 requires-python = ">=3.9"
-description = "Fast NeighbourNet (Rust) with Python bindings"
+description = "Anonymous NeighborNet implementation with Python bindings"
 readme = "README.md"
 license = { file = "LICENSE" }
-authors = [{ name = "Rhys Newell", email = "rhys.newell94@gmail.com" }]
+authors = [{ name = "Anonymous" }]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Rust",
@@ -17,7 +17,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/rhysnewell/fast-nnt"
+Homepage = "https://example.invalid"
 
 # Optional runtime deps for helper Python code (not for the Rust extension itself)
 [project.optional-dependencies]
@@ -26,4 +26,4 @@ plot = ["networkx>=3", "matplotlib>=3", "pandas>=1.5"]
 # maturin options
 [tool.maturin]
 # This is the Python import module name; must match [lib].name in Cargo.toml
-module-name = "fastnntpy"
+module-name = "anon_nntpy"

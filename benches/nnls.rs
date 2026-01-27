@@ -4,7 +4,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::ThreadPoolBuilder;
 
-use fastnnt::weights::active_set_weights::{NNLSParams, compute_use_1d};
+use anon_nnt::weights::active_set_weights::{NNLSParams, compute_use_1d};
 
 fn make_distance_matrix(n: usize, seed: u64) -> Array2<f64> {
     let mut rng = StdRng::seed_from_u64(seed);

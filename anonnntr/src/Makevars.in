@@ -1,7 +1,7 @@
 TARGET_DIR = ./rust/target
 LIBDIR = $(TARGET_DIR)/@LIBDIR@
-STATLIB = $(LIBDIR)/libfastnntr.a
-PKG_LIBS = -L$(LIBDIR) -lfastnntr
+STATLIB = $(LIBDIR)/libanonnntr.a
+PKG_LIBS = -L$(LIBDIR) -lanonnntr
 
 all: $(SHLIB) rust_clean
 

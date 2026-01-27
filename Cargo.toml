@@ -1,18 +1,18 @@
 [package]
-name = "fastnnt"
+name = "anon_nnt"
 version = "0.2.4"
 edition = "2024"
-authors = ["Rhys Newell <rhys.newell94@gmail.com>"]
-description = "Rust implementation of the SplitsTree NeighborNet algorithm."
-documentation = "https://docs.rs/fast-nnt"
+authors = ["Anonymous"]
+description = "Anonymous implementation of a NeighborNet-style algorithm."
+documentation = "https://example.invalid"
 readme = "README.md"
-repository = "https://github.com/rhysnewell/fast-nnt"
+repository = "https://example.invalid"
 license = "GPL-3.0"
 keywords = ["phylogenetics", "neighbor-net", "splits-tree", "trees", "networks"]
-default-run = "fast_nnt"
+default-run = "anon_nnt"
 
 # [workspace]
-# members = ["fastnnt-py", "fastnntr"]
+# members = ["anon-nnt-py", "anonnntr"]
 
 resolver = "2"
 
@@ -60,9 +60,5 @@ name = "ordering_matrix"
 harness = false
 
 [[bin]]
-name = "fast_nnt"
-path = "src/bin/fast_nnt.rs"
-
-[[bin]]
-name = "fastnnt"
-path = "src/bin/fast_nnt.rs"
+name = "anon_nnt"
+path = "src/bin/anon_nnt.rs"

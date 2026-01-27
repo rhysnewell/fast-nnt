@@ -3,7 +3,7 @@ use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use fastnnt::ordering::ordering_matrix::neighbor_net_ordering;
+use anon_nnt::ordering::ordering_matrix::neighbor_net_ordering;
 
 fn make_distance_matrix(n: usize, seed: u64) -> Array2<f64> {
     let mut rng = StdRng::seed_from_u64(seed);

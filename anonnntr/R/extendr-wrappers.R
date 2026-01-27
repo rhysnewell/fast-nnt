@@ -4,13 +4,13 @@
 
 #
 # This file was created with the following call:
-#   .Call("wrap__make_fastnntr_wrappers", use_symbols = TRUE, package_name = "fastnntr")
+#   .Call("wrap__make_anonnntr_wrappers", use_symbols = TRUE, package_name = "anonnntr")
 
 #' @usage NULL
-#' @useDynLib fastnntr, .registration = TRUE
+#' @useDynLib anonnntr, .registration = TRUE
 NULL
 
-set_fastnnt_threads <- function(threads) .Call(wrap__set_fastnnt_threads, threads)
+set_anon_nnt_threads <- function(threads) .Call(wrap__set_anon_nnt_threads, threads)
 
 run_neighbornet_networkx <- function(x, flip_y = TRUE, labels = NULL, max_iterations = 5000, ordering_method = NULL, inference_method = NULL) .Call(wrap__run_neighbornet_networkx, x, flip_y, labels, max_iterations, ordering_method, inference_method)
 

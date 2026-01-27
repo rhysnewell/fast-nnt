@@ -5,7 +5,7 @@ use rand::{Rng, SeedableRng};
 use rayon::ThreadPoolBuilder;
 use std::time::Duration;
 
-use fastnnt::ordering::ordering_huson2023::compute_order_huson_2023;
+use anon_nnt::ordering::ordering_huson2023::compute_order_huson_2023;
 
 fn make_distance_matrix(n: usize, seed: u64) -> Array2<f64> {
     let mut rng = StdRng::seed_from_u64(seed);

@@ -1,8 +1,8 @@
-use fast_nnt::cli::NeighbourNetArgs;
-use fast_nnt::nexus::nexus::Nexus;
-use fast_nnt::{init_rayon_threads, run_fast_nnt_from_memory, RayonInitStatus};
-use fast_nnt::ordering::OrderingMethod;
-use fast_nnt::weights::InferenceMethod;
+use anon_nnt::cli::NeighbourNetArgs;
+use anon_nnt::nexus::nexus::Nexus;
+use anon_nnt::{init_rayon_threads, run_anon_nnt_from_memory, RayonInitStatus};
+use anon_nnt::ordering::OrderingMethod;
+use anon_nnt::weights::InferenceMethod;
 use ndarray::Array2;
 use numpy::PyReadonlyArray2;
 use pyo3::exceptions::{PyTypeError, PyUserWarning, PyValueError};
@@ -111,7 +111,7 @@ fn infer_labels<'py>(obj: Bound<'py, PyAny>, n: usize) -> PyResult<Vec<String>> 
 // ---- public API ----
 #[pyfunction]
 #[pyo3(signature = (threads))]
-fn set_fastnnt_threads(py: Python<'_>, threads: usize) -> PyResult<()> {
+fn set_anon_nnt_threads(py: Python<'_>, threads: usize) -> PyResult<()> {
     if threads < 1 {
         return Err(PyValueError::new_err("threads must be >= 1"));
     }
@@ -167,7 +167,7 @@ fn run_neighbour_net<'py>(
     args.ordering = OrderingMethod::from_option(ordering_method);
     args.inference = InferenceMethod::from_option(inference_method);
 
-    let nexus = run_fast_nnt_from_memory(view, lbls, args)
+    let nexus = run_anon_nnt_from_memory(view, lbls, args)
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
     Ok(PyNexus { inner: nexus })
@@ -187,9 +187,9 @@ fn run_neighbor_net<'py>(
 }
 
 #[pymodule]
-fn fastnntpy(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn anon_nntpy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNexus>()?;
-    m.add_function(wrap_pyfunction!(set_fastnnt_threads, m)?)?;
+    m.add_function(wrap_pyfunction!(set_anon_nnt_threads, m)?)?;
     m.add_function(wrap_pyfunction!(run_neighbour_net, m)?)?;
     m.add_function(wrap_pyfunction!(run_neighbor_net, m)?)?;
     Ok(())

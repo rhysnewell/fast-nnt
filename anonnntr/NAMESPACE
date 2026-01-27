@@ -2,5 +2,5 @@
 
 export(run_neighbornet_networkx)
 export(run_neighbournet_networkx)
-export(set_fastnnt_threads)
-useDynLib(fastnntr, .registration = TRUE)
+export(set_anon_nnt_threads)
+useDynLib(anonnntr, .registration = TRUE)

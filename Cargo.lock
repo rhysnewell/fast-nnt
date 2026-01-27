@@ -24,6 +24,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
+name = "anon_nnt"
+version = "0.2.4"
+dependencies = [
+ "anyhow",
+ "clap",
+ "criterion",
+ "csv",
+ "env_logger",
+ "fixedbitset",
+ "libc",
+ "log",
+ "ndarray",
+ "num_cpus",
+ "petgraph",
+ "pretty_assertions",
+ "rand",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
+]
+
+[[package]]
 name = "anstream"
 version = "0.6.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -319,30 +343,6 @@ checksum = "778e2ac28f6c47af28e4907f13ffd1e1ddbd400980a9abd7c8df189bf578a5ad"
 dependencies = [
  "libc",
  "windows-sys 0.60.2",
-]
-
-[[package]]
-name = "fastnnt"
-version = "0.2.4"
-dependencies = [
- "anyhow",
- "clap",
- "criterion",
- "csv",
- "env_logger",
- "fixedbitset",
- "libc",
- "log",
- "ndarray",
- "num_cpus",
- "petgraph",
- "pretty_assertions",
- "rand",
- "rayon",
- "serde",
- "serde_json",
- "sysinfo",
- "tempfile",
 ]
 
 [[package]]
