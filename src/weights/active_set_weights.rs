@@ -5,7 +5,7 @@ use log::info;
 use ndarray::Array2;
 use rayon::prelude::*;
 use std::{
-    cmp::max,
+    cmp::{Ordering, max},
     time::{Duration, Instant},
 };
 
@@ -387,34 +387,30 @@ pub fn feasible_move_active_set(
         return true;
     }
 
-    // Sort indices[0..count) by vals[idx] ascending, like Java's Comparator.comparingDouble:
-    // - NaNs sort AFTER numbers
-    // - -0.0 < +0.0
-    indices[..count].sort_by(|&a, &b| {
-        let va = vals[a];
-        let vb = vals[b];
-        let ord = match (va.is_nan(), vb.is_nan()) {
-            (true, true) => std::cmp::Ordering::Equal,
-            (true, false) => std::cmp::Ordering::Greater, // NaN after numbers
-            (false, true) => std::cmp::Ordering::Less,
-            (false, false) => va.total_cmp(&vb), // IEEE total order: -0.0 < +0.0
-        };
-        if ord == std::cmp::Ordering::Equal {
-            a.cmp(&b) // match Java's stable sort behavior on ties
-        } else {
-            ord
+    let mut min_idx = 0usize;
+    for i in 1..count {
+        if cmp_vals_indices(vals, i, min_idx) == Ordering::Less {
+            min_idx = i;
         }
-    });
-
-    let tmin = vals[indices[0]];
+    }
+    let tmin = vals[min_idx];
 
     // Java: max(1, ceil(count * activeSetRho))
     let num_to_make_active = max(1, (count as f64 * params.active_set_rho).ceil() as usize);
 
-    // Mark chosen split positions active
-    for i in 0..num_to_make_active {
-        let pos = splits[indices[i]];
-        active_set[pos] = true;
+    // Mark chosen split positions active (partition/selection instead of full sort).
+    if num_to_make_active >= count {
+        for &pos in &splits[..count] {
+            active_set[pos] = true;
+        }
+    } else {
+        let kth = num_to_make_active - 1;
+        let (left, pivot, _right) =
+            indices[..count].select_nth_unstable_by(kth, |&a, &b| cmp_vals_indices(vals, a, b));
+        for &slot in left.iter() {
+            active_set[splits[slot]] = true;
+        }
+        active_set[splits[*pivot]] = true;
     }
 
     // Blend x toward xstar by tmin on non-active; zero-out active
@@ -433,6 +429,23 @@ pub fn feasible_move_active_set(
     }
 
     false
+}
+
+#[inline]
+fn cmp_vals_indices(vals: &[f64], a: usize, b: usize) -> Ordering {
+    let va = vals[a];
+    let vb = vals[b];
+    let ord = match (va.is_nan(), vb.is_nan()) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Greater, // NaN after numbers
+        (false, true) => Ordering::Less,
+        (false, false) => va.total_cmp(&vb), // IEEE total order: -0.0 < +0.0
+    };
+    if ord == Ordering::Equal {
+        a.cmp(&b) // match Java's stable sort tie-break by insertion order
+    } else {
+        ord
+    }
 }
 
 /* ===================== Linear ops A and Aᵀ (vector form) ===================== */

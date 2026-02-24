@@ -263,10 +263,13 @@ fn worst_indices(x: &[f64], prop_kept: f64) -> Option<Vec<usize>> {
     }
 
     let mut xcopy: Vec<f64> = x.iter().copied().filter(|v| *v < 0.0).collect();
-    xcopy.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
     let nkept = ((prop_kept * num_neg as f64).ceil() as usize).max(1);
-    let cutoff = xcopy[nkept - 1];
+    let cutoff = {
+        let kth = nkept - 1;
+        let (_, pivot, _) = xcopy.select_nth_unstable_by(kth, |a, b| a.partial_cmp(b).unwrap());
+        *pivot
+    };
 
     let mut result = vec![0usize; nkept];
     let mut front = 0usize;

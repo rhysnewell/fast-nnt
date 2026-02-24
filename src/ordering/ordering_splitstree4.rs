@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use ndarray::Array2;
 use rayon::prelude::*;
+use std::time::Instant;
 
 const EPS: f64 = 1e-12;
 
@@ -130,8 +131,18 @@ fn join_nodes(
     let mut num_nodes = n_tax;
     let mut num_active = n_tax;
     let mut num_clusters = n_tax;
+    let ordering_started = Instant::now();
+    let mut iters = 0usize;
+    let mut next_progress_report = n_tax.saturating_sub(250);
+
+    // Compute Sx once, then maintain it incrementally as clusters are agglomerated.
+    match sx_mode {
+        SxMode::Serial => compute_sx_serial(d, nodes, head),
+        SxMode::Parallel => compute_sx_parallel(d, nodes, head),
+    }
 
     while num_active > 3 {
+        iters += 1;
         // Special case: 4 active and 2 clusters
         if num_active == 4 && num_clusters == 2 {
             let actives = snapshot_active(nodes, head);
@@ -153,11 +164,7 @@ fn join_nodes(
             break;
         }
 
-        // --- Compute Sx ---
-        match sx_mode {
-            SxMode::Serial => compute_sx_serial(d, nodes, head),
-            SxMode::Parallel => compute_sx_parallel(d, nodes, head),
-        }
+        let reps = snapshot_cluster_representatives(nodes, head);
 
         // --- Choose representatives ---
         let (cx, cy, _bestq) = {
@@ -165,7 +172,6 @@ fn join_nodes(
             let mut c_y: Option<usize> = None;
             let mut best = 0.0_f64; // Java seeds to 0. First candidate sets it.
             let mut best_leafs: u8 = 0;
-            let reps = snapshot_cluster_representatives(nodes, head);
 
             for i in 0..reps.len() {
                 let p = reps[i];
@@ -206,14 +212,10 @@ fn join_nodes(
 
         // --- Rx for candidates (if needed) ---
         if nodes[cx].nbr.is_some() || nodes[cy].nbr.is_some() {
-            nodes[cx].rx = compute_rx(cx, cx, cy, d, nodes, head);
-            if let Some(cxb) = nodes[cx].nbr {
-                nodes[cxb].rx = compute_rx(cxb, cx, cy, d, nodes, head);
-            }
-            nodes[cy].rx = compute_rx(cy, cx, cy, d, nodes, head);
-            if let Some(cyb) = nodes[cy].nbr {
-                nodes[cyb].rx = compute_rx(cyb, cx, cy, d, nodes, head);
-            }
+            compute_rx_candidates(cx, cy, d, nodes, head);
+        } else {
+            nodes[cx].rx = 0.0;
+            nodes[cy].rx = 0.0;
         }
 
         // --- Pick x,y among candidates ---
@@ -264,23 +266,20 @@ fn join_nodes(
                 // 2-way
                 debug!("Join 2 way: x {} y {} num_active {}", x, y, num_active);
                 join2way(nodes, x, y);
+                let new_rep = cluster_rep(x, nodes);
+                update_sx_after_join2(d, nodes, &reps, x, y, new_rep);
                 num_clusters -= 1;
             }
             (None, Some(_), _) => {
                 // 3-way (x isolated)
+                let rem_a = cluster_rep(x, nodes);
+                let rem_b = cluster_rep(y, nodes);
+                let y_nbr = nodes[y]
+                    .nbr
+                    .context("expected y.nbr for 3-way agglomeration")?;
                 debug!("Join 3(1) way: x {} y {} num_active {}", x, y, num_active);
-                join3way(
-                    x,
-                    y,
-                    nodes[y]
-                        .nbr
-                        .context("expected y.nbr for 3-way agglomeration")?,
-                    &mut joins,
-                    d,
-                    nodes,
-                    head,
-                    &mut num_nodes,
-                )?;
+                let new_rep = join3way(x, y, y_nbr, &mut joins, d, nodes, head, &mut num_nodes)?;
+                update_sx_after_merge(d, nodes, &reps, rem_a, rem_b, new_rep);
                 num_nodes += 2;
                 num_active -= 1;
                 num_clusters -= 1;
@@ -289,6 +288,8 @@ fn join_nodes(
                 // 3-way (y isolated) OR last 4 active
                 let x2 = y;
                 let y2 = x;
+                let rem_a = cluster_rep(x2, nodes);
+                let rem_b = cluster_rep(y2, nodes);
                 let y2_nbr = nodes[y2]
                     .nbr
                     .context("expected y2.nbr for 3-way agglomeration")?;
@@ -296,13 +297,16 @@ fn join_nodes(
                     "Join 3(2) way: x2 {} y2 {} num_active {}",
                     x2, y2, num_active
                 );
-                join3way(x2, y2, y2_nbr, &mut joins, d, nodes, head, &mut num_nodes)?;
+                let new_rep = join3way(x2, y2, y2_nbr, &mut joins, d, nodes, head, &mut num_nodes)?;
+                update_sx_after_merge(d, nodes, &reps, rem_a, rem_b, new_rep);
                 num_nodes += 2;
                 num_active -= 1;
                 num_clusters -= 1;
             }
             (Some(xb), Some(_yb), _) => {
                 // 4-way
+                let rem_a = cluster_rep(x, nodes);
+                let rem_b = cluster_rep(y, nodes);
                 let yb = nodes[y]
                     .nbr
                     .context("expected yb.nbr for 4-way agglomeration")?;
@@ -310,12 +314,31 @@ fn join_nodes(
                     "Join 4-way: xb {} x {} y {} yb {} num_active {}",
                     xb, x, y, yb, num_active
                 );
-                join4way(xb, x, y, yb, &mut joins, d, nodes, head, &mut num_nodes)?;
+                let new_rep = join4way(xb, x, y, yb, &mut joins, d, nodes, head, &mut num_nodes)?;
+                update_sx_after_merge(d, nodes, &reps, rem_a, rem_b, new_rep);
                 num_active -= 2;
                 num_clusters -= 1;
             }
         }
+
+        if n_tax >= 1_000 && num_clusters <= next_progress_report {
+            info!(
+                "SplitsTree4 ordering progress: {} clusters remaining (active {}, iteration {}, elapsed {:.1}s)",
+                num_clusters,
+                num_active,
+                iters,
+                ordering_started.elapsed().as_secs_f64()
+            );
+            next_progress_report = num_clusters.saturating_sub(250);
+        }
     }
+
+    info!(
+        "SplitsTree4 ordering finished in {:.3}s over {} iterations (sx_mode={:?})",
+        ordering_started.elapsed().as_secs_f64(),
+        iters,
+        sx_mode
+    );
 
     Ok(joins)
 }
@@ -358,6 +381,88 @@ fn snapshot_cluster_representatives(nodes: &[NetNode], head: usize) -> Vec<usize
         p_opt = nodes[p].next;
     }
     reps
+}
+
+#[inline]
+fn cluster_rep(p: usize, nodes: &[NetNode]) -> usize {
+    match nodes[p].nbr {
+        Some(nb) if nodes[nb].id < nodes[p].id => nb,
+        _ => p,
+    }
+}
+
+#[inline]
+fn set_cluster_sx(nodes: &mut [NetNode], rep: usize, sx: f64) {
+    nodes[rep].sx = sx;
+    if let Some(nb) = nodes[rep].nbr {
+        nodes[nb].sx = sx;
+    }
+}
+
+#[inline]
+fn avg_cluster_dist_to_singleton(mat: &[Vec<f64>], nodes: &[NetNode], p: usize, s: usize) -> f64 {
+    match nodes[p].nbr {
+        None => mat[nodes[p].id][nodes[s].id],
+        Some(pb) => 0.5 * (mat[nodes[p].id][nodes[s].id] + mat[nodes[pb].id][nodes[s].id]),
+    }
+}
+
+fn update_sx_after_join2(
+    mat: &[Vec<f64>],
+    nodes: &mut [NetNode],
+    reps_before: &[usize],
+    x: usize,
+    y: usize,
+    new_rep: usize,
+) {
+    let mut updates = Vec::with_capacity(reps_before.len().saturating_sub(2));
+    let mut new_sx = 0.0;
+
+    for &k in reps_before {
+        if k == x || k == y {
+            continue;
+        }
+        let old = nodes[k].sx;
+        let d_kx = avg_cluster_dist_to_singleton(mat, nodes, k, x);
+        let d_ky = avg_cluster_dist_to_singleton(mat, nodes, k, y);
+        let d_knew = 0.5 * (d_kx + d_ky);
+        updates.push((k, old - d_kx - d_ky + d_knew));
+        new_sx += d_knew;
+    }
+
+    for (k, sx) in updates {
+        set_cluster_sx(nodes, k, sx);
+    }
+    set_cluster_sx(nodes, new_rep, new_sx);
+}
+
+fn update_sx_after_merge(
+    mat: &[Vec<f64>],
+    nodes: &mut [NetNode],
+    reps_before: &[usize],
+    rem_a: usize,
+    rem_b: usize,
+    new_rep: usize,
+) {
+    let mut updates = Vec::with_capacity(reps_before.len().saturating_sub(2));
+    let mut new_sx = 0.0;
+
+    for &k in reps_before {
+        if k == rem_a || k == rem_b {
+            continue;
+        }
+        let old = nodes[k].sx;
+        let d_ka = avg_cluster_dist(mat, nodes, k, rem_a);
+        let d_kb = avg_cluster_dist(mat, nodes, k, rem_b);
+        let d_knew = avg_cluster_dist(mat, nodes, k, new_rep);
+        updates.push((k, old - d_ka - d_kb + d_knew));
+        new_sx += d_knew;
+    }
+
+    for (k, sx) in updates {
+        set_cluster_sx(nodes, k, sx);
+    }
+    set_cluster_sx(nodes, new_rep, new_sx);
 }
 
 /* ---------------------------- join primitives --------------------------- */
@@ -464,12 +569,12 @@ fn join4way(
     nodes: &mut [NetNode],
     head: usize,
     num_nodes: &mut usize,
-) -> Result<()> {
+) -> Result<usize> {
     // First 3-way
     let u = join3way(x2, x, y, joins, mat, nodes, head, num_nodes)?;
     *num_nodes += 2;
     // Second 3-way
-    let _ = join3way(
+    let final_u = join3way(
         u,
         nodes[u].nbr.context("u.nbr")?,
         y2,
@@ -480,7 +585,7 @@ fn join4way(
         num_nodes,
     )?;
     *num_nodes += 2;
-    Ok(())
+    Ok(final_u)
 }
 
 /* ---------------------------- scoring helpers --------------------------- */
@@ -604,15 +709,30 @@ fn compute_sx_parallel(d: &[Vec<f64>], nodes: &mut [NetNode], head: usize) {
     }
 }
 
-fn compute_rx(
-    z: usize,
+fn compute_rx_candidates(
     cx: usize,
     cy: usize,
     mat: &[Vec<f64>],
-    nodes: &[NetNode],
+    nodes: &mut [NetNode],
     head: usize,
-) -> f64 {
-    let mut rx = 0.0;
+) {
+    let mut targets = Vec::with_capacity(4);
+    targets.push(cx);
+    if let Some(cxb) = nodes[cx].nbr {
+        if !targets.contains(&cxb) {
+            targets.push(cxb);
+        }
+    }
+    if !targets.contains(&cy) {
+        targets.push(cy);
+    }
+    if let Some(cyb) = nodes[cy].nbr {
+        if !targets.contains(&cyb) {
+            targets.push(cyb);
+        }
+    }
+
+    let mut sums = vec![0.0f64; targets.len()];
     let mut p_opt = nodes[head].next;
     while let Some(p) = p_opt {
         let cond = p == cx
@@ -620,11 +740,15 @@ fn compute_rx(
             || p == cy
             || nodes[cy].nbr == Some(p)
             || nodes[p].nbr.is_none();
-        let term = mat[nodes[z].id][nodes[p].id];
-        rx += if cond { term } else { term / 2.0 };
+        for (i, &z) in targets.iter().enumerate() {
+            let term = mat[nodes[z].id][nodes[p].id];
+            sums[i] += if cond { term } else { term / 2.0 };
+        }
         p_opt = nodes[p].next;
     }
-    rx
+    for (i, &z) in targets.iter().enumerate() {
+        nodes[z].rx = sums[i];
+    }
 }
 
 /* ---------------------------- expansion phase --------------------------- */
