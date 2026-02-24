@@ -3,9 +3,7 @@ use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use fastnnt::ordering::ordering_splitstree4::{
-    SxMode, compute_order_splits_tree4_with_sx,
-};
+use fastnnt::ordering::ordering_splitstree4::{SxMode, compute_order_splits_tree4_with_sx};
 use rayon::ThreadPoolBuilder;
 
 fn make_distance_matrix(n: usize, seed: u64) -> Array2<f64> {
@@ -42,11 +40,8 @@ fn bench_splitstree4_sx(c: &mut Criterion) {
             group.bench_with_input(id, &dist, |b, d| {
                 b.iter(|| {
                     pool.install(|| {
-                        let _ = compute_order_splits_tree4_with_sx(
-                            black_box(d),
-                            SxMode::Parallel,
-                        )
-                        .unwrap();
+                        let _ = compute_order_splits_tree4_with_sx(black_box(d), SxMode::Parallel)
+                            .unwrap();
                     });
                 });
             });

@@ -3,6 +3,7 @@ use petgraph::Undirected;
 use petgraph::graph::{Graph, NodeIndex};
 use rayon::prelude::*;
 use std::cmp::min;
+use std::time::Instant;
 
 // --- components: always singleton or pair ---
 #[derive(Clone, Copy, Debug)]
@@ -54,7 +55,6 @@ impl Component {
     fn second(&self) -> usize {
         self.second.expect("not a pair")
     }
-
 }
 
 /// Computes the circular ordering using the 2023 NeighborNet cycle algorithm.
@@ -91,11 +91,17 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> Vec<usize> {
     }
 
     // ---- Core loop ----
+    let ordering_started = Instant::now();
+    let mut pair_search_sec = 0.0_f64;
+    let mut iters = 0usize;
+    let mut next_progress_report = n_tax.saturating_sub(250);
     while components.len() >= 2 {
-        debug!("Updated distance matrix D:\n{:?}", d);
+        iters += 1;
 
         // Select closest pair of components (P,Q) per adjusted distance
+        let t_pair = Instant::now();
         let (ip, iq) = select_closest_pair(&components, &d);
+        pair_search_sec += t_pair.elapsed().as_secs_f64();
 
         let (p_comp, q_comp) = (components[ip], components[iq]);
         debug!("Selected: P={} Q={}", p_comp.first(), q_comp.first());
@@ -200,6 +206,16 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> Vec<usize> {
                 q_comp.size()
             );
         }
+
+        if n_tax >= 1_000 && components.len() <= next_progress_report {
+            info!(
+                "Huson2023 ordering progress: {} components remaining (iteration {}, elapsed {:.1}s)",
+                components.len(),
+                iters,
+                ordering_started.elapsed().as_secs_f64()
+            );
+            next_progress_report = components.len().saturating_sub(250);
+        }
     }
 
     // Close cycle with the last remaining pair
@@ -208,6 +224,12 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> Vec<usize> {
     graph.add_edge(node_map[p], node_map[q], ());
     debug!("Final edge: P={} Q={}", p, q);
     debug!("Graph: {:?}", graph);
+    info!(
+        "Huson2023 ordering finished in {:.3}s over {} iterations (closest-pair search {:.3}s)",
+        ordering_started.elapsed().as_secs_f64(),
+        iters,
+        pair_search_sec
+    );
 
     extract_ordering(&graph, &node_map)
 }
@@ -265,55 +287,35 @@ fn select_closest_pair(components: &[Component], d: &Array2<f64>) -> (usize, usi
         }
     }
 
-    let (_best_val, best_ip, best_iq) = (0..m)
-        .into_par_iter()
-        .filter(|&ip| ip + 1 < m)
-        .map(|ip| {
-            let p = components[ip];
-            let mut local_best_val = f64::INFINITY;
-            let mut local_best_iq = ip + 1;
+    // First pass: component totals T_i = sum_{s != i} avg(i, s), O(m^2).
+    let mut totals = vec![0.0_f64; m];
+    for ip in 0..m {
+        for iq in (ip + 1)..m {
+            let pq = avg_d_comp_comp(d, &components[ip], &components[iq]);
+            totals[ip] += pq;
+            totals[iq] += pq;
+        }
+    }
 
-            for iq in (ip + 1)..m {
-                let q = components[iq];
-
-                // sums over all S != P,Q
-                let mut sum_p = 0.0;
-                let mut sum_q = 0.0;
-                for is in 0..m {
-                    if is == ip || is == iq {
-                        continue;
-                    }
-                    let s = components[is];
-                    sum_p += avg_d_comp_comp(d, &p, &s);
-                    sum_q += avg_d_comp_comp(d, &q, &s);
-                }
-
-                let pq = avg_d_comp_comp(d, &p, &q);
-                let adjusted = (m as f64 - 2.0) * pq - sum_p - sum_q;
-
-                if adjusted < local_best_val {
-                    local_best_val = adjusted;
-                    local_best_iq = iq;
-                }
+    // Second pass: adjusted(i,j) = m*avg(i,j) - T_i - T_j, O(m^2).
+    let mut best_val = f64::INFINITY;
+    let mut best_ip = 0usize;
+    let mut best_iq = 1usize;
+    for ip in 0..m {
+        for iq in (ip + 1)..m {
+            let pq = avg_d_comp_comp(d, &components[ip], &components[iq]);
+            let adjusted = (m as f64) * pq - totals[ip] - totals[iq];
+            let cmp = adjusted.total_cmp(&best_val);
+            if cmp == std::cmp::Ordering::Less
+                || (cmp == std::cmp::Ordering::Equal
+                    && (ip < best_ip || (ip == best_ip && iq < best_iq)))
+            {
+                best_val = adjusted;
+                best_ip = ip;
+                best_iq = iq;
             }
-
-            (local_best_val, ip, local_best_iq)
-        })
-        .reduce(
-            || (f64::INFINITY, 0usize, 1usize),
-            |a, b| {
-                let cmp = a.0.total_cmp(&b.0);
-                if cmp == std::cmp::Ordering::Less {
-                    a
-                } else if cmp == std::cmp::Ordering::Greater {
-                    b
-                } else if a.1 < b.1 || (a.1 == b.1 && a.2 <= b.2) {
-                    a
-                } else {
-                    b
-                }
-            },
-        );
+        }
+    }
 
     // Ensure |P| <= |Q|
     if components[best_ip].size() > components[best_iq].size() {
@@ -340,10 +342,7 @@ fn select_closest_1_vs_2(ip: usize, iq: usize, d: &Array2<f64>, components: &[Co
                 avg_d_p_comp(d, q2, &other),
             )
         })
-        .reduce(
-            || (0.0, 0.0, 0.0),
-            |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
-        );
+        .reduce(|| (0.0, 0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2));
 
     let p_r = d[[q1, p]] + d[[q2, p]] + p_r_extra;
     let q1_r = d[[q1, q2]] + d[[q1, p]] + q1_r_extra;

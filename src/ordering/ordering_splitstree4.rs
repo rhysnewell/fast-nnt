@@ -60,11 +60,7 @@ pub fn compute_order_splits_tree4_with_sx(
         }
     }
 
-    debug!("Matrix: ");
-    for row in &mat {
-        debug!("{:?}", row);
-    }
-    debug!("Matrix size: {:?} {}", mat.len(), mat[0].len());
+    debug!("Working matrix allocated: {}x{}", mat.len(), mat[0].len());
     // 3) Agglomerate
     let joins = join_nodes(&mut mat, &mut nodes, 0, n_tax, sx_mode)?;
 
@@ -73,7 +69,11 @@ pub fn compute_order_splits_tree4_with_sx(
 }
 
 fn default_sx_mode(n_tax: usize) -> SxMode {
-    if n_tax < 300 { SxMode::Serial } else { SxMode::Parallel }
+    if n_tax < 300 {
+        SxMode::Serial
+    } else {
+        SxMode::Parallel
+    }
 }
 
 /* ---------------------------- core structures ---------------------------- */
@@ -191,7 +191,9 @@ fn join_nodes(
                     let dpq = avg_cluster_dist(d, nodes, p, q);
                     let qpq = (num_clusters as f64 - 2.0) * dpq - nodes[p].sx - nodes[q].sx;
                     // System.out.debug("\t"+"["+p.id+","+q.id+"] \t = \t "+Qpq);
-                    debug!("\t[{},{}] \t = \t {}", nodes[p].id, nodes[q].id, qpq);
+                    if num_clusters <= 40 {
+                        debug!("\t[{},{}] \t = \t {}", nodes[p].id, nodes[q].id, qpq);
+                    }
 
                     if c_x.is_none() || fuzzy_lt(qpq, best) {
                         c_x = Some(p);
@@ -557,7 +559,11 @@ fn compute_sx_parallel(d: &[Vec<f64>], nodes: &mut [NetNode], head: usize) {
     let nodes_ro = &*nodes;
     let eligible: Vec<bool> = actives
         .iter()
-        .map(|&p| nodes_ro[p].nbr.map_or(true, |nb| nodes_ro[nb].id > nodes_ro[p].id))
+        .map(|&p| {
+            nodes_ro[p]
+                .nbr
+                .map_or(true, |nb| nodes_ro[nb].id > nodes_ro[p].id)
+        })
         .collect();
 
     let deltas = (0..actives.len())

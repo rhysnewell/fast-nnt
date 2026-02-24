@@ -51,7 +51,9 @@ fn bench_least_squares_fit(c: &mut Criterion) {
     for &ntax in &[50usize, 100, 200] {
         let mut rng = StdRng::seed_from_u64(7);
         let nsplits = ntax * 2;
-        let splits: Vec<ASplit> = (0..nsplits).map(|_| make_random_split(ntax, &mut rng)).collect();
+        let splits: Vec<ASplit> = (0..nsplits)
+            .map(|_| make_random_split(ntax, &mut rng))
+            .collect();
         let distances = distances_from_splits(ntax, &splits);
 
         group.bench_with_input(BenchmarkId::new("fit", ntax), &distances, |b, d| {

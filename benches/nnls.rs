@@ -29,10 +29,8 @@ fn bench_nnls(c: &mut Criterion) {
         cycle.extend(1..=n);
 
         let max_threads = num_cpus::get();
-        let thread_counts: Vec<usize> = [1usize]
-            .into_iter()
-            .filter(|&t| t <= max_threads)
-            .collect();
+        let thread_counts: Vec<usize> =
+            [1usize].into_iter().filter(|&t| t <= max_threads).collect();
 
         for &threads in &thread_counts {
             let pool = ThreadPoolBuilder::new()

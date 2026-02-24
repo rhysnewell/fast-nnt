@@ -6,8 +6,10 @@ pub mod ordering_splitstree4;
 
 // make clap enum
 #[derive(ValueEnum, Clone, Debug)]
+#[clap(rename_all = "kebab-case")]
 pub enum OrderingMethod {
     Huson2023,
+    #[clap(alias = "splitstree4")]
     SplitsTree4,
 }
 

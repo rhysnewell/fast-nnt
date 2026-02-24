@@ -4,7 +4,11 @@ use log::{debug, info, warn};
 use ndarray::Array2;
 use rayon::prelude::*;
 use serde::Serialize;
-use std::{fs, path::Path, time::Instant};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use crate::algorithms::equal_angle::{EqualAngleOpts, equal_angle_apply};
 use crate::cli::NeighbourNetArgs;
@@ -19,7 +23,9 @@ use crate::splits::asplit::ASplit;
 use crate::utils::compute_least_squares_fit;
 use crate::weights::InferenceMethod;
 use crate::weights::active_set_weights::{NNLSParams, compute_asplits};
-use crate::weights::splitstree4_weights::{DEFAULT_CUTOFF, compute_splits as compute_splitstree4_splits};
+use crate::weights::splitstree4_weights::{
+    DEFAULT_CUTOFF, compute_splits as compute_splitstree4_splits,
+};
 
 pub struct NeighbourNet {
     out_dir: String,
@@ -441,7 +447,13 @@ impl NeighbourNet {
         };
 
         // NEXUS
-        let nexus_path = Path::new(&out_dir).join(format!("{}.nex", self.args.output_prefix));
+        let nexus_path = self.resolve_nexus_path();
+        if let Some(parent) = nexus_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+        }
         write_nexus_all_to_path(
             &nexus_path,
             labels,
@@ -469,6 +481,28 @@ impl NeighbourNet {
         // info!("  nx.draw_circular(G)");
 
         Ok(())
+    }
+
+    /// Resolve output `.nex` path from `-o/--output-prefix`.
+    ///
+    /// - If `output_prefix` is a plain name (no directory components), write into `out_dir`.
+    /// - If it contains a path (relative or absolute), treat it as explicit destination stem/path.
+    fn resolve_nexus_path(&self) -> PathBuf {
+        let prefix_path = Path::new(&self.args.output_prefix);
+        let has_explicit_path = prefix_path.is_absolute()
+            || prefix_path
+                .parent()
+                .is_some_and(|p| !p.as_os_str().is_empty());
+
+        let mut nexus_path = if has_explicit_path {
+            prefix_path.to_path_buf()
+        } else {
+            Path::new(&self.out_dir).join(prefix_path)
+        };
+        if nexus_path.extension().is_none() {
+            nexus_path.set_extension("nex");
+        }
+        nexus_path
     }
 
     /* ───────────── run_log helpers ───────────── */
