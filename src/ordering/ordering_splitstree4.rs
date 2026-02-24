@@ -165,29 +165,11 @@ fn join_nodes(
             let mut c_y: Option<usize> = None;
             let mut best = 0.0_f64; // Java seeds to 0. First candidate sets it.
             let mut best_leafs: u8 = 0;
+            let reps = snapshot_cluster_representatives(nodes, head);
 
-            let mut p_opt = nodes[head].next;
-            while let Some(p) = p_opt {
-                // evaluate only one per cluster (keep smaller id)
-                if nodes[p].nbr.map_or(false, |nb| nodes[nb].id < nodes[p].id) {
-                    p_opt = nodes[p].next;
-                    continue;
-                }
-
-                let mut q_opt = nodes[head].next;
-                while let Some(q) = q_opt {
-                    if q == p {
-                        break;
-                    }
-                    if nodes[q].nbr.map_or(false, |nb| nodes[nb].id < nodes[q].id) {
-                        q_opt = nodes[q].next;
-                        continue;
-                    }
-                    if nodes[q].nbr == Some(p) {
-                        q_opt = nodes[q].next;
-                        continue;
-                    }
-
+            for i in 0..reps.len() {
+                let p = reps[i];
+                for &q in &reps[..i] {
                     let dpq = avg_cluster_dist(d, nodes, p, q);
                     let qpq = (num_clusters as f64 - 2.0) * dpq - nodes[p].sx - nodes[q].sx;
                     // System.out.debug("\t"+"["+p.id+","+q.id+"] \t = \t "+Qpq);
@@ -210,10 +192,7 @@ fn join_nodes(
                             best_leafs = leafs;
                         }
                     }
-
-                    q_opt = nodes[q].next;
                 }
-                p_opt = nodes[p].next;
             }
 
             (
@@ -366,6 +345,19 @@ fn better_tie_pair(p: usize, q: usize, cx: usize, cy: usize, nodes: &[NetNode]) 
 fn pair_key(a: usize, b: usize, nodes: &[NetNode]) -> (usize, usize) {
     let (ia, ib) = (nodes[a].id, nodes[b].id);
     if ia <= ib { (ia, ib) } else { (ib, ia) }
+}
+
+#[inline]
+fn snapshot_cluster_representatives(nodes: &[NetNode], head: usize) -> Vec<usize> {
+    let mut reps = Vec::new();
+    let mut p_opt = nodes[head].next;
+    while let Some(p) = p_opt {
+        if nodes[p].nbr.map_or(true, |nb| nodes[nb].id > nodes[p].id) {
+            reps.push(p);
+        }
+        p_opt = nodes[p].next;
+    }
+    reps
 }
 
 /* ---------------------------- join primitives --------------------------- */
