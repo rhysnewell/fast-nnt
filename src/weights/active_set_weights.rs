@@ -677,6 +677,13 @@ fn cgnr(
     );
 
     zero_negative_entries(x);
+    let free_indices = collect_free_indices(active_set);
+    if free_indices.is_empty() {
+        return Ok(1);
+    }
+    let nfree = free_indices.len();
+    let mut p_free = vec![0.0; nfree];
+    let mut z_free = vec![0.0; nfree];
 
     // r = d - A x
     calc_ax(x, r, n);
@@ -684,32 +691,45 @@ fn cgnr(
         .zip(d.iter())
         .for_each(|(ri, &di)| *ri = di - *ri);
 
-    // z = Aᵀ r; mask actives
+    // z = Aᵀ r over the free set only
     calc_atx(r, z, n);
-    mask_elements_branchless(z, active_set);
-    p.copy_from_slice(z);
+    gather_by_index(z, &free_indices, &mut z_free);
+    p_free.copy_from_slice(&z_free);
 
-    let mut ztz = sum_array_squared(z, n);
+    let mut ztz = sum_array_squared_masked(z, active_set, n);
+    if ztz <= EPS || !ztz.is_finite() {
+        return Ok(1);
+    }
     let mut k = 1usize;
     let log_cgnr_progress = max_iters >= 1024 && x.len() > 1_000_000;
 
     loop {
+        p.fill(0.0);
+        scatter_by_index(&p_free, &free_indices, p);
+
         // w = A p
         calc_ax(p, w, n);
         let denom = sum_array_squared(w, n);
+        if denom <= EPS || !denom.is_finite() {
+            break;
+        }
         let alpha = ztz / denom;
 
         // x += alpha p; r -= alpha w
-        for i in 0..x.len() {
-            x[i] += alpha * p[i];
+        for (slot, &idx) in free_indices.iter().enumerate() {
+            x[idx] += alpha * p_free[slot];
+        }
+        for i in 0..r.len() {
             r[i] -= alpha * w[i];
         }
 
-        // z = Aᵀ r; mask
+        // z = Aᵀ r over the free set only
         calc_atx(r, z, n);
-        mask_elements_branchless(z, active_set);
-
-        let ztz_new = sum_array_squared(z, n);
+        gather_by_index(z, &free_indices, &mut z_free);
+        let ztz_new = sum_array_squared_masked(z, active_set, n);
+        if ztz <= EPS || !ztz.is_finite() {
+            break;
+        }
         let beta = ztz_new / ztz;
         if log_cgnr_progress && (k % 256) == 0 {
             info!(
@@ -729,8 +749,8 @@ fn cgnr(
         //     p[i] = z[i] + beta * p[i];
         // }
         // ztz = ztz2;
-        for i in 0..p.len() {
-            p[i] = z[i] + beta * p[i]; // correct: z + beta * old_p
+        for i in 0..nfree {
+            p_free[i] = z_free[i] + beta * p_free[i]; // correct: z + beta * old_p
         }
         // debug!("sum p {:?} sum z {:?}", p.iter().sum::<f64>(), z.iter().sum::<f64>());
 
@@ -747,6 +767,53 @@ fn cgnr(
         }
     }
     Ok(k)
+}
+
+#[inline]
+fn collect_free_indices(active_set: &[bool]) -> Vec<usize> {
+    active_set
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &is_active)| (!is_active).then_some(i))
+        .collect()
+}
+
+#[inline]
+fn gather_by_index(src: &[f64], indices: &[usize], dst: &mut [f64]) {
+    debug_assert_eq!(indices.len(), dst.len());
+    for (slot, &idx) in indices.iter().enumerate() {
+        dst[slot] = src[idx];
+    }
+}
+
+#[inline]
+fn scatter_by_index(src: &[f64], indices: &[usize], dst: &mut [f64]) {
+    debug_assert_eq!(indices.len(), src.len());
+    for (slot, &idx) in indices.iter().enumerate() {
+        dst[idx] = src[slot];
+    }
+}
+
+#[inline]
+fn sum_array_squared_masked(x: &[f64], active_set: &[bool], n: usize) -> f64 {
+    let expected = n * (n - 1) / 2;
+    debug_assert_eq!(x.len(), expected);
+    debug_assert_eq!(active_set.len(), expected);
+
+    let mut total = 0.0f64;
+    let mut index = 0usize;
+    for i in 1..=n {
+        let mut s_i = 0.0f64;
+        for _j in (i + 1)..=n {
+            if !active_set[index] {
+                let v = x[index];
+                s_i += v * v;
+            }
+            index += 1;
+        }
+        total += s_i;
+    }
+    total
 }
 
 /* ===================== Indexing ===================== */
@@ -773,6 +840,7 @@ mod tests {
 
     use super::*;
     use ndarray::{Array2, arr2};
+    use std::time::Instant;
 
     fn build_pairs_from_fn(n: usize, f: impl Fn(usize, usize) -> f64) -> Vec<f64> {
         let mut x = vec![0.0; n * (n - 1) / 2];
@@ -921,6 +989,114 @@ mod tests {
             }
         }
         d
+    }
+
+    fn cgnr_reference_full_space(
+        x: &mut [f64],
+        d: &[f64],
+        active_set: &[bool],
+        n: usize,
+        max_iters: usize,
+        tol: f64,
+    ) -> usize {
+        let npairs = x.len();
+        let mut p = vec![0.0; npairs];
+        let mut r = vec![0.0; npairs];
+        let mut z = vec![0.0; npairs];
+        let mut w = vec![0.0; npairs];
+
+        zero_negative_entries(x);
+
+        calc_ax(x, &mut r, n);
+        r.iter_mut()
+            .zip(d.iter())
+            .for_each(|(ri, &di)| *ri = di - *ri);
+
+        calc_atx(&r, &mut z, n);
+        mask_elements_branchless(&mut z, active_set);
+        p.copy_from_slice(&z);
+
+        let mut ztz = sum_array_squared(&z, n);
+        if ztz <= EPS || !ztz.is_finite() {
+            return 1;
+        }
+
+        let mut k = 1usize;
+        loop {
+            calc_ax(&p, &mut w, n);
+            let denom = sum_array_squared(&w, n);
+            if denom <= EPS || !denom.is_finite() {
+                break;
+            }
+            let alpha = ztz / denom;
+
+            for i in 0..x.len() {
+                x[i] += alpha * p[i];
+                r[i] -= alpha * w[i];
+            }
+
+            calc_atx(&r, &mut z, n);
+            mask_elements_branchless(&mut z, active_set);
+            let ztz_new = sum_array_squared(&z, n);
+            if ztz <= EPS || !ztz.is_finite() {
+                break;
+            }
+            let beta = ztz_new / ztz;
+
+            if ztz_new < tol || k >= max_iters {
+                break;
+            }
+            for i in 0..p.len() {
+                p[i] = z[i] + beta * p[i];
+            }
+
+            ztz = ztz_new;
+            k += 1;
+        }
+        k
+    }
+
+    #[test]
+    fn cgnr_reduced_space_matches_full_space_reference() {
+        let n = 9usize;
+        let npairs = n * (n - 1) / 2;
+        let x_seed = build_pairs_from_fn(n, |i, j| ((3 * i + 5 * j) as f64).sin().abs() + 0.05);
+
+        let mut d = vec![0.0; npairs];
+        calc_ax(&x_seed, &mut d, n);
+
+        let mut x0 = vec![0.0; npairs];
+        calc_ainv_y(&d, &mut x0, n);
+        zero_negative_entries(&mut x0);
+
+        let mut active = vec![false; npairs];
+        get_active_entries(&x0, &mut active);
+        if active.iter().all(|&a| a) {
+            active[0] = false;
+            x0[0] = x_seed[0].max(1e-6);
+        }
+
+        let mut x_new = x0.clone();
+        let mut x_ref = x0.clone();
+
+        let mut scratch = Scratch::new(npairs);
+        let it_new = cgnr(
+            &mut x_new,
+            &d,
+            &active,
+            n,
+            200,
+            1e-14,
+            &mut scratch,
+            None,
+            Instant::now(),
+            u64::MAX,
+        )
+        .unwrap();
+        let it_ref = cgnr_reference_full_space(&mut x_ref, &d, &active, n, 200, 1e-14);
+
+        assert_eq!(it_new, it_ref, "iteration count changed");
+        compare_float_array(&x_new, &x_ref, 1e-10);
     }
 
     #[test]
