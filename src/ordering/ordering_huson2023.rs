@@ -89,6 +89,7 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> Vec<usize> {
             d[[i, j]] = dist[[i - 1, j - 1]];
         }
     }
+    let mut pair_search = PairSearchState::new(&components, &d);
 
     // ---- Core loop ----
     let ordering_started = Instant::now();
@@ -100,8 +101,18 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> Vec<usize> {
 
         // Select closest pair of components (P,Q) per adjusted distance
         let t_pair = Instant::now();
-        let (ip, iq) = select_closest_pair(&components, &d);
+        let (ip, iq) = pair_search.select_closest_pair(&components, &d);
         pair_search_sec += t_pair.elapsed().as_secs_f64();
+        let m_old = components.len();
+        let mut old_avg_ip = vec![0.0_f64; m_old];
+        let mut old_avg_iq = vec![0.0_f64; m_old];
+        for k in 0..m_old {
+            if k == ip || k == iq {
+                continue;
+            }
+            old_avg_ip[k] = avg_d_comp_comp(&d, &components[k], &components[ip]);
+            old_avg_iq[k] = avg_d_comp_comp(&d, &components[k], &components[iq]);
+        }
 
         let (p_comp, q_comp) = (components[ip], components[iq]);
         debug!("Selected: P={} Q={}", p_comp.first(), q_comp.first());
@@ -206,6 +217,7 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> Vec<usize> {
                 q_comp.size()
             );
         }
+        pair_search.update_after_merge(&components, &d, ip, iq, &old_avg_ip, &old_avg_iq);
 
         if n_tax >= 1_000 && components.len() <= next_progress_report {
             info!(
@@ -275,54 +287,266 @@ fn avg_d_p_comp(d: &Array2<f64>, p: usize, q: &Component) -> f64 {
     }
 }
 
-/// Serial, deterministic closest-pair selection (matches Java)
-fn select_closest_pair(components: &[Component], d: &Array2<f64>) -> (usize, usize) {
-    let m = components.len();
-    if m == 2 {
-        // ensure |P| <= |Q|
-        if components[0].size() < components[1].size() {
-            return (0, 1);
-        } else {
-            return (1, 0);
+#[derive(Clone, Copy, Debug)]
+struct RowMinRaw {
+    partner: usize,
+    value: f64,
+    valid: bool,
+}
+
+impl Default for RowMinRaw {
+    fn default() -> Self {
+        Self {
+            partner: 0,
+            value: f64::INFINITY,
+            valid: false,
         }
     }
+}
 
-    // First pass: component totals T_i = sum_{s != i} avg(i, s), O(m^2).
-    let mut totals = vec![0.0_f64; m];
-    for ip in 0..m {
-        for iq in (ip + 1)..m {
-            let pq = avg_d_comp_comp(d, &components[ip], &components[iq]);
-            totals[ip] += pq;
-            totals[iq] += pq;
-        }
-    }
+struct PairSearchState {
+    totals: Vec<f64>,
+    row_min: Vec<RowMinRaw>,
+}
 
-    // Second pass: adjusted(i,j) = m*avg(i,j) - T_i - T_j, O(m^2).
-    let mut best_val = f64::INFINITY;
-    let mut best_ip = 0usize;
-    let mut best_iq = 1usize;
-    for ip in 0..m {
-        for iq in (ip + 1)..m {
-            let pq = avg_d_comp_comp(d, &components[ip], &components[iq]);
-            let adjusted = (m as f64) * pq - totals[ip] - totals[iq];
-            let cmp = adjusted.total_cmp(&best_val);
-            if cmp == std::cmp::Ordering::Less
-                || (cmp == std::cmp::Ordering::Equal
-                    && (ip < best_ip || (ip == best_ip && iq < best_iq)))
-            {
-                best_val = adjusted;
-                best_ip = ip;
-                best_iq = iq;
+impl PairSearchState {
+    fn new(components: &[Component], d: &Array2<f64>) -> Self {
+        let m = components.len();
+        let mut totals = vec![0.0_f64; m];
+        for i in 0..m {
+            for j in (i + 1)..m {
+                let pq = avg_d_comp_comp(d, &components[i], &components[j]);
+                totals[i] += pq;
+                totals[j] += pq;
             }
         }
+
+        let mut row_min = vec![RowMinRaw::default(); m];
+        for i in 0..m {
+            Self::recompute_row_min_raw(i, components, d, &mut row_min);
+        }
+
+        Self { totals, row_min }
     }
 
-    // Ensure |P| <= |Q|
-    if components[best_ip].size() > components[best_iq].size() {
-        return (best_iq, best_ip);
+    fn select_closest_pair(&mut self, components: &[Component], d: &Array2<f64>) -> (usize, usize) {
+        let m = components.len();
+        if m == 2 {
+            if components[0].size() < components[1].size() {
+                return (0, 1);
+            } else {
+                return (1, 0);
+            }
+        }
+
+        debug_assert_eq!(self.totals.len(), m);
+        debug_assert_eq!(self.row_min.len(), m);
+        let max_total = self
+            .totals
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        let m_f = m as f64;
+
+        let mut row_bounds: Vec<(f64, usize)> = Vec::with_capacity(m);
+        for i in 0..m {
+            let min_raw = self.ensure_row_min_raw(i, components, d);
+            let lb = m_f * min_raw - self.totals[i] - max_total;
+            row_bounds.push((lb, i));
+        }
+        row_bounds.sort_by(|a, b| {
+            let c = a.0.total_cmp(&b.0);
+            if c == std::cmp::Ordering::Equal {
+                a.1.cmp(&b.1)
+            } else {
+                c
+            }
+        });
+
+        let mut best_val = f64::INFINITY;
+        let mut best_pair = (0usize, 1usize);
+        for (lb, i) in row_bounds {
+            if best_val.is_finite() && lb.total_cmp(&best_val) == std::cmp::Ordering::Greater {
+                break;
+            }
+            let (row_val, row_pair) = self.best_adjusted_for_row(i, components, d);
+            if better_adjusted_candidate(row_val, row_pair, best_val, best_pair) {
+                best_val = row_val;
+                best_pair = row_pair;
+            }
+        }
+
+        let (best_ip, best_iq) = best_pair;
+        if components[best_ip].size() > components[best_iq].size() {
+            (best_iq, best_ip)
+        } else {
+            (best_ip, best_iq)
+        }
     }
 
-    (best_ip, best_iq)
+    fn best_adjusted_for_row(
+        &self,
+        i: usize,
+        components: &[Component],
+        d: &Array2<f64>,
+    ) -> (f64, (usize, usize)) {
+        let m = components.len();
+        let m_f = m as f64;
+        let mut row_val = f64::INFINITY;
+        let mut row_pair = (0usize, 1usize);
+        for j in 0..m {
+            if j == i {
+                continue;
+            }
+            let pq = avg_d_comp_comp(d, &components[i], &components[j]);
+            let adjusted = m_f * pq - self.totals[i] - self.totals[j];
+            let pair = if i < j { (i, j) } else { (j, i) };
+            if better_adjusted_candidate(adjusted, pair, row_val, row_pair) {
+                row_val = adjusted;
+                row_pair = pair;
+            }
+        }
+        (row_val, row_pair)
+    }
+
+    fn ensure_row_min_raw(&mut self, i: usize, components: &[Component], d: &Array2<f64>) -> f64 {
+        if !self.row_min[i].valid
+            || self.row_min[i].partner == i
+            || self.row_min[i].partner >= components.len()
+        {
+            Self::recompute_row_min_raw(i, components, d, &mut self.row_min);
+        }
+        self.row_min[i].value
+    }
+
+    fn recompute_row_min_raw(
+        i: usize,
+        components: &[Component],
+        d: &Array2<f64>,
+        row_min: &mut [RowMinRaw],
+    ) {
+        let m = components.len();
+        let mut best_partner = usize::MAX;
+        let mut best_val = f64::INFINITY;
+        for j in 0..m {
+            if i == j {
+                continue;
+            }
+            let v = avg_d_comp_comp(d, &components[i], &components[j]);
+            let c = v.total_cmp(&best_val);
+            if c == std::cmp::Ordering::Less || (c == std::cmp::Ordering::Equal && j < best_partner)
+            {
+                best_val = v;
+                best_partner = j;
+            }
+        }
+        row_min[i] = RowMinRaw {
+            partner: best_partner,
+            value: best_val,
+            valid: true,
+        };
+    }
+
+    fn update_after_merge(
+        &mut self,
+        components_new: &[Component],
+        d: &Array2<f64>,
+        ip_old: usize,
+        iq_old: usize,
+        old_avg_ip: &[f64],
+        old_avg_iq: &[f64],
+    ) {
+        let m_old = self.totals.len();
+        let m_new = components_new.len();
+        debug_assert_eq!(old_avg_ip.len(), m_old);
+        debug_assert_eq!(old_avg_iq.len(), m_old);
+        debug_assert_eq!(m_new + 1, m_old);
+        if m_new == 0 {
+            self.totals.clear();
+            self.row_min.clear();
+            return;
+        }
+
+        let map_idx = |idx: usize| -> Option<usize> {
+            if idx == iq_old {
+                None
+            } else if idx > iq_old {
+                Some(idx - 1)
+            } else {
+                Some(idx)
+            }
+        };
+
+        let new_ip = map_idx(ip_old).expect("ip must remain after merge");
+        let mut new_totals = vec![0.0_f64; m_new];
+        let mut ip_total = 0.0_f64;
+        for old_k in 0..m_old {
+            if old_k == ip_old || old_k == iq_old {
+                continue;
+            }
+            let new_k = map_idx(old_k).expect("non-removed index must map");
+            let new_avg = avg_d_comp_comp(d, &components_new[new_k], &components_new[new_ip]);
+            ip_total += new_avg;
+            new_totals[new_k] =
+                self.totals[old_k] - old_avg_ip[old_k] - old_avg_iq[old_k] + new_avg;
+        }
+        new_totals[new_ip] = ip_total;
+        self.totals = new_totals;
+
+        let mut new_row_min = vec![RowMinRaw::default(); m_new];
+        for old_k in 0..m_old {
+            if old_k == iq_old {
+                continue;
+            }
+            let new_k = map_idx(old_k).expect("non-removed index must map");
+            if old_k == ip_old {
+                continue;
+            }
+            let old_entry = self.row_min[old_k];
+            if !old_entry.valid || old_entry.partner == ip_old || old_entry.partner == iq_old {
+                continue;
+            }
+            let new_partner = map_idx(old_entry.partner).expect("valid partner must map");
+            if new_partner == new_k {
+                continue;
+            }
+            new_row_min[new_k] = RowMinRaw {
+                partner: new_partner,
+                value: old_entry.value,
+                valid: true,
+            };
+        }
+
+        for k in 0..m_new {
+            if k == new_ip || !new_row_min[k].valid {
+                continue;
+            }
+            let cand = avg_d_comp_comp(d, &components_new[k], &components_new[new_ip]);
+            let entry = &mut new_row_min[k];
+            let c = cand.total_cmp(&entry.value);
+            if c == std::cmp::Ordering::Less
+                || (c == std::cmp::Ordering::Equal && new_ip < entry.partner)
+            {
+                entry.partner = new_ip;
+                entry.value = cand;
+            }
+        }
+        self.row_min = new_row_min;
+    }
+}
+
+#[inline]
+fn better_adjusted_candidate(
+    cand_val: f64,
+    cand_pair: (usize, usize),
+    best_val: f64,
+    best_pair: (usize, usize),
+) -> bool {
+    let c = cand_val.total_cmp(&best_val);
+    c == std::cmp::Ordering::Less
+        || (c == std::cmp::Ordering::Equal
+            && (cand_pair.0 < best_pair.0
+                || (cand_pair.0 == best_pair.0 && cand_pair.1 < best_pair.1)))
 }
 
 fn select_closest_1_vs_2(ip: usize, iq: usize, d: &Array2<f64>, components: &[Component]) -> usize {
