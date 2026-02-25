@@ -59,6 +59,10 @@ harness = false
 name = "ordering_matrix"
 harness = false
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 [[bin]]
 name = "fast_nnt"
 path = "src/bin/fast_nnt.rs"

@@ -45,6 +45,7 @@ impl PackedTriIndex {
     }
 
     #[inline]
+    #[allow(dead_code)]
     fn pair_idx(&self, i: usize, j: usize) -> usize {
         debug_assert!(1 <= i && i < j && j <= self.n);
         self.row_offsets[i] + (j - i - 1)
@@ -279,6 +280,20 @@ fn active_set_method(
     } else {
         debug!("active set initialized (npairs={})", npairs);
     }
+
+    // Compute Jacobi preconditioner for CGNR (only for large problems)
+    let precond = if !small_problem {
+        let t0 = Instant::now();
+        let diag = estimate_ata_diagonal(tri_idx);
+        info!(
+            "NNLS preconditioner computed in {:.2}s",
+            t0.elapsed().as_secs_f64()
+        );
+        Some(diag)
+    } else {
+        None
+    };
+
     let start = Instant::now();
     loop {
         debug!("Outer Loop {}", k_outer);
@@ -293,6 +308,7 @@ fn active_set_method(
                 params.cgnr_tolerance,
                 scratch,
                 tri_idx,
+                precond.as_deref(),
                 &mut kernel_perf,
                 track_kernel_perf,
                 progress,
@@ -507,37 +523,48 @@ fn calc_ax(x: &[f64], y: &mut [f64], n: usize) {
 
 fn calc_ax_indexed(x: &[f64], y: &mut [f64], tri_idx: &PackedTriIndex) {
     let n = tri_idx.n;
+    let offsets = &tri_idx.row_offsets;
     debug_assert_eq!(y.len(), x.len());
 
-    // y(i,i+1)
+    // Pass 1: y(i,i+1) — sum of all x values sharing vertex (i+1)
     for i in 1..=(n - 1) {
         let mut s = 0.0;
-        for j in (i + 2)..=n {
-            s += x[tri_idx.pair_idx(i + 1, j)];
+        // Contiguous: x[pair(i+1, j)] for j = (i+2)..=n — a full row slice
+        let start = offsets[i + 1];
+        let count = n - i - 1;
+        for idx in start..start + count {
+            s += x[idx];
         }
+        // Scattered: x[pair(j, i+1)] for j = 1..=i — one element per row
         for j in 1..=i {
-            s += x[tri_idx.pair_idx(j, i + 1)];
+            s += x[offsets[j] + (i - j)];
         }
-        y[tri_idx.pair_idx(i, i + 1)] = s;
+        y[offsets[i]] = s;
     }
 
-    // y(i,i+2)
+    // Pass 2: y(i,i+2) = y(i,i+1) + y(i+1,i+2) - 2*x(i+1,i+2)
     for i in 1..=(n - 2) {
-        let a = y[tri_idx.pair_idx(i, i + 1)];
-        let b = y[tri_idx.pair_idx(i + 1, i + 2)];
-        let c = x[tri_idx.pair_idx(i + 1, i + 2)];
-        y[tri_idx.pair_idx(i, i + 2)] = a + b - 2.0 * c;
+        let off_i = offsets[i];
+        let off_ip1 = offsets[i + 1];
+        y[off_i + 1] = y[off_i] + y[off_ip1] - 2.0 * x[off_ip1];
     }
 
-    // general recurrence
+    // Pass 3: general recurrence with stride-based index advancement
     for k in 3..=(n - 1) {
+        let mut idx_ij = offsets[1] + (k - 1);
+        let mut idx_ijm1 = offsets[1] + (k - 2);
+        let mut idx_ip1j = offsets[2] + (k - 2);
+        let mut idx_ip1jm1 = offsets[2] + (k - 3);
+
         for i in 1..=(n - k) {
-            let j = i + k;
-            let y_ijm1 = y[tri_idx.pair_idx(i, j - 1)];
-            let y_ip1j = y[tri_idx.pair_idx(i + 1, j)];
-            let y_ip1jm1 = y[tri_idx.pair_idx(i + 1, j - 1)];
-            let x_ip1j = x[tri_idx.pair_idx(i + 1, j)];
-            y[tri_idx.pair_idx(i, j)] = y_ijm1 + y_ip1j - y_ip1jm1 - 2.0 * x_ip1j;
+            y[idx_ij] = y[idx_ijm1] + y[idx_ip1j] - y[idx_ip1jm1] - 2.0 * x[idx_ip1j];
+
+            let stride_i = n - i;
+            let stride_ip1 = n - i - 1;
+            idx_ij += stride_i;
+            idx_ijm1 += stride_i;
+            idx_ip1j += stride_ip1;
+            idx_ip1jm1 += stride_ip1;
         }
     }
 }
@@ -550,47 +577,48 @@ fn calc_atx(x: &[f64], y: &mut [f64], n: usize) {
 
 fn calc_atx_indexed(x: &[f64], y: &mut [f64], tri_idx: &PackedTriIndex) {
     let n = tri_idx.n;
-    let npairs = x.len();
-    debug_assert_eq!(npairs, tri_idx.npairs);
+    debug_assert_eq!(x.len(), tri_idx.npairs);
 
-    // pass 1
+    // Pass 1: y[pair(i,i+1)] = sum of all x values sharing vertex i
     let mut s_index = 0usize;
     for i in 1..n {
-        let mut d_index: isize = (i as isize) - 2;
         let mut y_s = 0.0;
-        for j in 1..i {
-            y_s += x[d_index as usize];
-            d_index += (n - j) as isize - 1;
+        // Column scan: x[pair(j, i)] for j = 1..(i-1) — scattered across rows
+        if i >= 2 {
+            let mut d_idx = i - 2; // pair_idx(1, i) = offsets[1] + (i-2) = i-2
+            for j in 1..i {
+                y_s += x[d_idx];
+                d_idx += n - j - 1;
+            }
         }
-        d_index = s_index as isize;
-        for _j in (i + 1)..=n {
-            y_s += x[d_index as usize];
-            d_index += 1;
+        // Row scan: x[pair(i, j)] for j = (i+1)..=n — contiguous slice
+        let end = s_index + (n - i);
+        for idx in s_index..end {
+            y_s += x[idx];
         }
         y[s_index] = y_s;
         s_index += n - i;
     }
 
-    // pass 2
+    // Pass 2: y(i,i+2) recurrence
     let mut s_index = 1usize;
     for i in 1..=(n - 2) {
         y[s_index] = y[s_index - 1] + y[s_index + n - i - 1] - 2.0 * x[s_index - 1];
         s_index += n - i;
     }
 
-    // pass 3
+    // Pass 3: general recurrence (already stride-based)
     for k in 3..=(n - 1) {
         s_index = k - 1;
         for i in 1..=(n - k) {
-            y[s_index] = y[s_index - 1] + y[s_index + n - i - 1]
-                - y[s_index + n - i - 2]
-                - 2.0 * x[s_index - 1];
+            let below = s_index + n - i - 1;
+            y[s_index] = y[s_index - 1] + y[below] - y[below - 1] - 2.0 * x[s_index - 1];
             s_index += n - i;
         }
     }
 }
 
-/// Compute x from y for size `n` using the same index arithmetic as the Java version.
+/// Compute x from y for size `n` using the NeighbourNet inverse operator.
 /// - `y.len()` and `x.len()` must both be n*(n-1)/2 (upper triangle packed vector).
 pub fn calc_ainv_y(y: &[f64], x: &mut [f64], n: usize) {
     assert!(n >= 2, "n must be >= 2");
@@ -598,71 +626,46 @@ pub fn calc_ainv_y(y: &[f64], x: &mut [f64], n: usize) {
     assert_eq!(y.len(), m, "y must have length n*(n-1)/2");
     assert_eq!(x.len(), m, "x must have length n*(n-1)/2");
 
-    // --- First row (i = 1 in the paper/code comments) ---
-    // x[0] = (y[n-2] + y[0] - y[2n-4]) / 2
-    {
-        let t1 = y[n - 2] + y[0];
-        let t2 = t1 - y[2 * n - 4];
-        x[0] = t2 / 2.0;
-    }
+    let tri_idx = PackedTriIndex::new(n);
+    let offsets = &tri_idx.row_offsets;
 
-    // d_index starts at (2,n) in the original comments => 2n-4 in 0-based packed vector
-    let mut d_index: isize = (2 * n - 4) as isize;
+    // --- First row (i = 1) ---
+    // x[pair(1,2)] = (y[pair(1,n)] + y[pair(1,2)] - y[pair(2,n)]) / 2
+    x[0] = (y[n - 2] + y[0] - y[2 * n - 4]) / 2.0;
 
-    // for j = 3..=n:
-    // x[j-2] = (y[d_index] + y[j-2] - y[j-3] - y[d_index + n - j]) / 2
+    // x[pair(1,j)] for j = 3..=n
+    // d_index walks pair(2,n), pair(3,n), ..., pair(n-1,n)
+    let mut d_index: usize = 2 * n - 4; // pair_idx(2, n)
     for j in 3..=n {
-        let j_i = j as isize;
-        let n_i = n as isize;
-
-        let t1 = y[usize::try_from(d_index).unwrap()] + y[j - 2];
+        let t1 = y[d_index] + y[j - 2];
         let t2 = t1 - y[j - 3];
-        let t3 = t2 - y[usize::try_from(d_index + n_i - j_i).unwrap()];
+        let t3 = t2 - y[d_index + n - j];
         x[j - 2] = t3 / 2.0;
-
-        d_index += n_i - j_i;
+        d_index += n - j;
     }
 
-    // x[n-2] = (y[n-2] + y[last] - y[n-3]) / 2
-    {
-        let t1 = y[n - 2] + y[y.len() - 1];
-        let t2 = t1 - y[n - 3];
-        x[n - 2] = t2 / 2.0;
-    }
+    // x[pair(1,n)] = (y[pair(1,n)] + y[pair(n-1,n)] - y[pair(1,n-1)]) / 2
+    x[n - 2] = (y[n - 2] + y[m - 1] - y[n - 3]) / 2.0;
 
     // --- Remaining rows (i = 2..=n-1) ---
-    // s_index = (2n - i) * (i - 1) / 2   (0-based packed start index for row i)
+    // Use pre-computed row offsets instead of isize arithmetic.
+    // Key relation: offsets[i] - offsets[i-1] = n - i + 1
+    // So offsets[i-1] = offsets[i] - (n - i + 1)
     for i in 2..=(n - 1) {
-        let i_i = i as isize;
-        let n_i = n as isize;
+        let s_idx = offsets[i]; // start of row i
+        let prev = offsets[i - 1]; // start of row i-1
 
-        let mut s_index: isize = ((2 * n_i - i_i) * (i_i - 1)) / 2;
+        // First element: x[pair(i,i+1)]
+        // y at prev = y[pair(i-1, i)], y at prev+1 = y[pair(i-1, i+1)]
+        x[s_idx] = (y[prev] + y[s_idx] - y[prev + 1]) / 2.0;
 
-        // x[i][i+1]
-        // x[s_index] = (y[s_index + i - n - 1] + y[s_index] - y[s_index + i - n]) / 2
-        {
-            let a = y[usize::try_from(s_index + i_i - n_i - 1).unwrap()];
-            let b = y[usize::try_from(s_index).unwrap()];
-            let c = y[usize::try_from(s_index + i_i - n_i).unwrap()];
-            let t1 = a + b;
-            let t2 = t1 - c;
-            x[usize::try_from(s_index).unwrap()] = t2 / 2.0;
-        }
-        s_index += 1;
-
-        // for j = i+2..=n:
-        // x[s_index] = (y[s_index + i - n - 1] + y[s_index] - y[s_index - 1] - y[s_index + i - n]) / 2
-        for _j in (i + 2)..=n {
-            let a = y[usize::try_from(s_index + i_i - n_i - 1).unwrap()];
-            let b = y[usize::try_from(s_index).unwrap()];
-            let c = y[usize::try_from(s_index - 1).unwrap()];
-            let d = y[usize::try_from(s_index + i_i - n_i).unwrap()];
-            let t1 = a + b;
-            let t2 = t1 - c;
-            let t3 = t2 - d;
-            x[usize::try_from(s_index).unwrap()] = t3 / 2.0;
-
-            s_index += 1;
+        // Remaining elements: x[pair(i,j)] for j = i+2..=n
+        let row_len = n - i;
+        for col in 1..row_len {
+            x[s_idx + col] = (y[prev + col] + y[s_idx + col]
+                - y[s_idx + col - 1]
+                - y[prev + col + 1])
+                / 2.0;
         }
     }
 }
@@ -732,6 +735,58 @@ fn sum_array_squared_indexed(x: &[f64], tri_idx: &PackedTriIndex) -> f64 {
     total
 }
 
+/// Estimate diag(A^T A) using Hutchinson stochastic estimator with
+/// deterministic sign probe vectors. Cost: 2 * n_probes kernel calls.
+fn estimate_ata_diagonal(tri_idx: &PackedTriIndex) -> Vec<f64> {
+    let npairs = tri_idx.npairs;
+    let mut diag = vec![0.0; npairs];
+    let mut ar = vec![0.0; npairs];
+    let mut atar = vec![0.0; npairs];
+
+    // 3 deterministic Rademacher-like probe vectors
+    let probes: &[fn(usize) -> f64] = &[
+        |i| if i % 2 == 0 { 1.0 } else { -1.0 },
+        |i| if (i / 3) % 2 == 0 { 1.0 } else { -1.0 },
+        |i| if (i / 7) % 2 == 0 { 1.0 } else { -1.0 },
+    ];
+    let n_probes = probes.len();
+
+    for probe_fn in probes {
+        let r: Vec<f64> = (0..npairs).map(|i| probe_fn(i)).collect();
+        calc_ax_indexed(&r, &mut ar, tri_idx);
+        calc_atx_indexed(&ar, &mut atar, tri_idx);
+
+        for i in 0..npairs {
+            diag[i] += r[i] * atar[i];
+        }
+    }
+
+    // Average over probes and floor to prevent division by near-zero
+    let inv_probes = 1.0 / n_probes as f64;
+    let mut sum_pos = 0.0;
+    let mut count_pos = 0usize;
+    for d in diag.iter_mut() {
+        *d *= inv_probes;
+        if *d > 0.0 {
+            sum_pos += *d;
+            count_pos += 1;
+        }
+    }
+    let avg_pos = if count_pos > 0 {
+        sum_pos / count_pos as f64
+    } else {
+        1.0
+    };
+    let floor = avg_pos * 0.01;
+    for d in diag.iter_mut() {
+        if *d < floor {
+            *d = floor;
+        }
+    }
+
+    diag
+}
+
 fn cgnr(
     x: &mut [f64],
     d: &[f64],
@@ -740,6 +795,7 @@ fn cgnr(
     tol: f64,
     scratch: &mut Scratch,
     tri_idx: &PackedTriIndex,
+    precond: Option<&[f64]>,
     kernel_perf: &mut KernelPerf,
     track_kernel_perf: bool,
     progress: Option<&dyn Progress>,
@@ -762,6 +818,7 @@ fn cgnr(
     let nfree = free_indices.len();
     let mut p_free = vec![0.0; nfree];
     let mut z_free = vec![0.0; nfree];
+    let mut s_free = vec![0.0; nfree]; // preconditioned gradient (= z_free when no precond)
 
     // r = d - A x
     profiled_calc_ax(x, r, tri_idx, kernel_perf, track_kernel_perf);
@@ -772,10 +829,14 @@ fn cgnr(
     // z = Aᵀ r over the free set only
     profiled_calc_atx(r, z, tri_idx, kernel_perf, track_kernel_perf);
     gather_by_index(z, &free_indices, &mut z_free);
-    p_free.copy_from_slice(&z_free);
 
-    let mut ztz = sum_array_squared_masked_indexed(z, active_set, tri_idx);
-    if ztz <= EPS || !ztz.is_finite() {
+    // Apply preconditioner: s = M^{-1} z (or s = z when unpreconditioned)
+    apply_precond(&z_free, &mut s_free, precond, &free_indices);
+    p_free.copy_from_slice(&s_free);
+
+    // Inner product: z^T s (preserves original row-wise accumulation order when unpreconditioned)
+    let mut zts = precond_inner_product(z, active_set, &z_free, &s_free, precond, tri_idx);
+    if zts <= EPS || !zts.is_finite() {
         return Ok(1);
     }
     let mut k = 1usize;
@@ -791,7 +852,7 @@ fn cgnr(
         if denom <= EPS || !denom.is_finite() {
             break;
         }
-        let alpha = ztz / denom;
+        let alpha = zts / denom;
 
         // x += alpha p; r -= alpha w
         for (slot, &idx) in free_indices.iter().enumerate() {
@@ -804,35 +865,32 @@ fn cgnr(
         // z = Aᵀ r over the free set only
         profiled_calc_atx(r, z, tri_idx, kernel_perf, track_kernel_perf);
         gather_by_index(z, &free_indices, &mut z_free);
-        let ztz_new = sum_array_squared_masked_indexed(z, active_set, tri_idx);
-        if ztz <= EPS || !ztz.is_finite() {
+
+        // Apply preconditioner
+        apply_precond(&z_free, &mut s_free, precond, &free_indices);
+        let zts_new = precond_inner_product(z, active_set, &z_free, &s_free, precond, tri_idx);
+        if zts <= EPS || !zts.is_finite() {
             break;
         }
-        let beta = ztz_new / ztz;
+        let beta = zts_new / zts;
         if log_cgnr_progress && (k % 256) == 0 {
             info!(
                 "NNLS CGNR progress: iter={}/{} residual={:.3e} elapsed={:.1}s",
                 k,
                 max_iters,
-                ztz_new,
+                zts_new,
                 started.elapsed().as_secs_f64()
             );
         }
-        if ztz_new < tol || k >= max_iters {
+        if zts_new < tol || k >= max_iters {
             break;
         }
-        // debug!("k={} ztz={} beta={} new_ztz={} sum x {} sum r {}", k, ztz, beta, ztz_new, x.iter().sum::<f64>(), r.iter().sum::<f64>());
 
-        // for (var i = 0; i < p.length; i++) {
-        //     p[i] = z[i] + beta * p[i];
-        // }
-        // ztz = ztz2;
         for i in 0..nfree {
-            p_free[i] = z_free[i] + beta * p_free[i]; // correct: z + beta * old_p
+            p_free[i] = s_free[i] + beta * p_free[i];
         }
-        // debug!("sum p {:?} sum z {:?}", p.iter().sum::<f64>(), z.iter().sum::<f64>());
 
-        ztz = ztz_new;
+        zts = zts_new;
         k += 1;
 
         if let Some(pl) = progress {
@@ -845,6 +903,42 @@ fn cgnr(
         }
     }
     Ok(k)
+}
+
+/// Compute the inner product for CGNR convergence. When unpreconditioned, uses
+/// the original row-wise accumulation (sum_array_squared_masked_indexed) for
+/// bit-exact parity. When preconditioned, uses z^T s over free indices.
+#[inline]
+fn precond_inner_product(
+    z_full: &[f64],
+    active_set: &[bool],
+    z_free: &[f64],
+    s_free: &[f64],
+    precond: Option<&[f64]>,
+    tri_idx: &PackedTriIndex,
+) -> f64 {
+    match precond {
+        None => sum_array_squared_masked_indexed(z_full, active_set, tri_idx),
+        Some(_) => z_free
+            .iter()
+            .zip(s_free.iter())
+            .map(|(&zi, &si)| zi * si)
+            .sum(),
+    }
+}
+
+#[inline]
+fn apply_precond(z_free: &[f64], s_free: &mut [f64], precond: Option<&[f64]>, free_indices: &[usize]) {
+    match precond {
+        Some(m) => {
+            for i in 0..z_free.len() {
+                s_free[i] = z_free[i] / m[free_indices[i]];
+            }
+        }
+        None => {
+            s_free.copy_from_slice(z_free);
+        }
+    }
 }
 
 #[inline]
@@ -1228,6 +1322,7 @@ mod tests {
             1e-14,
             &mut scratch,
             &tri_idx,
+            None, // no preconditioner for parity test
             &mut kernel_perf,
             false,
             None,
