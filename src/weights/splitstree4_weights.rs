@@ -48,6 +48,33 @@ struct KernelPerf {
     calc_atx_time: Duration,
 }
 
+#[derive(Debug)]
+struct SolveProgress {
+    started: Instant,
+    next_log: Instant,
+    next_inner_log: Instant,
+    outer_iter: usize,
+    cg_calls: usize,
+    cg_iters_total: usize,
+    collapse_events: usize,
+    collapsed_indices_total: usize,
+}
+
+impl SolveProgress {
+    fn new(now: Instant) -> Self {
+        Self {
+            started: now,
+            next_log: now + Duration::from_secs(5),
+            next_inner_log: now + Duration::from_secs(10),
+            outer_iter: 0,
+            cg_calls: 0,
+            cg_iters_total: 0,
+            collapse_events: 0,
+            collapsed_indices_total: 0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Variance {
     Ols,
@@ -115,16 +142,21 @@ fn compute_weighted_splits(
 
     let npairs = n * (n - 1) / 2;
     let d = setup_d(distances, cycle, n);
-    let v = setup_v(distances, cycle, n, options.variance);
-
-    let mut w = vec![0.0; npairs];
-    for k in 0..npairs {
-        if v[k] == 0.0 {
-            w[k] = 1.0e11;
-        } else {
-            w[k] = 1.0 / v[k];
+    let w = match options.variance {
+        Variance::Ols => vec![1.0; npairs],
+        _ => {
+            let v = setup_v(distances, cycle, n, options.variance);
+            let mut w = vec![0.0; npairs];
+            for k in 0..npairs {
+                if v[k] == 0.0 {
+                    w[k] = 1.0e11;
+                } else {
+                    w[k] = 1.0 / v[k];
+                }
+            }
+            w
         }
-    }
+    };
 
     let mut x = vec![0.0; npairs];
     run_active_conjugate(n, &d, &w, &mut x, options);
@@ -187,9 +219,8 @@ fn run_active_conjugate(
     debug_assert_eq!(npairs, tri_idx.npairs);
     let track_kernel_perf = npairs > 4096;
     let mut kernel_perf = KernelPerf::default();
-    let mut outer_iter = 0usize;
-    let mut next_info_iter = 10usize;
     let started = Instant::now();
+    let mut progress = SolveProgress::new(started);
     if w.len() != npairs || x.len() != npairs {
         panic!("Vectors d,W,x have different dimensions");
     }
@@ -204,6 +235,8 @@ fn run_active_conjugate(
     let mut p = vec![0.0; npairs];
     let mut y = vec![0.0; npairs];
     let mut old_x = vec![1.0; npairs];
+    let mut negative_values = Vec::new();
+    let mut selected_negative_indices = Vec::new();
 
     let mut active = vec![false; npairs];
     let fixed_active = vec![false; npairs];
@@ -228,7 +261,7 @@ fn run_active_conjugate(
 
     let mut first_pass = true;
     loop {
-        outer_iter += 1;
+        progress.outer_iter += 1;
         loop {
             if !first_pass {
                 circular_conjugate_grads(
@@ -242,6 +275,7 @@ fn run_active_conjugate(
                     &active,
                     x,
                     &tri_idx,
+                    &mut progress,
                     &mut kernel_perf,
                     track_kernel_perf,
                 );
@@ -249,8 +283,11 @@ fn run_active_conjugate(
             first_pass = false;
 
             if collapse_many_negs {
-                if let Some(entries) = worst_indices(x, 0.6) {
-                    for &idx in &entries {
+                if worst_indices_reuse(x, 0.6, &mut negative_values, &mut selected_negative_indices)
+                {
+                    progress.collapse_events += 1;
+                    progress.collapsed_indices_total += selected_negative_indices.len();
+                    for &idx in &selected_negative_indices {
                         x[idx] = 0.0;
                         active[idx] = true;
                     }
@@ -265,6 +302,7 @@ fn run_active_conjugate(
                         &active,
                         x,
                         &tri_idx,
+                        &mut progress,
                         &mut kernel_perf,
                         track_kernel_perf,
                     );
@@ -303,17 +341,23 @@ fn run_active_conjugate(
         }
         profiled_calculate_atx(&y, &mut r, &tri_idx, &mut kernel_perf, track_kernel_perf);
 
-        if track_kernel_perf && outer_iter >= next_info_iter {
+        if track_kernel_perf && Instant::now() >= progress.next_log {
+            let active_count = active.iter().filter(|&&f| f).count();
             info!(
-                "SplitsTree4 weights progress: outer_iter={} elapsed={:.1}s ab_calls={} atx_calls={} ab_avg_us={:.1} atx_avg_us={:.1}",
-                outer_iter,
-                started.elapsed().as_secs_f64(),
+                "SplitsTree4 inference progress: outer_iter={} elapsed={:.1}s cg_calls={} cg_iters_total={} active={} collapse_events={} collapsed_total={} ab_calls={} atx_calls={} ab_avg_us={:.1} atx_avg_us={:.1}",
+                progress.outer_iter,
+                progress.started.elapsed().as_secs_f64(),
+                progress.cg_calls,
+                progress.cg_iters_total,
+                active_count,
+                progress.collapse_events,
+                progress.collapsed_indices_total,
                 kernel_perf.calc_ab_calls,
                 kernel_perf.calc_atx_calls,
                 avg_time_us(kernel_perf.calc_ab_time, kernel_perf.calc_ab_calls),
                 avg_time_us(kernel_perf.calc_atx_time, kernel_perf.calc_atx_calls),
             );
-            next_info_iter += 10;
+            progress.next_log = Instant::now() + Duration::from_secs(5);
         }
 
         let mut min_i: Option<usize> = None;
@@ -337,26 +381,38 @@ fn run_active_conjugate(
     }
 }
 
-fn worst_indices(x: &[f64], prop_kept: f64) -> Option<Vec<usize>> {
+fn worst_indices_reuse(
+    x: &[f64],
+    prop_kept: f64,
+    negative_values: &mut Vec<f64>,
+    result: &mut Vec<usize>,
+) -> bool {
     if prop_kept == 0.0 {
-        return None;
+        return false;
     }
 
-    let num_neg = x.iter().filter(|&&v| v < 0.0).count();
+    negative_values.clear();
+    for &val in x {
+        if val < 0.0 {
+            negative_values.push(val);
+        }
+    }
+    let num_neg = negative_values.len();
     if num_neg == 0 {
-        return None;
+        result.clear();
+        return false;
     }
-
-    let mut xcopy: Vec<f64> = x.iter().copied().filter(|v| *v < 0.0).collect();
 
     let nkept = ((prop_kept * num_neg as f64).ceil() as usize).max(1);
     let cutoff = {
         let kth = nkept - 1;
-        let (_, pivot, _) = xcopy.select_nth_unstable_by(kth, |a, b| a.partial_cmp(b).unwrap());
+        let (_, pivot, _) =
+            negative_values.select_nth_unstable_by(kth, |a, b| a.partial_cmp(b).unwrap());
         *pivot
     };
 
-    let mut result = vec![0usize; nkept];
+    result.clear();
+    result.resize(nkept, 0usize);
     let mut front = 0usize;
     let mut back = nkept.saturating_sub(1);
     for (i, &val) in x.iter().enumerate() {
@@ -373,7 +429,7 @@ fn worst_indices(x: &[f64], prop_kept: f64) -> Option<Vec<usize>> {
             }
         }
     }
-    Some(result)
+    true
 }
 
 fn run_unconstrained_ls(n: usize, d: &[f64], x: &mut [f64]) {
@@ -493,10 +549,6 @@ fn calculate_ab_indexed(b: &[f64], d: &mut [f64], tri_idx: &PackedTriIndex) {
     }
 }
 
-fn norm(x: &[f64]) -> f64 {
-    x.iter().map(|v| v * v).sum()
-}
-
 #[inline]
 fn profiled_calculate_ab(
     b: &[f64],
@@ -553,10 +605,13 @@ fn circular_conjugate_grads(
     active: &[bool],
     x: &mut [f64],
     tri_idx: &PackedTriIndex,
+    progress: &mut SolveProgress,
     kernel_perf: &mut KernelPerf,
     track_kernel_perf: bool,
 ) {
     let kmax = tri_idx.npairs;
+    progress.cg_calls += 1;
+    let cg_call = progress.cg_calls;
 
     profiled_calculate_ab(x, y, tri_idx, kernel_perf, track_kernel_perf);
     for k in 0..npairs {
@@ -572,10 +627,11 @@ fn circular_conjugate_grads(
         }
     }
 
-    let mut rho = norm(r);
+    let mut rho = r.iter().map(|v| v * v).sum::<f64>();
     let mut rho_old = 0.0;
 
-    let e0 = 0.0001 * norm(b).sqrt();
+    let b_norm_sq = b.iter().map(|v| v * v).sum::<f64>();
+    let e0 = 0.0001 * b_norm_sq.sqrt();
     let mut k = 0usize;
 
     while rho > e0 * e0 && k < kmax {
@@ -594,25 +650,44 @@ fn circular_conjugate_grads(
             y[i] *= weights[i];
         }
         profiled_calculate_atx(y, w, tri_idx, kernel_perf, track_kernel_perf);
+
+        let mut alpha_den = 0.0;
         for i in 0..npairs {
             if active[i] {
                 w[i] = 0.0;
+            } else {
+                alpha_den += p[i] * w[i];
             }
         }
+        let alpha = rho / alpha_den;
 
-        let mut alpha = 0.0;
-        for i in 0..npairs {
-            alpha += p[i] * w[i];
-        }
-        alpha = rho / alpha;
-
+        let mut rho_new = 0.0;
         for i in 0..npairs {
             x[i] += alpha * p[i];
             r[i] -= alpha * w[i];
+            rho_new += r[i] * r[i];
         }
         rho_old = rho;
-        rho = norm(r);
+        rho = rho_new;
+
+        if track_kernel_perf && (k & 255) == 0 {
+            let now = Instant::now();
+            if now >= progress.next_inner_log {
+                info!(
+                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s rho={:.6e} threshold={:.6e}",
+                    progress.outer_iter,
+                    cg_call,
+                    k,
+                    progress.cg_iters_total + k,
+                    progress.started.elapsed().as_secs_f64(),
+                    rho,
+                    e0 * e0
+                );
+                progress.next_inner_log = now + Duration::from_secs(10);
+            }
+        }
     }
+    progress.cg_iters_total += k;
 }
 
 #[cfg(test)]
