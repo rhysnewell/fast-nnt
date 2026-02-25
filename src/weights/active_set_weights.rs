@@ -21,6 +21,44 @@ struct Scratch {
     w: Vec<f64>,
 }
 
+#[derive(Debug)]
+struct PackedTriIndex {
+    n: usize,
+    npairs: usize,
+    row_offsets: Vec<usize>, // 1-based row starts for packed upper triangle
+}
+
+impl PackedTriIndex {
+    fn new(n: usize) -> Self {
+        let npairs = n * (n - 1) / 2;
+        let mut row_offsets = vec![0usize; n + 1];
+        let mut start = 0usize;
+        for (i, off) in row_offsets.iter_mut().enumerate().take(n + 1).skip(1) {
+            *off = start;
+            start += n - i;
+        }
+        Self {
+            n,
+            npairs,
+            row_offsets,
+        }
+    }
+
+    #[inline]
+    fn pair_idx(&self, i: usize, j: usize) -> usize {
+        debug_assert!(1 <= i && i < j && j <= self.n);
+        self.row_offsets[i] + (j - i - 1)
+    }
+}
+
+#[derive(Default, Debug)]
+struct KernelPerf {
+    calc_ax_calls: usize,
+    calc_atx_calls: usize,
+    calc_ax_time: Duration,
+    calc_atx_time: Duration,
+}
+
 impl Scratch {
     fn new(len: usize) -> Self {
         Self {
@@ -126,6 +164,7 @@ pub fn compute_use_1d(
 
     // Flatten distances d[(i,j)], 1<=i<j<=n, in cycle order (1-based).
     let npairs = n * (n - 1) / 2;
+    let tri_idx = PackedTriIndex::new(n);
     let mut d = vec![0.0; npairs];
     {
         let mut idx = 0usize;
@@ -139,8 +178,8 @@ pub fn compute_use_1d(
 
     // Threshold from ||Aᵀ d|| (reuse `x` as workspace to avoid an extra allocation).
     let mut x = vec![0.0; npairs];
-    calc_atx(&d, &mut x, n);
-    let norm_atd = sum_array_squared(&x, n).sqrt();
+    calc_atx_indexed(&d, &mut x, &tri_idx);
+    let norm_atd = sum_array_squared_indexed(&x, &tri_idx).sqrt();
     params.proj_grad_bound = (1e-4 * norm_atd).powi(2);
 
     // var x = new double[npairs]; //array of split weights
@@ -174,7 +213,7 @@ pub fn compute_use_1d(
             &mut x,
             &mut xstar,
             &d,
-            n,
+            &tri_idx,
             params,
             &mut active,
             &mut scratch,
@@ -214,7 +253,7 @@ fn active_set_method(
     x: &mut [f64],     // feasible (x >= 0)
     xstar: &mut [f64], // workspace for candidate solution
     d: &[f64],
-    n: usize,
+    tri_idx: &PackedTriIndex,
     params: &mut NNLSParams,
     active: &mut [bool],
     scratch: &mut Scratch, // p, r, z, w
@@ -224,11 +263,15 @@ fn active_set_method(
     progress: Option<&dyn Progress>,
     started: Instant,
 ) -> Result<()> {
+    let n = tri_idx.n;
     let npairs = x.len();
+    debug_assert_eq!(npairs, tri_idx.npairs);
     let mut k_outer = 0usize;
     let outer_started = Instant::now();
     let mut next_info_iter = 10usize;
     let small_problem = npairs <= 4096;
+    let track_kernel_perf = !small_problem;
+    let mut kernel_perf = KernelPerf::default();
     if small_problem {
         debug!("active set {:?}", active);
         debug!("==============================");
@@ -246,10 +289,12 @@ fn active_set_method(
                 xstar,
                 d,
                 active,
-                n,
                 params.cgnr_iterations,
                 params.cgnr_tolerance,
                 scratch,
+                tri_idx,
+                &mut kernel_perf,
+                track_kernel_perf,
                 progress,
                 started,
                 params.max_time_ms,
@@ -297,15 +342,19 @@ fn active_set_method(
         }
         if !small_problem && k_outer >= next_info_iter {
             info!(
-                "NNLS progress: outer_iter={} elapsed={:.1}s active_fraction={:.3}",
+                "NNLS progress: outer_iter={} elapsed={:.1}s active_fraction={:.3} ax_calls={} atx_calls={} ax_avg_us={:.1} atx_avg_us={:.1}",
                 k_outer,
                 outer_started.elapsed().as_secs_f64(),
-                active.iter().filter(|&&a| a).count() as f64 / npairs as f64
+                active.iter().filter(|&&a| a).count() as f64 / npairs as f64,
+                kernel_perf.calc_ax_calls,
+                kernel_perf.calc_atx_calls,
+                avg_time_us(kernel_perf.calc_ax_time, kernel_perf.calc_ax_calls),
+                avg_time_us(kernel_perf.calc_atx_time, kernel_perf.calc_atx_calls),
             );
             next_info_iter += 10;
         }
 
-        eval_gradient(x, d, p, r, n); // p := grad
+        eval_gradient(x, d, p, r, tri_idx, &mut kernel_perf, track_kernel_perf); // p := grad
 
         p.iter_mut().zip(x.iter()).for_each(|(gi, &xi)| {
             if xi == 0.0 {
@@ -317,7 +366,7 @@ fn active_set_method(
         if small_problem {
             debug!("Projected gradient sum {}: {:?}", n, p.iter().sum::<f64>());
         }
-        let pg = sum_array_squared(p, n);
+        let pg = sum_array_squared_indexed(p, tri_idx);
         if (pg - params.proj_grad_bound) < -EPS {
             return Ok(());
         }
@@ -450,45 +499,59 @@ fn cmp_vals_indices(vals: &[f64], a: usize, b: usize) -> Ordering {
 
 /* ===================== Linear ops A and Aᵀ (vector form) ===================== */
 
+#[allow(dead_code)]
 fn calc_ax(x: &[f64], y: &mut [f64], n: usize) {
+    let tri_idx = PackedTriIndex::new(n);
+    calc_ax_indexed(x, y, &tri_idx);
+}
+
+fn calc_ax_indexed(x: &[f64], y: &mut [f64], tri_idx: &PackedTriIndex) {
+    let n = tri_idx.n;
     debug_assert_eq!(y.len(), x.len());
 
     // y(i,i+1)
     for i in 1..=(n - 1) {
         let mut s = 0.0;
         for j in (i + 2)..=n {
-            s += x[pair_idx(i + 1, j, n)];
+            s += x[tri_idx.pair_idx(i + 1, j)];
         }
         for j in 1..=i {
-            s += x[pair_idx(j, i + 1, n)];
+            s += x[tri_idx.pair_idx(j, i + 1)];
         }
-        y[pair_idx(i, i + 1, n)] = s;
+        y[tri_idx.pair_idx(i, i + 1)] = s;
     }
 
     // y(i,i+2)
     for i in 1..=(n - 2) {
-        let a = y[pair_idx(i, i + 1, n)];
-        let b = y[pair_idx(i + 1, i + 2, n)];
-        let c = x[pair_idx(i + 1, i + 2, n)];
-        y[pair_idx(i, i + 2, n)] = a + b - 2.0 * c;
+        let a = y[tri_idx.pair_idx(i, i + 1)];
+        let b = y[tri_idx.pair_idx(i + 1, i + 2)];
+        let c = x[tri_idx.pair_idx(i + 1, i + 2)];
+        y[tri_idx.pair_idx(i, i + 2)] = a + b - 2.0 * c;
     }
 
     // general recurrence
     for k in 3..=(n - 1) {
         for i in 1..=(n - k) {
             let j = i + k;
-            let y_ijm1 = y[pair_idx(i, j - 1, n)];
-            let y_ip1j = y[pair_idx(i + 1, j, n)];
-            let y_ip1jm1 = y[pair_idx(i + 1, j - 1, n)];
-            let x_ip1j = x[pair_idx(i + 1, j, n)];
-            y[pair_idx(i, j, n)] = y_ijm1 + y_ip1j - y_ip1jm1 - 2.0 * x_ip1j;
+            let y_ijm1 = y[tri_idx.pair_idx(i, j - 1)];
+            let y_ip1j = y[tri_idx.pair_idx(i + 1, j)];
+            let y_ip1jm1 = y[tri_idx.pair_idx(i + 1, j - 1)];
+            let x_ip1j = x[tri_idx.pair_idx(i + 1, j)];
+            y[tri_idx.pair_idx(i, j)] = y_ijm1 + y_ip1j - y_ip1jm1 - 2.0 * x_ip1j;
         }
     }
 }
 
+#[allow(dead_code)]
 fn calc_atx(x: &[f64], y: &mut [f64], n: usize) {
+    let tri_idx = PackedTriIndex::new(n);
+    calc_atx_indexed(x, y, &tri_idx);
+}
+
+fn calc_atx_indexed(x: &[f64], y: &mut [f64], tri_idx: &PackedTriIndex) {
+    let n = tri_idx.n;
     let npairs = x.len();
-    debug_assert_eq!(npairs, n * (n - 1) / 2);
+    debug_assert_eq!(npairs, tri_idx.npairs);
 
     // pass 1
     let mut s_index = 0usize;
@@ -606,13 +669,21 @@ pub fn calc_ainv_y(y: &[f64], x: &mut [f64], n: usize) {
 
 /* ===================== Gradient & CGNR (rayon-accelerated) ===================== */
 
-fn eval_gradient(x: &[f64], d: &[f64], gradient: &mut [f64], residual: &mut [f64], n: usize) {
-    calc_ax(x, residual, n);
+fn eval_gradient(
+    x: &[f64],
+    d: &[f64],
+    gradient: &mut [f64],
+    residual: &mut [f64],
+    tri_idx: &PackedTriIndex,
+    kernel_perf: &mut KernelPerf,
+    track_kernel_perf: bool,
+) {
+    profiled_calc_ax(x, residual, tri_idx, kernel_perf, track_kernel_perf);
     residual
         .par_iter_mut()
         .zip(d.par_iter())
         .for_each(|(ri, &di)| *ri -= di);
-    calc_atx(residual, gradient, n);
+    profiled_calc_atx(residual, gradient, tri_idx, kernel_perf, track_kernel_perf);
 }
 
 fn get_active_entries(x: &[f64], a: &mut [bool]) {
@@ -632,7 +703,12 @@ fn zero_negative_entries(x: &mut [f64]) {
 /// Sum of squares over a packed upper-triangular vector `x` (i<j) for an n×n matrix.
 /// Mirrors the Java implementation's iteration and accumulation order.
 pub fn sum_array_squared(x: &[f64], n: usize) -> f64 {
-    let expected = n * (n - 1) / 2;
+    let tri_idx = PackedTriIndex::new(n);
+    sum_array_squared_indexed(x, &tri_idx)
+}
+
+fn sum_array_squared_indexed(x: &[f64], tri_idx: &PackedTriIndex) -> f64 {
+    let expected = tri_idx.npairs;
     assert!(
         x.len() == expected,
         "x must have length n*(n-1)/2 (got {}, expected {})",
@@ -640,15 +716,14 @@ pub fn sum_array_squared(x: &[f64], n: usize) -> f64 {
         expected
     );
     let mut total = 0.0f64;
-    let mut index = 0usize;
 
     // Java loops i=1..=n, j=i+1..=n over the packed upper triangle.
-    for i in 1..=n {
+    for i in 1..=tri_idx.n {
+        let start = tri_idx.row_offsets[i];
+        let len = tri_idx.n - i;
         let mut s_i = 0.0f64;
-        for _j in (i + 1)..=n {
-            let x_ij = x[index];
+        for x_ij in &x[start..start + len] {
             s_i += x_ij * x_ij;
-            index += 1;
         }
         // Sum each row separately, then add (matches Java's numeric stability choice)
         total += s_i;
@@ -661,14 +736,17 @@ fn cgnr(
     x: &mut [f64],
     d: &[f64],
     active_set: &[bool],
-    n: usize,
     max_iters: usize,
     tol: f64,
     scratch: &mut Scratch,
+    tri_idx: &PackedTriIndex,
+    kernel_perf: &mut KernelPerf,
+    track_kernel_perf: bool,
     progress: Option<&dyn Progress>,
     started: Instant,
     max_time_ms: u64,
 ) -> Result<usize> {
+    let n = tri_idx.n;
     let (p, r, z, w) = (
         &mut scratch.p,
         &mut scratch.r,
@@ -686,17 +764,17 @@ fn cgnr(
     let mut z_free = vec![0.0; nfree];
 
     // r = d - A x
-    calc_ax(x, r, n);
+    profiled_calc_ax(x, r, tri_idx, kernel_perf, track_kernel_perf);
     r.iter_mut()
         .zip(d.iter())
         .for_each(|(ri, &di)| *ri = di - *ri);
 
     // z = Aᵀ r over the free set only
-    calc_atx(r, z, n);
+    profiled_calc_atx(r, z, tri_idx, kernel_perf, track_kernel_perf);
     gather_by_index(z, &free_indices, &mut z_free);
     p_free.copy_from_slice(&z_free);
 
-    let mut ztz = sum_array_squared_masked(z, active_set, n);
+    let mut ztz = sum_array_squared_masked_indexed(z, active_set, tri_idx);
     if ztz <= EPS || !ztz.is_finite() {
         return Ok(1);
     }
@@ -708,8 +786,8 @@ fn cgnr(
         scatter_by_index(&p_free, &free_indices, p);
 
         // w = A p
-        calc_ax(p, w, n);
-        let denom = sum_array_squared(w, n);
+        profiled_calc_ax(p, w, tri_idx, kernel_perf, track_kernel_perf);
+        let denom = sum_array_squared_indexed(w, tri_idx);
         if denom <= EPS || !denom.is_finite() {
             break;
         }
@@ -724,9 +802,9 @@ fn cgnr(
         }
 
         // z = Aᵀ r over the free set only
-        calc_atx(r, z, n);
+        profiled_calc_atx(r, z, tri_idx, kernel_perf, track_kernel_perf);
         gather_by_index(z, &free_indices, &mut z_free);
-        let ztz_new = sum_array_squared_masked(z, active_set, n);
+        let ztz_new = sum_array_squared_masked_indexed(z, active_set, tri_idx);
         if ztz <= EPS || !ztz.is_finite() {
             break;
         }
@@ -795,25 +873,80 @@ fn scatter_by_index(src: &[f64], indices: &[usize], dst: &mut [f64]) {
 }
 
 #[inline]
+#[allow(dead_code)]
 fn sum_array_squared_masked(x: &[f64], active_set: &[bool], n: usize) -> f64 {
-    let expected = n * (n - 1) / 2;
+    let tri_idx = PackedTriIndex::new(n);
+    sum_array_squared_masked_indexed(x, active_set, &tri_idx)
+}
+
+fn sum_array_squared_masked_indexed(
+    x: &[f64],
+    active_set: &[bool],
+    tri_idx: &PackedTriIndex,
+) -> f64 {
+    let expected = tri_idx.npairs;
     debug_assert_eq!(x.len(), expected);
     debug_assert_eq!(active_set.len(), expected);
 
     let mut total = 0.0f64;
-    let mut index = 0usize;
-    for i in 1..=n {
+    for i in 1..=tri_idx.n {
+        let start = tri_idx.row_offsets[i];
+        let len = tri_idx.n - i;
         let mut s_i = 0.0f64;
-        for _j in (i + 1)..=n {
+        for index in start..start + len {
             if !active_set[index] {
                 let v = x[index];
                 s_i += v * v;
             }
-            index += 1;
         }
         total += s_i;
     }
     total
+}
+
+#[inline]
+fn profiled_calc_ax(
+    x: &[f64],
+    y: &mut [f64],
+    tri_idx: &PackedTriIndex,
+    perf: &mut KernelPerf,
+    track: bool,
+) {
+    if track {
+        let t0 = Instant::now();
+        calc_ax_indexed(x, y, tri_idx);
+        perf.calc_ax_calls += 1;
+        perf.calc_ax_time += t0.elapsed();
+    } else {
+        calc_ax_indexed(x, y, tri_idx);
+    }
+}
+
+#[inline]
+fn profiled_calc_atx(
+    x: &[f64],
+    y: &mut [f64],
+    tri_idx: &PackedTriIndex,
+    perf: &mut KernelPerf,
+    track: bool,
+) {
+    if track {
+        let t0 = Instant::now();
+        calc_atx_indexed(x, y, tri_idx);
+        perf.calc_atx_calls += 1;
+        perf.calc_atx_time += t0.elapsed();
+    } else {
+        calc_atx_indexed(x, y, tri_idx);
+    }
+}
+
+#[inline]
+fn avg_time_us(total: Duration, calls: usize) -> f64 {
+    if calls == 0 {
+        0.0
+    } else {
+        total.as_secs_f64() * 1e6 / calls as f64
+    }
 }
 
 /* ===================== Indexing ===================== */
@@ -825,6 +958,7 @@ pub fn mask_elements_branchless(r: &mut [f64], a: &[bool]) {
 }
 
 #[inline]
+#[allow(dead_code)]
 fn pair_idx(i: usize, j: usize, n: usize) -> usize {
     // blocks: (1,2..n), (2,3..n), ...
     debug_assert!(1 <= i && i < j && j <= n);
@@ -959,12 +1093,16 @@ mod tests {
         let npairs = n * (n - 1) / 2;
         let mut grad = vec![0.0; npairs];
         let mut resid = vec![0.0; npairs];
+        let tri_idx = PackedTriIndex::new(n);
+        let mut kernel_perf = KernelPerf::default();
         eval_gradient(
             &weights.x,
             &y_pairs_from_matrix(&cycle, &distances),
             &mut grad,
             &mut resid,
-            n,
+            &tri_idx,
+            &mut kernel_perf,
+            false,
         );
 
         // Project
@@ -1080,14 +1218,18 @@ mod tests {
         let mut x_ref = x0.clone();
 
         let mut scratch = Scratch::new(npairs);
+        let tri_idx = PackedTriIndex::new(n);
+        let mut kernel_perf = KernelPerf::default();
         let it_new = cgnr(
             &mut x_new,
             &d,
             &active,
-            n,
             200,
             1e-14,
             &mut scratch,
+            &tri_idx,
+            &mut kernel_perf,
+            false,
             None,
             Instant::now(),
             u64::MAX,

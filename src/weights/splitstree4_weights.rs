@@ -1,10 +1,52 @@
 use anyhow::Result;
 use fixedbitset::FixedBitSet;
+use log::info;
 use ndarray::Array2;
+use std::time::{Duration, Instant};
 
 use crate::splits::asplit::ASplit;
 
 pub const DEFAULT_CUTOFF: f64 = 1e-6;
+
+#[allow(dead_code)]
+#[derive(Debug)]
+struct PackedTriIndex {
+    n: usize,
+    npairs: usize,
+    row_offsets: Vec<usize>,
+}
+
+impl PackedTriIndex {
+    fn new(n: usize) -> Self {
+        let npairs = n * (n - 1) / 2;
+        let mut row_offsets = vec![0usize; n];
+        let mut start = 0usize;
+        for (i, off) in row_offsets.iter_mut().enumerate() {
+            *off = start;
+            start += n - i - 1;
+        }
+        Self {
+            n,
+            npairs,
+            row_offsets,
+        }
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    fn pair_idx(&self, i: usize, j: usize) -> usize {
+        debug_assert!(i < j && j < self.n);
+        self.row_offsets[i] + (j - i - 1)
+    }
+}
+
+#[derive(Default, Debug)]
+struct KernelPerf {
+    calc_ab_calls: usize,
+    calc_atx_calls: usize,
+    calc_ab_time: Duration,
+    calc_atx_time: Duration,
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Variance {
@@ -141,6 +183,13 @@ fn run_active_conjugate(
 ) {
     let collapse_many_negs = true;
     let npairs = d.len();
+    let tri_idx = PackedTriIndex::new(n);
+    debug_assert_eq!(npairs, tri_idx.npairs);
+    let track_kernel_perf = npairs > 4096;
+    let mut kernel_perf = KernelPerf::default();
+    let mut outer_iter = 0usize;
+    let mut next_info_iter = 10usize;
+    let started = Instant::now();
     if w.len() != npairs || x.len() != npairs {
         panic!("Vectors d,W,x have different dimensions");
     }
@@ -162,7 +211,7 @@ fn run_active_conjugate(
     for k in 0..npairs {
         y[k] = w[k] * d[k];
     }
-    calculate_atx(n, &y, &mut atwd);
+    profiled_calculate_atx(&y, &mut atwd, &tri_idx, &mut kernel_perf, track_kernel_perf);
 
     if options.regularization != Regularization::Nnls {
         let mut max_atwd = 0.0;
@@ -179,10 +228,22 @@ fn run_active_conjugate(
 
     let mut first_pass = true;
     loop {
+        outer_iter += 1;
         loop {
             if !first_pass {
                 circular_conjugate_grads(
-                    n, npairs, &mut r, &mut wtmp, &mut p, &mut y, w, &atwd, &active, x,
+                    npairs,
+                    &mut r,
+                    &mut wtmp,
+                    &mut p,
+                    &mut y,
+                    w,
+                    &atwd,
+                    &active,
+                    x,
+                    &tri_idx,
+                    &mut kernel_perf,
+                    track_kernel_perf,
                 );
             }
             first_pass = false;
@@ -194,7 +255,18 @@ fn run_active_conjugate(
                         active[idx] = true;
                     }
                     circular_conjugate_grads(
-                        n, npairs, &mut r, &mut wtmp, &mut p, &mut y, w, &atwd, &active, x,
+                        npairs,
+                        &mut r,
+                        &mut wtmp,
+                        &mut p,
+                        &mut y,
+                        w,
+                        &atwd,
+                        &active,
+                        x,
+                        &tri_idx,
+                        &mut kernel_perf,
+                        track_kernel_perf,
                     );
                 }
             }
@@ -225,11 +297,24 @@ fn run_active_conjugate(
             }
         }
 
-        calculate_ab(n, x, &mut y);
+        profiled_calculate_ab(x, &mut y, &tri_idx, &mut kernel_perf, track_kernel_perf);
         for i in 0..npairs {
             y[i] *= w[i];
         }
-        calculate_atx(n, &y, &mut r);
+        profiled_calculate_atx(&y, &mut r, &tri_idx, &mut kernel_perf, track_kernel_perf);
+
+        if track_kernel_perf && outer_iter >= next_info_iter {
+            info!(
+                "SplitsTree4 weights progress: outer_iter={} elapsed={:.1}s ab_calls={} atx_calls={} ab_avg_us={:.1} atx_avg_us={:.1}",
+                outer_iter,
+                started.elapsed().as_secs_f64(),
+                kernel_perf.calc_ab_calls,
+                kernel_perf.calc_atx_calls,
+                avg_time_us(kernel_perf.calc_ab_time, kernel_perf.calc_ab_calls),
+                avg_time_us(kernel_perf.calc_atx_time, kernel_perf.calc_atx_calls),
+            );
+            next_info_iter += 10;
+        }
 
         let mut min_i: Option<usize> = None;
         let mut min_grad = 1.0_f64;
@@ -312,6 +397,7 @@ fn run_unconstrained_ls(n: usize, d: &[f64], x: &mut [f64]) {
     x[index] = (d[index] + d[n - 2] - d[n - 3]) / 2.0;
 }
 
+#[allow(dead_code)]
 fn rowsum(n: usize, d: &[f64], k: usize) -> f64 {
     let mut r = 0.0;
     let mut index = 0usize;
@@ -331,7 +417,14 @@ fn rowsum(n: usize, d: &[f64], k: usize) -> f64 {
     r
 }
 
+#[allow(dead_code)]
 fn calculate_atx(n: usize, d: &[f64], p: &mut [f64]) {
+    let tri_idx = PackedTriIndex::new(n);
+    calculate_atx_indexed(d, p, &tri_idx);
+}
+
+fn calculate_atx_indexed(d: &[f64], p: &mut [f64], tri_idx: &PackedTriIndex) {
+    let n = tri_idx.n;
     let mut index = 0usize;
     for i in 0..n - 1 {
         p[index] = rowsum(n, d, i + 1);
@@ -355,7 +448,14 @@ fn calculate_atx(n: usize, d: &[f64], p: &mut [f64]) {
     }
 }
 
+#[allow(dead_code)]
 fn calculate_ab(n: usize, b: &[f64], d: &mut [f64]) {
+    let tri_idx = PackedTriIndex::new(n);
+    calculate_ab_indexed(b, d, &tri_idx);
+}
+
+fn calculate_ab_indexed(b: &[f64], d: &mut [f64], tri_idx: &PackedTriIndex) {
+    let n = tri_idx.n;
     let mut dindex = 0usize;
 
     for i in 0..=n - 2 {
@@ -397,8 +497,52 @@ fn norm(x: &[f64]) -> f64 {
     x.iter().map(|v| v * v).sum()
 }
 
+#[inline]
+fn profiled_calculate_ab(
+    b: &[f64],
+    d: &mut [f64],
+    tri_idx: &PackedTriIndex,
+    perf: &mut KernelPerf,
+    track: bool,
+) {
+    if track {
+        let t0 = Instant::now();
+        calculate_ab_indexed(b, d, tri_idx);
+        perf.calc_ab_calls += 1;
+        perf.calc_ab_time += t0.elapsed();
+    } else {
+        calculate_ab_indexed(b, d, tri_idx);
+    }
+}
+
+#[inline]
+fn profiled_calculate_atx(
+    d: &[f64],
+    p: &mut [f64],
+    tri_idx: &PackedTriIndex,
+    perf: &mut KernelPerf,
+    track: bool,
+) {
+    if track {
+        let t0 = Instant::now();
+        calculate_atx_indexed(d, p, tri_idx);
+        perf.calc_atx_calls += 1;
+        perf.calc_atx_time += t0.elapsed();
+    } else {
+        calculate_atx_indexed(d, p, tri_idx);
+    }
+}
+
+#[inline]
+fn avg_time_us(total: Duration, calls: usize) -> f64 {
+    if calls == 0 {
+        0.0
+    } else {
+        total.as_secs_f64() * 1e6 / calls as f64
+    }
+}
+
 fn circular_conjugate_grads(
-    n: usize,
     npairs: usize,
     r: &mut [f64],
     w: &mut [f64],
@@ -408,14 +552,17 @@ fn circular_conjugate_grads(
     b: &[f64],
     active: &[bool],
     x: &mut [f64],
+    tri_idx: &PackedTriIndex,
+    kernel_perf: &mut KernelPerf,
+    track_kernel_perf: bool,
 ) {
-    let kmax = n * (n - 1) / 2;
+    let kmax = tri_idx.npairs;
 
-    calculate_ab(n, x, y);
+    profiled_calculate_ab(x, y, tri_idx, kernel_perf, track_kernel_perf);
     for k in 0..npairs {
         y[k] = weights[k] * y[k];
     }
-    calculate_atx(n, y, r);
+    profiled_calculate_atx(y, r, tri_idx, kernel_perf, track_kernel_perf);
 
     for k in 0..npairs {
         if !active[k] {
@@ -442,11 +589,11 @@ fn circular_conjugate_grads(
             }
         }
 
-        calculate_ab(n, p, y);
+        profiled_calculate_ab(p, y, tri_idx, kernel_perf, track_kernel_perf);
         for i in 0..npairs {
             y[i] *= weights[i];
         }
-        calculate_atx(n, y, w);
+        profiled_calculate_atx(y, w, tri_idx, kernel_perf, track_kernel_perf);
         for i in 0..npairs {
             if active[i] {
                 w[i] = 0.0;
