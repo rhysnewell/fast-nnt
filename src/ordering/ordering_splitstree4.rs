@@ -35,11 +35,12 @@ pub fn compute_order_splits_tree4_with_sx(
     }
 
     let max_nodes = 3 * n_tax - 5;
-    let mut mat = vec![vec![0.0_f64; max_nodes]; max_nodes];
+    let stride = max_nodes;
+    let mut mat = vec![0.0_f64; max_nodes * max_nodes];
 
     for i in 1..=n_tax {
         for j in 1..=n_tax {
-            mat[i][j] = dist[(i - 1, j - 1)];
+            mat[i * stride + j] = dist[(i - 1, j - 1)];
         }
     }
 
@@ -52,7 +53,7 @@ pub fn compute_order_splits_tree4_with_sx(
         nodes[id].next = nodes[0].next;
         nodes[0].next = Some(id);
     }
-    // set prev pointers (first active’s prev = header 0)
+    // set prev pointers (first active's prev = header 0)
     {
         let mut t = 0usize;
         while let Some(nxt) = nodes[t].next {
@@ -61,9 +62,9 @@ pub fn compute_order_splits_tree4_with_sx(
         }
     }
 
-    debug!("Working matrix allocated: {}x{}", mat.len(), mat[0].len());
+    debug!("Working matrix allocated: {}x{}", stride, stride);
     // 3) Agglomerate
-    let joins = join_nodes(&mut mat, &mut nodes, 0, n_tax, sx_mode)?;
+    let joins = join_nodes(&mut mat, stride, &mut nodes, 0, n_tax, sx_mode)?;
 
     // 4) Expand joins to a circular ordering of leaves
     expand_nodes(n_tax, &mut nodes, 0, joins)
@@ -120,7 +121,8 @@ impl NetNode {
 /* ---------------------------- agglomeration ----------------------------- */
 
 fn join_nodes(
-    d: &mut [Vec<f64>],
+    d: &mut [f64],
+    stride: usize,
     nodes: &mut [NetNode],
     head: usize,
     n_tax: usize,
@@ -137,9 +139,13 @@ fn join_nodes(
 
     // Compute Sx once, then maintain it incrementally as clusters are agglomerated.
     match sx_mode {
-        SxMode::Serial => compute_sx_serial(d, nodes, head),
-        SxMode::Parallel => compute_sx_parallel(d, nodes, head),
+        SxMode::Serial => compute_sx_serial(d, stride, nodes, head),
+        SxMode::Parallel => compute_sx_parallel(d, stride, nodes, head),
     }
+
+    // Reusable buffers across loop iterations
+    let mut reps_buf = Vec::with_capacity(n_tax);
+    let mut updates_buf: Vec<(usize, f64)> = Vec::with_capacity(n_tax);
 
     while num_active > 3 {
         iters += 1;
@@ -154,17 +160,20 @@ fn join_nodes(
             };
             let pn = nodes[p].nbr.context("expected partner (pn)")?;
             let qn = nodes[q].nbr.context("expected partner (qn)")?;
-            let lhs = d[nodes[p].id][nodes[q].id] + d[nodes[pn].id][nodes[qn].id];
-            let rhs = d[nodes[p].id][nodes[qn].id] + d[nodes[pn].id][nodes[q].id];
+            let lhs = d[nodes[p].id * stride + nodes[q].id] + d[nodes[pn].id * stride + nodes[qn].id];
+            let rhs = d[nodes[p].id * stride + nodes[qn].id] + d[nodes[pn].id * stride + nodes[q].id];
             if lhs < rhs {
-                join3way(p, q, qn, &mut joins, d, nodes, head, &mut num_nodes)?;
+                join3way(p, q, qn, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
             } else {
-                join3way(p, qn, q, &mut joins, d, nodes, head, &mut num_nodes)?;
+                join3way(p, qn, q, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
             }
             break;
         }
 
-        let reps = snapshot_cluster_representatives(nodes, head);
+        fill_cluster_representatives(nodes, head, &mut reps_buf);
+
+        // Precompute max Sx for pruning bounds
+        let max_sx = reps_buf.iter().map(|&r| nodes[r].sx).fold(f64::NEG_INFINITY, f64::max);
 
         // --- Choose representatives ---
         let (cx, cy, _bestq) = {
@@ -173,10 +182,24 @@ fn join_nodes(
             let mut best = 0.0_f64; // Java seeds to 0. First candidate sets it.
             let mut best_leafs: u8 = 0;
 
-            for i in 0..reps.len() {
-                let p = reps[i];
-                for &q in &reps[..i] {
-                    let dpq = avg_cluster_dist(d, nodes, p, q);
+            for i in 0..reps_buf.len() {
+                let p = reps_buf[i];
+                // Outer bound: if even pairing with the highest-Sx rep can't beat best, skip
+                if c_x.is_some() {
+                    let bound = -(nodes[p].sx + max_sx);
+                    if bound > best + EPS {
+                        continue;
+                    }
+                }
+                for &q in &reps_buf[..i] {
+                    // Inner bound: check if this pair can possibly beat best
+                    if c_x.is_some() {
+                        let bound = -(nodes[p].sx + nodes[q].sx);
+                        if bound > best + EPS {
+                            continue;
+                        }
+                    }
+                    let dpq = avg_cluster_dist(d, stride, nodes, p, q);
                     let qpq = (num_clusters as f64 - 2.0) * dpq - nodes[p].sx - nodes[q].sx;
                     // System.out.debug("\t"+"["+p.id+","+q.id+"] \t = \t "+Qpq);
                     if num_clusters <= 40 {
@@ -212,7 +235,7 @@ fn join_nodes(
 
         // --- Rx for candidates (if needed) ---
         if nodes[cx].nbr.is_some() || nodes[cy].nbr.is_some() {
-            compute_rx_candidates(cx, cy, d, nodes, head);
+            compute_rx_candidates(cx, cy, d, stride, nodes, head);
         } else {
             nodes[cx].rx = 0.0;
             nodes[cy].rx = 0.0;
@@ -231,11 +254,11 @@ fn join_nodes(
         }
 
         let mut best_q =
-            (m as f64 - 2.0) * d[nodes[cx].id][nodes[cy].id] - nodes[cx].rx - nodes[cy].rx;
+            (m as f64 - 2.0) * d[nodes[cx].id * stride + nodes[cy].id] - nodes[cx].rx - nodes[cy].rx;
 
         if let Some(cxb) = nodes[cx].nbr {
             let qv =
-                (m as f64 - 2.0) * d[nodes[cxb].id][nodes[cy].id] - nodes[cxb].rx - nodes[cy].rx;
+                (m as f64 - 2.0) * d[nodes[cxb].id * stride + nodes[cy].id] - nodes[cxb].rx - nodes[cy].rx;
             if fuzzy_lt(qv, best_q) {
                 best_q = qv;
                 x = cxb;
@@ -244,7 +267,7 @@ fn join_nodes(
         }
         if let Some(cyb) = nodes[cy].nbr {
             let qv =
-                (m as f64 - 2.0) * d[nodes[cx].id][nodes[cyb].id] - nodes[cx].rx - nodes[cyb].rx;
+                (m as f64 - 2.0) * d[nodes[cx].id * stride + nodes[cyb].id] - nodes[cx].rx - nodes[cyb].rx;
             if fuzzy_lt(qv, best_q) {
                 best_q = qv;
                 x = cx;
@@ -253,7 +276,7 @@ fn join_nodes(
         }
         if let (Some(cxb), Some(cyb)) = (nodes[cx].nbr, nodes[cy].nbr) {
             let qv =
-                (m as f64 - 2.0) * d[nodes[cxb].id][nodes[cyb].id] - nodes[cxb].rx - nodes[cyb].rx;
+                (m as f64 - 2.0) * d[nodes[cxb].id * stride + nodes[cyb].id] - nodes[cxb].rx - nodes[cyb].rx;
             if fuzzy_lt(qv, best_q) {
                 x = cxb;
                 y = cyb;
@@ -267,7 +290,7 @@ fn join_nodes(
                 debug!("Join 2 way: x {} y {} num_active {}", x, y, num_active);
                 join2way(nodes, x, y);
                 let new_rep = cluster_rep(x, nodes);
-                update_sx_after_join2(d, nodes, &reps, x, y, new_rep);
+                update_sx_after_join2(d, stride, nodes, &reps_buf, x, y, new_rep, &mut updates_buf);
                 num_clusters -= 1;
             }
             (None, Some(_), _) => {
@@ -278,8 +301,8 @@ fn join_nodes(
                     .nbr
                     .context("expected y.nbr for 3-way agglomeration")?;
                 debug!("Join 3(1) way: x {} y {} num_active {}", x, y, num_active);
-                let new_rep = join3way(x, y, y_nbr, &mut joins, d, nodes, head, &mut num_nodes)?;
-                update_sx_after_merge(d, nodes, &reps, rem_a, rem_b, new_rep);
+                let new_rep = join3way(x, y, y_nbr, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
+                update_sx_after_merge(d, stride, nodes, &reps_buf, rem_a, rem_b, new_rep, &mut updates_buf);
                 num_nodes += 2;
                 num_active -= 1;
                 num_clusters -= 1;
@@ -297,8 +320,8 @@ fn join_nodes(
                     "Join 3(2) way: x2 {} y2 {} num_active {}",
                     x2, y2, num_active
                 );
-                let new_rep = join3way(x2, y2, y2_nbr, &mut joins, d, nodes, head, &mut num_nodes)?;
-                update_sx_after_merge(d, nodes, &reps, rem_a, rem_b, new_rep);
+                let new_rep = join3way(x2, y2, y2_nbr, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
+                update_sx_after_merge(d, stride, nodes, &reps_buf, rem_a, rem_b, new_rep, &mut updates_buf);
                 num_nodes += 2;
                 num_active -= 1;
                 num_clusters -= 1;
@@ -314,8 +337,8 @@ fn join_nodes(
                     "Join 4-way: xb {} x {} y {} yb {} num_active {}",
                     xb, x, y, yb, num_active
                 );
-                let new_rep = join4way(xb, x, y, yb, &mut joins, d, nodes, head, &mut num_nodes)?;
-                update_sx_after_merge(d, nodes, &reps, rem_a, rem_b, new_rep);
+                let new_rep = join4way(xb, x, y, yb, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
+                update_sx_after_merge(d, stride, nodes, &reps_buf, rem_a, rem_b, new_rep, &mut updates_buf);
                 num_active -= 2;
                 num_clusters -= 1;
             }
@@ -371,16 +394,15 @@ fn pair_key(a: usize, b: usize, nodes: &[NetNode]) -> (usize, usize) {
 }
 
 #[inline]
-fn snapshot_cluster_representatives(nodes: &[NetNode], head: usize) -> Vec<usize> {
-    let mut reps = Vec::new();
+fn fill_cluster_representatives(nodes: &[NetNode], head: usize, buf: &mut Vec<usize>) {
+    buf.clear();
     let mut p_opt = nodes[head].next;
     while let Some(p) = p_opt {
         if nodes[p].nbr.map_or(true, |nb| nodes[nb].id > nodes[p].id) {
-            reps.push(p);
+            buf.push(p);
         }
         p_opt = nodes[p].next;
     }
-    reps
 }
 
 #[inline]
@@ -400,22 +422,24 @@ fn set_cluster_sx(nodes: &mut [NetNode], rep: usize, sx: f64) {
 }
 
 #[inline]
-fn avg_cluster_dist_to_singleton(mat: &[Vec<f64>], nodes: &[NetNode], p: usize, s: usize) -> f64 {
+fn avg_cluster_dist_to_singleton(mat: &[f64], stride: usize, nodes: &[NetNode], p: usize, s: usize) -> f64 {
     match nodes[p].nbr {
-        None => mat[nodes[p].id][nodes[s].id],
-        Some(pb) => 0.5 * (mat[nodes[p].id][nodes[s].id] + mat[nodes[pb].id][nodes[s].id]),
+        None => mat[nodes[p].id * stride + nodes[s].id],
+        Some(pb) => 0.5 * (mat[nodes[p].id * stride + nodes[s].id] + mat[nodes[pb].id * stride + nodes[s].id]),
     }
 }
 
 fn update_sx_after_join2(
-    mat: &[Vec<f64>],
+    mat: &[f64],
+    stride: usize,
     nodes: &mut [NetNode],
     reps_before: &[usize],
     x: usize,
     y: usize,
     new_rep: usize,
+    updates: &mut Vec<(usize, f64)>,
 ) {
-    let mut updates = Vec::with_capacity(reps_before.len().saturating_sub(2));
+    updates.clear();
     let mut new_sx = 0.0;
 
     for &k in reps_before {
@@ -423,28 +447,30 @@ fn update_sx_after_join2(
             continue;
         }
         let old = nodes[k].sx;
-        let d_kx = avg_cluster_dist_to_singleton(mat, nodes, k, x);
-        let d_ky = avg_cluster_dist_to_singleton(mat, nodes, k, y);
+        let d_kx = avg_cluster_dist_to_singleton(mat, stride, nodes, k, x);
+        let d_ky = avg_cluster_dist_to_singleton(mat, stride, nodes, k, y);
         let d_knew = 0.5 * (d_kx + d_ky);
         updates.push((k, old - d_kx - d_ky + d_knew));
         new_sx += d_knew;
     }
 
-    for (k, sx) in updates {
+    for &(k, sx) in updates.iter() {
         set_cluster_sx(nodes, k, sx);
     }
     set_cluster_sx(nodes, new_rep, new_sx);
 }
 
 fn update_sx_after_merge(
-    mat: &[Vec<f64>],
+    mat: &[f64],
+    stride: usize,
     nodes: &mut [NetNode],
     reps_before: &[usize],
     rem_a: usize,
     rem_b: usize,
     new_rep: usize,
+    updates: &mut Vec<(usize, f64)>,
 ) {
-    let mut updates = Vec::with_capacity(reps_before.len().saturating_sub(2));
+    updates.clear();
     let mut new_sx = 0.0;
 
     for &k in reps_before {
@@ -452,14 +478,14 @@ fn update_sx_after_merge(
             continue;
         }
         let old = nodes[k].sx;
-        let d_ka = avg_cluster_dist(mat, nodes, k, rem_a);
-        let d_kb = avg_cluster_dist(mat, nodes, k, rem_b);
-        let d_knew = avg_cluster_dist(mat, nodes, k, new_rep);
+        let d_ka = avg_cluster_dist(mat, stride, nodes, k, rem_a);
+        let d_kb = avg_cluster_dist(mat, stride, nodes, k, rem_b);
+        let d_knew = avg_cluster_dist(mat, stride, nodes, k, new_rep);
         updates.push((k, old - d_ka - d_kb + d_knew));
         new_sx += d_knew;
     }
 
-    for (k, sx) in updates {
+    for &(k, sx) in updates.iter() {
         set_cluster_sx(nodes, k, sx);
     }
     set_cluster_sx(nodes, new_rep, new_sx);
@@ -478,7 +504,8 @@ fn join3way(
     y: usize,
     z: usize,
     joins: &mut Vec<usize>,
-    mat: &mut [Vec<f64>],
+    mat: &mut [f64],
+    stride: usize,
     nodes: &mut [NetNode],
     head: usize,
     num_nodes: &mut usize, // current max id; this function *does not* increment it (call-site does)
@@ -533,7 +560,6 @@ fn join3way(
     }
 
     // --- Update distances exactly like the Java code ---
-    // let actives = snapshot_active(nodes, head);
     {
         let xid = nodes[x].id;
         let yid = nodes[y].id;
@@ -543,16 +569,16 @@ fn join3way(
         while let Some(p) = p_opt {
             let pid = nodes[p].id;
 
-            mat[u][pid] = (2.0 / 3.0) * mat[xid][pid] + (1.0 / 3.0) * mat[yid][pid];
-            mat[pid][u] = mat[u][pid];
+            mat[u * stride + pid] = (2.0 / 3.0) * mat[xid * stride + pid] + (1.0 / 3.0) * mat[yid * stride + pid];
+            mat[pid * stride + u] = mat[u * stride + pid];
 
-            mat[v][pid] = (2.0 / 3.0) * mat[zid][pid] + (1.0 / 3.0) * mat[yid][pid];
-            mat[pid][v] = mat[v][pid];
+            mat[v * stride + pid] = (2.0 / 3.0) * mat[zid * stride + pid] + (1.0 / 3.0) * mat[yid * stride + pid];
+            mat[pid * stride + v] = mat[v * stride + pid];
 
             p_opt = nodes[p].next;
         }
-        mat[u][u] = 0.0;
-        mat[v][v] = 0.0;
+        mat[u * stride + u] = 0.0;
+        mat[v * stride + v] = 0.0;
     }
 
     joins.push(u);
@@ -565,13 +591,14 @@ fn join4way(
     y: usize,
     y2: usize,
     joins: &mut Vec<usize>,
-    mat: &mut [Vec<f64>],
+    mat: &mut [f64],
+    stride: usize,
     nodes: &mut [NetNode],
     head: usize,
     num_nodes: &mut usize,
 ) -> Result<usize> {
     // First 3-way
-    let u = join3way(x2, x, y, joins, mat, nodes, head, num_nodes)?;
+    let u = join3way(x2, x, y, joins, mat, stride, nodes, head, num_nodes)?;
     *num_nodes += 2;
     // Second 3-way
     let final_u = join3way(
@@ -580,6 +607,7 @@ fn join4way(
         y2,
         joins,
         mat,
+        stride,
         nodes,
         head,
         num_nodes,
@@ -590,21 +618,21 @@ fn join4way(
 
 /* ---------------------------- scoring helpers --------------------------- */
 
-fn avg_cluster_dist(mat: &[Vec<f64>], nodes: &[NetNode], p: usize, q: usize) -> f64 {
+fn avg_cluster_dist(mat: &[f64], stride: usize, nodes: &[NetNode], p: usize, q: usize) -> f64 {
     match (nodes[p].nbr, nodes[q].nbr) {
-        (None, None) => mat[nodes[p].id][nodes[q].id],
-        (Some(pb), None) => 0.5 * (mat[nodes[p].id][nodes[q].id] + mat[nodes[pb].id][nodes[q].id]),
-        (None, Some(qb)) => 0.5 * (mat[nodes[p].id][nodes[q].id] + mat[nodes[p].id][nodes[qb].id]),
+        (None, None) => mat[nodes[p].id * stride + nodes[q].id],
+        (Some(pb), None) => 0.5 * (mat[nodes[p].id * stride + nodes[q].id] + mat[nodes[pb].id * stride + nodes[q].id]),
+        (None, Some(qb)) => 0.5 * (mat[nodes[p].id * stride + nodes[q].id] + mat[nodes[p].id * stride + nodes[qb].id]),
         (Some(pb), Some(qb)) => {
-            0.25 * (mat[nodes[p].id][nodes[q].id]
-                + mat[nodes[p].id][nodes[qb].id]
-                + mat[nodes[pb].id][nodes[q].id]
-                + mat[nodes[pb].id][nodes[qb].id])
+            0.25 * (mat[nodes[p].id * stride + nodes[q].id]
+                + mat[nodes[p].id * stride + nodes[qb].id]
+                + mat[nodes[pb].id * stride + nodes[q].id]
+                + mat[nodes[pb].id * stride + nodes[qb].id])
         }
     }
 }
 
-fn compute_sx_serial(d: &[Vec<f64>], nodes: &mut [NetNode], head: usize) {
+fn compute_sx_serial(d: &[f64], stride: usize, nodes: &mut [NetNode], head: usize) {
     // zero Sx for all actives
     let mut p_opt = nodes[head].next;
     while let Some(p) = p_opt {
@@ -627,7 +655,7 @@ fn compute_sx_serial(d: &[Vec<f64>], nodes: &mut [NetNode], head: usize) {
                     Some(nb) => nodes[nb].id > nodes[q].id && nodes[q].nbr != Some(p),
                 };
                 if eval_q {
-                    let dpq = avg_cluster_dist(d, nodes, p, q);
+                    let dpq = avg_cluster_dist(d, stride, nodes, p, q);
                     nodes[p].sx += dpq;
                     if let Some(pb) = nodes[p].nbr {
                         nodes[pb].sx += dpq;
@@ -644,7 +672,7 @@ fn compute_sx_serial(d: &[Vec<f64>], nodes: &mut [NetNode], head: usize) {
     }
 }
 
-fn compute_sx_parallel(d: &[Vec<f64>], nodes: &mut [NetNode], head: usize) {
+fn compute_sx_parallel(d: &[f64], stride: usize, nodes: &mut [NetNode], head: usize) {
     let mut actives = Vec::new();
     let mut p_opt = nodes[head].next;
     while let Some(p) = p_opt {
@@ -681,7 +709,7 @@ fn compute_sx_parallel(d: &[Vec<f64>], nodes: &mut [NetNode], head: usize) {
                     if !eval_q {
                         continue;
                     }
-                    let dpq = avg_cluster_dist(d, nodes_ro, p, q);
+                    let dpq = avg_cluster_dist(d, stride, nodes_ro, p, q);
                     acc[p] += dpq;
                     if let Some(pb) = nodes_ro[p].nbr {
                         acc[pb] += dpq;
@@ -712,7 +740,8 @@ fn compute_sx_parallel(d: &[Vec<f64>], nodes: &mut [NetNode], head: usize) {
 fn compute_rx_candidates(
     cx: usize,
     cy: usize,
-    mat: &[Vec<f64>],
+    mat: &[f64],
+    stride: usize,
     nodes: &mut [NetNode],
     head: usize,
 ) {
@@ -741,7 +770,7 @@ fn compute_rx_candidates(
             || nodes[cy].nbr == Some(p)
             || nodes[p].nbr.is_none();
         for (i, &z) in targets.iter().enumerate() {
-            let term = mat[nodes[z].id][nodes[p].id];
+            let term = mat[nodes[z].id * stride + nodes[p].id];
             sums[i] += if cond { term } else { term / 2.0 };
         }
         p_opt = nodes[p].next;

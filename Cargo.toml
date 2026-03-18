@@ -59,6 +59,10 @@ harness = false
 name = "ordering_matrix"
 harness = false
 
+[[bench]]
+name = "splitstree4_weights"
+harness = false
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
