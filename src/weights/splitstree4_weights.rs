@@ -253,16 +253,6 @@ fn run_active_conjugate(
     }
     profiled_calculate_atx(&y, &mut atwd, &tri_idx, &mut kernel_perf, track_kernel_perf, &mut row_sums);
 
-    // Jacobi preconditioner: estimate diag(A^T A) for large problems.
-    // Uses 3 deterministic Rademacher probes (6 kernel calls). Only enabled for
-    // large problems (npairs > 100k) where CG convergence dominates wall time.
-    // Below this threshold the Hutchinson diagonal estimate is too noisy and hurts.
-    let precond: Option<Vec<f64>> = if npairs > 100_000 {
-        Some(estimate_ata_diagonal(&tri_idx, &mut row_sums))
-    } else {
-        None
-    };
-
     if options.regularization != Regularization::Nnls {
         let mut max_atwd = 0.0;
         for &val in &atwd {
@@ -292,7 +282,6 @@ fn run_active_conjugate(
                     &active,
                     x,
                     &tri_idx,
-                    precond.as_deref(),
                     &mut row_sums,
                     &mut progress,
                     &mut kernel_perf,
@@ -321,7 +310,6 @@ fn run_active_conjugate(
                         &active,
                         x,
                         &tri_idx,
-                        precond.as_deref(),
                         &mut row_sums,
                         &mut progress,
                         &mut kernel_perf,
@@ -638,83 +626,6 @@ fn avg_time_us(total: Duration, calls: usize) -> f64 {
     }
 }
 
-#[inline]
-#[allow(dead_code)]
-fn gather(src: &[f64], indices: &[usize], dst: &mut [f64]) {
-    for (slot, &idx) in indices.iter().enumerate() {
-        dst[slot] = src[idx];
-    }
-}
-
-#[inline]
-#[allow(dead_code)]
-fn scatter(src: &[f64], indices: &[usize], dst: &mut [f64]) {
-    for (slot, &idx) in indices.iter().enumerate() {
-        dst[idx] = src[slot];
-    }
-}
-
-#[inline]
-#[allow(dead_code)]
-fn apply_precond_free(r: &[f64], z: &mut [f64], precond: Option<&[f64]>, free_indices: &[usize]) {
-    match precond {
-        Some(m) => {
-            for i in 0..r.len() {
-                z[i] = r[i] / m[free_indices[i]];
-            }
-        }
-        None => z.copy_from_slice(r),
-    }
-}
-
-/// Estimate diag(A^T A) using Hutchinson stochastic estimator with
-/// 3 deterministic Rademacher-like probe vectors. Cost: 6 kernel calls.
-fn estimate_ata_diagonal(tri_idx: &PackedTriIndex, row_sums: &mut [f64]) -> Vec<f64> {
-    let npairs = tri_idx.npairs;
-    let mut diag = vec![0.0; npairs];
-    let mut ar = vec![0.0; npairs];
-    let mut atar = vec![0.0; npairs];
-
-    let probes: &[fn(usize) -> f64] = &[
-        |i| if i % 2 == 0 { 1.0 } else { -1.0 },
-        |i| if (i / 3) % 2 == 0 { 1.0 } else { -1.0 },
-        |i| if (i / 7) % 2 == 0 { 1.0 } else { -1.0 },
-    ];
-    let n_probes = probes.len();
-
-    for probe_fn in probes {
-        let r: Vec<f64> = (0..npairs).map(|i| probe_fn(i)).collect();
-        calculate_ab_indexed(&r, &mut ar, tri_idx, row_sums);
-        calculate_atx_indexed(&ar, &mut atar, tri_idx, row_sums);
-        for i in 0..npairs {
-            diag[i] += r[i] * atar[i];
-        }
-    }
-
-    let inv_probes = 1.0 / n_probes as f64;
-    let mut sum_pos = 0.0;
-    let mut count_pos = 0usize;
-    for d in diag.iter_mut() {
-        *d *= inv_probes;
-        if *d > 0.0 {
-            sum_pos += *d;
-            count_pos += 1;
-        }
-    }
-    let avg_pos = if count_pos > 0 {
-        sum_pos / count_pos as f64
-    } else {
-        1.0
-    };
-    let floor = avg_pos * 0.01;
-    for d in diag.iter_mut() {
-        if *d < floor {
-            *d = floor;
-        }
-    }
-    diag
-}
-
 fn circular_conjugate_grads(
     npairs: usize,
     r: &mut [f64],
@@ -726,32 +637,15 @@ fn circular_conjugate_grads(
     active: &[bool],
     x: &mut [f64],
     tri_idx: &PackedTriIndex,
-    precond: Option<&[f64]>,
     row_sums: &mut [f64],
     progress: &mut SolveProgress,
     kernel_perf: &mut KernelPerf,
     track_kernel_perf: bool,
 ) {
-    // Safety cap on CG iterations. CG typically converges in ~85 iterations per
-    // call (observed at n=3333), so 2000 is a no-op under normal conditions. This
-    // only guards against pathological stalls — the outer active-set loop will
-    // still converge regardless of inner CG accuracy.
-    let kmax = 2000.min(tri_idx.npairs);
+    let kmax = tri_idx.npairs;
     progress.cg_calls += 1;
     let cg_call = progress.cg_calls;
 
-    // Collect free (non-active) indices for reduced-space operations.
-    let free_indices: Vec<usize> = active
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &is_active)| (!is_active).then_some(i))
-        .collect();
-    let nfree = free_indices.len();
-    if nfree == 0 {
-        return;
-    }
-
-    // Compute initial residual: r = b - A^T W A x
     profiled_calculate_ab(x, y, tri_idx, kernel_perf, track_kernel_perf, row_sums);
     if let Some(wt) = weights {
         for k in 0..npairs {
@@ -760,56 +654,32 @@ fn circular_conjugate_grads(
     }
     profiled_calculate_atx(y, r, tri_idx, kernel_perf, track_kernel_perf, row_sums);
 
-    // Reduced-space residual and preconditioned direction
-    let mut r_free = vec![0.0; nfree];
-    let mut z_free = vec![0.0; nfree];
-    let mut p_free = vec![0.0; nfree];
-
-    for (slot, &idx) in free_indices.iter().enumerate() {
-        r_free[slot] = b[idx] - r[idx];
-    }
-    // Zero out active entries in full r (needed for kernel calls)
     for k in 0..npairs {
-        if active[k] {
-            r[k] = 0.0;
-        } else {
+        if !active[k] {
             r[k] = b[k] - r[k];
+        } else {
+            r[k] = 0.0;
         }
     }
 
-    // Apply preconditioner: z = M^{-1} r
-    apply_precond_reduced(&r_free, &mut z_free, precond, &free_indices);
-    p_free.copy_from_slice(&z_free);
-
-    // Scatter p_free to full p for kernel calls
-    p.fill(0.0);
-    for (slot, &idx) in free_indices.iter().enumerate() {
-        p[idx] = p_free[slot];
-    }
-
-    // rho = r^T z (preconditioned inner product)
-    let mut rho: f64 = r_free.iter().zip(z_free.iter()).map(|(&ri, &zi)| ri * zi).sum();
+    let mut rho: f64 = r.iter().map(|v| v * v).sum();
     let mut rho_old = 0.0;
 
     let b_norm_sq: f64 = b.iter().map(|v| v * v).sum();
-    let e0_sq = 0.0001_f64.powi(2) * b_norm_sq;
-    let mut r_norm_sq: f64 = r_free.iter().map(|v| v * v).sum();
+    let e0 = 0.0001 * b_norm_sq.sqrt();
     let mut k = 0usize;
 
-    while r_norm_sq > e0_sq && k < kmax {
+    while rho > e0 * e0 && k < kmax {
         k += 1;
-        if k > 1 {
+        if k == 1 {
+            p.copy_from_slice(r);
+        } else {
             let beta = rho / rho_old;
-            for i in 0..nfree {
-                p_free[i] = z_free[i] + beta * p_free[i];
-            }
-            // Scatter to full p (active entries stay 0 from initial fill)
-            for (slot, &idx) in free_indices.iter().enumerate() {
-                p[idx] = p_free[slot];
+            for i in 0..npairs {
+                p[i] = r[i] + beta * p[i];
             }
         }
 
-        // Kernel: w = A^T W A p
         profiled_calculate_ab(p, y, tri_idx, kernel_perf, track_kernel_perf, row_sums);
         if let Some(wt) = weights {
             for i in 0..npairs {
@@ -818,61 +688,43 @@ fn circular_conjugate_grads(
         }
         profiled_calculate_atx(y, w, tri_idx, kernel_perf, track_kernel_perf, row_sums);
 
-        // alpha_den = p^T w (over free indices only)
         let mut alpha_den = 0.0;
-        for (slot, &idx) in free_indices.iter().enumerate() {
-            alpha_den += p_free[slot] * w[idx];
-        }
-        if alpha_den <= 0.0 || !alpha_den.is_finite() {
-            break;
+        for i in 0..npairs {
+            if active[i] {
+                w[i] = 0.0;
+            } else {
+                alpha_den += p[i] * w[i];
+            }
         }
         let alpha = rho / alpha_den;
 
-        rho_old = rho;
-        r_norm_sq = 0.0;
-        for (slot, &idx) in free_indices.iter().enumerate() {
-            x[idx] += alpha * p_free[slot];
-            r_free[slot] -= alpha * w[idx];
-            r[idx] = r_free[slot];
-            r_norm_sq += r_free[slot] * r_free[slot];
+        let mut rho_new = 0.0;
+        for i in 0..npairs {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * w[i];
+            rho_new += r[i] * r[i];
         }
-
-        // Apply preconditioner: z = M^{-1} r
-        apply_precond_reduced(&r_free, &mut z_free, precond, &free_indices);
-        rho = r_free.iter().zip(z_free.iter()).map(|(&ri, &zi)| ri * zi).sum();
+        rho_old = rho;
+        rho = rho_new;
 
         if track_kernel_perf && (k & 255) == 0 {
             let now = Instant::now();
             if now >= progress.next_inner_log {
                 info!(
-                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s rho={:.6e} threshold={:.6e}",
                     progress.outer_iter,
                     cg_call,
                     k,
                     progress.cg_iters_total + k,
                     progress.started.elapsed().as_secs_f64(),
-                    r_norm_sq,
-                    e0_sq
+                    rho,
+                    e0 * e0
                 );
                 progress.next_inner_log = now + Duration::from_secs(10);
             }
         }
     }
     progress.cg_iters_total += k;
-}
-
-/// Apply Jacobi preconditioner in reduced space: z[i] = r[i] / M[free_indices[i]].
-/// When precond is None, just copies r to z.
-#[inline]
-fn apply_precond_reduced(r: &[f64], z: &mut [f64], precond: Option<&[f64]>, free_indices: &[usize]) {
-    match precond {
-        Some(m) => {
-            for (i, &idx) in free_indices.iter().enumerate() {
-                z[i] = r[i] / m[idx];
-            }
-        }
-        None => z[..r.len()].copy_from_slice(r),
-    }
 }
 
 #[cfg(test)]
