@@ -11,7 +11,8 @@ use std::{
 
 use super::band::{
     BandIndex, BandKernelPerf, avg_band_time_us, band_to_row, calculate_ab_band,
-    calculate_forward_band, row_to_band,
+    calculate_ab_band_with_masked_norm_sq, calculate_forward_band,
+    calculate_forward_band_with_norm_sq, row_to_band,
 };
 use crate::splits::asplit::ASplit;
 
@@ -307,10 +308,6 @@ fn active_set_method(
         debug!("active set initialized (npairs={})", npairs);
     }
 
-    // Jacobi preconditioner disabled: it changes CGNR convergence behavior
-    // and produces different (incorrect) split counts on large problems.
-    let precond: Option<Vec<f64>> = None;
-
     let start = Instant::now();
     loop {
         debug!("Outer Loop {}", k_outer);
@@ -325,7 +322,6 @@ fn active_set_method(
                 params.cgnr_tolerance,
                 scratch,
                 tri_idx,
-                precond.as_deref(),
                 &mut kernel_perf,
                 track_kernel_perf,
                 progress,
@@ -770,7 +766,6 @@ fn cgnr(
     tol: f64,
     scratch: &mut Scratch,
     tri_idx: &PackedTriIndex,
-    precond: Option<&[f64]>, // band-major
     kernel_perf: &mut BandKernelPerf,
     track_kernel_perf: bool,
     progress: Option<&dyn Progress>,
@@ -795,7 +790,10 @@ fn cgnr(
     let nfree = free_indices.len();
     let mut p_free = vec![0.0; nfree];
     let mut z_free = vec![0.0; nfree];
-    let mut s_free = vec![0.0; nfree]; // preconditioned gradient (= z_free when no precond)
+
+    // Pre-allocate buffers for fused kernels (avoids per-iteration allocation)
+    let mut row_sq_accum = vec![0.0f64; n];
+    let mut shifted = vec![0.0f64; n];
 
     // r = d - A x (band-major)
     // NOTE: active_set's A = calculate_forward_band (FP-matching calc_ax_indexed)
@@ -804,32 +802,44 @@ fn cgnr(
         .zip(d.iter())
         .for_each(|(ri, &di)| *ri = di - *ri);
 
-    // z = Aᵀ r over the free set only (band-major)
-    // NOTE: active_set's A^T = splitstree4's A = calculate_ab_band
-    profiled_adjoint_band(r, z, band, row_sums, kernel_perf, track_kernel_perf);
+    // z = Aᵀ r with fused masked norm-squared
+    let mut zts = profiled_adjoint_band_with_masked_norm(
+        r,
+        z,
+        active_set,
+        band,
+        row_sums,
+        &mut row_sq_accum,
+        &mut shifted,
+        kernel_perf,
+        track_kernel_perf,
+    );
     gather_by_index(z, &free_indices, &mut z_free);
+    p_free.copy_from_slice(&z_free);
 
-    // Apply preconditioner: s = M^{-1} z (or s = z when unpreconditioned)
-    // free_indices are band-major indices, precond is band-major — direct indexing works
-    apply_precond_band(&z_free, &mut s_free, precond, &free_indices);
-    p_free.copy_from_slice(&s_free);
-
-    // Inner product: z^T s
-    let mut zts =
-        precond_inner_product_band(z, active_set, &z_free, &s_free, precond, band, tri_idx);
     if zts <= EPS || !zts.is_finite() {
         return Ok(1);
     }
     let mut k = 1usize;
     let log_cgnr_progress = max_iters >= 1024 && x.len() > 1_000_000;
 
+    // Hoist: only need to zero p once since non-free indices stay zero
+    p.fill(0.0);
+
     loop {
-        p.fill(0.0);
         scatter_by_index(&p_free, &free_indices, p);
 
-        // w = A p (band-major)
-        profiled_forward_band(p, w, band, row_sums, kernel_perf, track_kernel_perf);
-        let denom = sum_array_squared_band(w, band, tri_idx);
+        // w = A p (band-major) with fused norm-squared
+        let denom = profiled_forward_band_with_norm(
+            p,
+            w,
+            band,
+            row_sums,
+            &mut row_sq_accum,
+            &mut shifted,
+            kernel_perf,
+            track_kernel_perf,
+        );
         if denom <= EPS || !denom.is_finite() {
             break;
         }
@@ -843,14 +853,19 @@ fn cgnr(
             r[i] -= alpha * w[i];
         }
 
-        // z = Aᵀ r over the free set only (band-major): active_set A^T = calculate_ab_band
-        profiled_adjoint_band(r, z, band, row_sums, kernel_perf, track_kernel_perf);
+        // z = Aᵀ r with fused masked norm-squared
+        let zts_new = profiled_adjoint_band_with_masked_norm(
+            r,
+            z,
+            active_set,
+            band,
+            row_sums,
+            &mut row_sq_accum,
+            &mut shifted,
+            kernel_perf,
+            track_kernel_perf,
+        );
         gather_by_index(z, &free_indices, &mut z_free);
-
-        // Apply preconditioner
-        apply_precond_band(&z_free, &mut s_free, precond, &free_indices);
-        let zts_new =
-            precond_inner_product_band(z, active_set, &z_free, &s_free, precond, band, tri_idx);
         if zts <= EPS || !zts.is_finite() {
             break;
         }
@@ -869,7 +884,7 @@ fn cgnr(
         }
 
         for i in 0..nfree {
-            p_free[i] = s_free[i] + beta * p_free[i];
+            p_free[i] = z_free[i] + beta * p_free[i];
         }
 
         zts = zts_new;
@@ -983,6 +998,7 @@ fn sum_array_squared_band(x: &[f64], band: &BandIndex, tri_idx: &PackedTriIndex)
 
 /// Masked sum of squares preserving row-wise FP accumulation order.
 /// Both x and active_set are in band-major layout.
+#[allow(dead_code)]
 fn sum_array_squared_masked_band(
     x: &[f64],
     active_set: &[bool],
@@ -1004,49 +1020,6 @@ fn sum_array_squared_masked_band(
         total += s_i;
     }
     total
-}
-
-/// Band-major inner product for CGNR convergence.
-/// When unpreconditioned, preserves row-wise accumulation order.
-/// When preconditioned, uses z^T s over free indices (band-order acceptable).
-#[inline]
-fn precond_inner_product_band(
-    z_full: &[f64],
-    active_set: &[bool],
-    z_free: &[f64],
-    s_free: &[f64],
-    precond: Option<&[f64]>,
-    band: &BandIndex,
-    tri_idx: &PackedTriIndex,
-) -> f64 {
-    match precond {
-        None => sum_array_squared_masked_band(z_full, active_set, band, tri_idx),
-        Some(_) => z_free
-            .iter()
-            .zip(s_free.iter())
-            .map(|(&zi, &si)| zi * si)
-            .sum(),
-    }
-}
-
-/// Band-major preconditioner application. Both precond and free_indices are band-major.
-#[inline]
-fn apply_precond_band(
-    z_free: &[f64],
-    s_free: &mut [f64],
-    precond: Option<&[f64]>,
-    free_indices: &[usize],
-) {
-    match precond {
-        Some(m) => {
-            for i in 0..z_free.len() {
-                s_free[i] = z_free[i] / m[free_indices[i]];
-            }
-        }
-        None => {
-            s_free.copy_from_slice(z_free);
-        }
-    }
 }
 
 /// Profiled forward multiply (active_set A*x).
@@ -1087,6 +1060,70 @@ fn profiled_adjoint_band(
         perf.calc_atx_time += t0.elapsed();
     } else {
         calculate_ab_band(x, y, band, row_sums);
+    }
+}
+
+/// Profiled forward multiply with fused norm-squared computation.
+#[inline]
+fn profiled_forward_band_with_norm(
+    x: &[f64],
+    y: &mut [f64],
+    band: &BandIndex,
+    row_sums: &mut [f64],
+    row_sq_accum: &mut [f64],
+    shifted: &mut [f64],
+    perf: &mut BandKernelPerf,
+    track: bool,
+) -> f64 {
+    if track {
+        let t0 = Instant::now();
+        let norm =
+            calculate_forward_band_with_norm_sq(x, y, band, row_sums, row_sq_accum, shifted);
+        perf.calc_ab_calls += 1;
+        perf.calc_ab_time += t0.elapsed();
+        norm
+    } else {
+        calculate_forward_band_with_norm_sq(x, y, band, row_sums, row_sq_accum, shifted)
+    }
+}
+
+/// Profiled adjoint multiply with fused masked norm-squared computation.
+#[inline]
+fn profiled_adjoint_band_with_masked_norm(
+    x: &[f64],
+    y: &mut [f64],
+    active_set: &[bool],
+    band: &BandIndex,
+    row_sums: &mut [f64],
+    row_sq_accum: &mut [f64],
+    shifted: &mut [f64],
+    perf: &mut BandKernelPerf,
+    track: bool,
+) -> f64 {
+    if track {
+        let t0 = Instant::now();
+        let norm = calculate_ab_band_with_masked_norm_sq(
+            x,
+            y,
+            band,
+            row_sums,
+            row_sq_accum,
+            active_set,
+            shifted,
+        );
+        perf.calc_atx_calls += 1;
+        perf.calc_atx_time += t0.elapsed();
+        norm
+    } else {
+        calculate_ab_band_with_masked_norm_sq(
+            x,
+            y,
+            band,
+            row_sums,
+            row_sq_accum,
+            active_set,
+            shifted,
+        )
     }
 }
 
@@ -1545,7 +1582,6 @@ mod tests {
             1e-14,
             &mut scratch,
             &tri_idx,
-            None, // no preconditioner for parity test
             &mut kernel_perf,
             false,
             None,
@@ -3651,6 +3687,55 @@ mod tests {
         assert_eq!(arr1.len(), arr2.len());
         for (a, b) in arr1.iter().zip(arr2.iter()) {
             assert!((*a - *b).abs() < eps, "got {}, wanted {}", a, b);
+        }
+    }
+
+    /// Test that fused kernel norm-squared matches standalone computation.
+    #[test]
+    fn fused_kernel_norm_matches_standalone() {
+        use crate::weights::band::{
+            calculate_ab_band, calculate_ab_band_with_masked_norm_sq,
+            calculate_forward_band, calculate_forward_band_with_norm_sq,
+        };
+
+        for n in [5, 10, 20, 50, 100] {
+            let npairs = n * (n - 1) / 2;
+            let tri_idx = PackedTriIndex::new(n);
+            let band = BandIndex::new(n);
+
+            // Generate deterministic test data
+            let b: Vec<f64> = (0..npairs).map(|i| (i as f64 * 0.7 + 1.3).sin()).collect();
+            let active_set: Vec<bool> = (0..npairs).map(|i| i % 3 == 0).collect();
+
+            let mut row_sums = vec![0.0; n];
+            let mut row_sq_accum = vec![0.0; n];
+            let mut shifted = vec![0.0; n];
+
+            // Test forward kernel norm fusion
+            let mut d_fused = vec![0.0; npairs];
+            let norm_fused = calculate_forward_band_with_norm_sq(
+                &b, &mut d_fused, &band, &mut row_sums, &mut row_sq_accum, &mut shifted,
+            );
+
+            let mut d_ref = vec![0.0; npairs];
+            calculate_forward_band(&b, &mut d_ref, &band, &mut row_sums);
+            let norm_ref = sum_array_squared_band(&d_ref, &band, &tri_idx);
+
+            assert_eq!(d_fused, d_ref, "forward output mismatch for n={}", n);
+            assert_eq!(norm_fused, norm_ref, "forward norm mismatch for n={}", n);
+
+            // Test adjoint kernel masked norm fusion
+            let mut z_fused = vec![0.0; npairs];
+            let masked_norm_fused = calculate_ab_band_with_masked_norm_sq(
+                &b, &mut z_fused, &band, &mut row_sums, &mut row_sq_accum, &active_set, &mut shifted,
+            );
+
+            let mut z_ref = vec![0.0; npairs];
+            calculate_ab_band(&b, &mut z_ref, &band, &mut row_sums);
+            let masked_norm_ref = sum_array_squared_masked_band(&z_ref, &active_set, &band, &tri_idx);
+
+            assert_eq!(z_fused, z_ref, "adjoint output mismatch for n={}", n);
+            assert_eq!(masked_norm_fused, masked_norm_ref, "adjoint masked norm mismatch for n={}", n);
         }
     }
 }

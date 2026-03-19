@@ -202,6 +202,146 @@ pub fn calculate_ab_band(b: &[f64], d: &mut [f64], band: &BandIndex, row_sums: &
     }
 }
 
+/// Band-major forward kernel with fused norm-squared computation.
+/// Returns sum of element-wise squares of the output, accumulated per-row
+/// in increasing band order (FP-identical to sum_array_squared_band).
+pub fn calculate_forward_band_with_norm_sq(
+    b: &[f64],
+    d: &mut [f64],
+    band: &BandIndex,
+    row_sums: &mut [f64],
+    row_sq_accum: &mut [f64],
+    shifted: &mut [f64],
+) -> f64 {
+    let n = band.n;
+    row_sq_accum[..n].fill(0.0);
+
+    // Pass 1: row sums in forward order
+    batch_rowsums_band_forward(b, row_sums, band);
+
+    // Band 1: d(i, i+1) = row_sums[i+1]
+    let (d1_start, d1_end) = band.band_range(1);
+    d[d1_start..d1_end].copy_from_slice(&row_sums[1..n]);
+
+    // Accumulate band 1 squares: element i in band 1 -> row i
+    for i in 0..(n - 1) {
+        let val = d[d1_start + i];
+        row_sq_accum[i] += val * val;
+    }
+
+    // Pass 2+3: same recurrence as calculate_forward_band
+    for k in 2..n {
+        let band_len = n - k;
+        let (km1_off, _) = band.band_range(k - 1);
+        let (k_off, _) = band.band_range(k);
+        let b_km1_off = band.band_offsets[k - 2];
+
+        let (d_lo, d_hi) = d.split_at_mut(k_off);
+        let d_out = &mut d_hi[..band_len];
+        let d_km1 = &d_lo[km1_off..km1_off + band_len + 1];
+        let b_inp = &b[b_km1_off + 1..b_km1_off + 1 + band_len];
+
+        shifted[..band_len].copy_from_slice(&d_km1[1..band_len + 1]);
+        let d_km1_base = &d_km1[..band_len];
+        let shifted_slice = &shifted[..band_len];
+
+        if k == 2 {
+            vectorized_add3(d_out, d_km1_base, shifted_slice, b_inp);
+        } else {
+            let km2_off = band.band_offsets[k - 3];
+            let d_km2 = &d_lo[km2_off + 1..km2_off + 1 + band_len];
+            vectorized_add4(d_out, d_km1_base, shifted_slice, d_km2, b_inp);
+        }
+
+        // Accumulate band k squares: element i in band k -> row i
+        for i in 0..band_len {
+            let val = d_out[i];
+            row_sq_accum[i] += val * val;
+        }
+    }
+
+    // Sum per-row accumulators (matches row-wise order of sum_array_squared_band)
+    let mut total = 0.0f64;
+    for i in 0..n {
+        total += row_sq_accum[i];
+    }
+    total
+}
+
+/// Band-major adjoint kernel with fused masked norm-squared computation.
+/// Returns sum of element-wise squares of the output for non-active entries,
+/// accumulated per-row in increasing band order (FP-identical to sum_array_squared_masked_band).
+pub fn calculate_ab_band_with_masked_norm_sq(
+    b: &[f64],
+    d: &mut [f64],
+    band: &BandIndex,
+    row_sums: &mut [f64],
+    row_sq_accum: &mut [f64],
+    active_set: &[bool],
+    shifted: &mut [f64],
+) -> f64 {
+    let n = band.n;
+    row_sq_accum[..n].fill(0.0);
+
+    // Pass 1: compute row sums of b
+    batch_rowsums_band(b, row_sums, band);
+
+    // Initialize band 1 of d: d[i, i+1] = row_sums[i]
+    let (d1_start, d1_end) = band.band_range(1);
+    d[d1_start..d1_end].copy_from_slice(&row_sums[..n - 1]);
+
+    // Accumulate band 1 masked squares: element i in band 1 -> row i
+    for i in 0..(n - 1) {
+        let band_idx = d1_start + i;
+        if !active_set[band_idx] {
+            let val = d[band_idx];
+            row_sq_accum[i] += val * val;
+        }
+    }
+
+    // Pass 2+3: for k=2..n-1, compute band k from bands k-1 and k-2
+    for k in 2..n {
+        let band_len = n - k;
+        let (km1_off, _) = band.band_range(k - 1);
+        let (k_off, _) = band.band_range(k);
+        let b_km1_off = band.band_offsets[k - 2];
+
+        let (d_lo, d_hi) = d.split_at_mut(k_off);
+        let d_out = &mut d_hi[..band_len];
+        let d_km1 = &d_lo[km1_off..km1_off + band_len + 1];
+        let b_inp = &b[b_km1_off..b_km1_off + band_len];
+
+        shifted[..band_len].copy_from_slice(&d_km1[1..band_len + 1]);
+        let d_km1_base = &d_km1[..band_len];
+        let shifted_slice = &shifted[..band_len];
+
+        if k == 2 {
+            vectorized_add3(d_out, d_km1_base, shifted_slice, b_inp);
+        } else {
+            let km2_off = band.band_offsets[k - 3];
+            let d_km2 = &d_lo[km2_off + 1..km2_off + 1 + band_len];
+            vectorized_add4(d_out, d_km1_base, shifted_slice, d_km2, b_inp);
+        }
+
+        // Accumulate band k masked squares
+        let k_band_start = band.band_offsets[k - 1];
+        for i in 0..band_len {
+            let band_idx = k_band_start + i;
+            if !active_set[band_idx] {
+                let val = d_out[i];
+                row_sq_accum[i] += val * val;
+            }
+        }
+    }
+
+    // Sum per-row accumulators
+    let mut total = 0.0f64;
+    for i in 0..n {
+        total += row_sq_accum[i];
+    }
+    total
+}
+
 /// Band-major kernel: compute p = A^T * d where A is the circular split design matrix.
 /// Both d and p are in band-major layout.
 pub fn calculate_atx_band(d: &[f64], p: &mut [f64], band: &BandIndex, row_sums: &mut [f64]) {
