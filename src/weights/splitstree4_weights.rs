@@ -40,6 +40,77 @@ impl PackedTriIndex {
     }
 }
 
+/// Band-major (anti-diagonal) index for packed upper triangle.
+/// Band k (1-based width) contains elements (i, i+k) for i=0..n-k.
+/// Elements within each band are stored contiguously.
+#[derive(Debug)]
+struct BandIndex {
+    n: usize,
+    npairs: usize,
+    /// band_offsets[k] = start of band k+1 in the flat array (0-indexed: band_offsets[0] = start of band 1)
+    band_offsets: Vec<usize>,
+    /// Precomputed: for each row-major index, the corresponding band-major index.
+    row_to_band_map: Vec<usize>,
+}
+
+impl BandIndex {
+    fn new(n: usize) -> Self {
+        let npairs = n * (n - 1) / 2;
+        let mut band_offsets = vec![0usize; n];
+        let mut offset = 0;
+        for k in 1..n {
+            band_offsets[k - 1] = offset;
+            offset += n - k;
+        }
+
+        // Precompute the row-to-band mapping
+        let mut row_to_band_map = vec![0usize; npairs];
+        let mut row_idx = 0;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let k = j - i;
+                row_to_band_map[row_idx] = band_offsets[k - 1] + i;
+                row_idx += 1;
+            }
+        }
+
+        Self {
+            n,
+            npairs,
+            band_offsets,
+            row_to_band_map,
+        }
+    }
+
+    /// Get the slice range for band k (1-based).
+    #[inline]
+    fn band_range(&self, k: usize) -> (usize, usize) {
+        let start = self.band_offsets[k - 1];
+        let len = self.n - k;
+        (start, start + len)
+    }
+}
+
+/// Convert from row-major packed upper triangle to band-major layout.
+#[inline]
+fn row_to_band(src: &[f64], dst: &mut [f64], band: &BandIndex) {
+    debug_assert_eq!(src.len(), band.npairs);
+    debug_assert_eq!(dst.len(), band.npairs);
+    for (row_idx, &band_idx) in band.row_to_band_map.iter().enumerate() {
+        dst[band_idx] = src[row_idx];
+    }
+}
+
+/// Convert from band-major layout to row-major packed upper triangle.
+#[inline]
+fn band_to_row(src: &[f64], dst: &mut [f64], band: &BandIndex) {
+    debug_assert_eq!(src.len(), band.npairs);
+    debug_assert_eq!(dst.len(), band.npairs);
+    for (row_idx, &band_idx) in band.row_to_band_map.iter().enumerate() {
+        dst[row_idx] = src[band_idx];
+    }
+}
+
 #[derive(Default, Debug)]
 struct KernelPerf {
     calc_ab_calls: usize,
@@ -217,6 +288,7 @@ fn run_active_conjugate(
     let collapse_many_negs = true;
     let npairs = d.len();
     let tri_idx = PackedTriIndex::new(n);
+    let band = BandIndex::new(n);
     debug_assert_eq!(npairs, tri_idx.npairs);
     let track_kernel_perf = npairs > 4096;
     let mut kernel_perf = KernelPerf::default();
@@ -230,6 +302,17 @@ fn run_active_conjugate(
     if x.iter().all(|&val| val >= 0.0) {
         return;
     }
+
+    // Band-major scratch buffers for chained kernel calls
+    let mut band_buf1 = vec![0.0; npairs];
+    let mut band_buf2 = vec![0.0; npairs];
+
+    // Band-major weights for chained gradient check (non-OLS only)
+    let w_band = w.map(|weights| {
+        let mut wb = vec![0.0; npairs];
+        row_to_band(weights, &mut wb, &band);
+        wb
+    });
 
     let mut r = vec![0.0; npairs];
     let mut wtmp = vec![0.0; npairs];
@@ -252,7 +335,7 @@ fn run_active_conjugate(
         }
         None => y[..npairs].copy_from_slice(&d[..npairs]),
     }
-    profiled_calculate_atx(&y, &mut atwd, &tri_idx, &mut kernel_perf, track_kernel_perf, &mut row_sums);
+    band_atx(&y, &mut atwd, n, &tri_idx, &band, &mut band_buf1, &mut band_buf2, &mut row_sums, &mut kernel_perf, track_kernel_perf);
 
     if options.regularization != Regularization::Nnls {
         let mut max_atwd = 0.0;
@@ -273,20 +356,13 @@ fn run_active_conjugate(
         loop {
             if !first_pass {
                 free_indices = (0..npairs).filter(|&i| !active[i]).collect();
-                circular_conjugate_grads(
+                circular_conjugate_grads_chained(
                     npairs,
-                    &mut r,
-                    &mut wtmp,
-                    &mut p,
-                    &mut y,
-                    &atwd,
-                    &active,
-                    x,
-                    &tri_idx,
-                    &mut row_sums,
-                    &mut progress,
-                    &mut kernel_perf,
-                    track_kernel_perf,
+                    &mut r, &mut wtmp, &mut p,
+                    &atwd, &active, x,
+                    &band,
+                    &mut band_buf1, &mut band_buf2, &mut row_sums,
+                    &mut progress, &mut kernel_perf, track_kernel_perf,
                     &free_indices,
                 );
             }
@@ -302,20 +378,13 @@ fn run_active_conjugate(
                         active[idx] = true;
                     }
                     free_indices = (0..npairs).filter(|&i| !active[i]).collect();
-                    circular_conjugate_grads(
+                    circular_conjugate_grads_chained(
                         npairs,
-                        &mut r,
-                        &mut wtmp,
-                        &mut p,
-                        &mut y,
-                        &atwd,
-                        &active,
-                        x,
-                        &tri_idx,
-                        &mut row_sums,
-                        &mut progress,
-                        &mut kernel_perf,
-                        track_kernel_perf,
+                        &mut r, &mut wtmp, &mut p,
+                        &atwd, &active, x,
+                        &band,
+                        &mut band_buf1, &mut band_buf2, &mut row_sums,
+                        &mut progress, &mut kernel_perf, track_kernel_perf,
                         &free_indices,
                     );
                 }
@@ -345,13 +414,8 @@ fn run_active_conjugate(
             }
         }
 
-        profiled_calculate_ab(x, &mut y, &tri_idx, &mut kernel_perf, track_kernel_perf, &mut row_sums);
-        if let Some(weights) = w {
-            for i in 0..npairs {
-                y[i] *= weights[i];
-            }
-        }
-        profiled_calculate_atx(&y, &mut r, &tri_idx, &mut kernel_perf, track_kernel_perf, &mut row_sums);
+        // Gradient check: r = A^T W A x using chained kernel call
+        chained_atwa_band(x, &mut r, w_band.as_deref(), &band, &mut band_buf1, &mut band_buf2, &mut row_sums, &mut kernel_perf, track_kernel_perf);
 
         if track_kernel_perf && Instant::now() >= progress.next_log {
             let active_count = active.iter().filter(|&&f| f).count();
@@ -391,6 +455,47 @@ fn run_active_conjugate(
             active[min_i.unwrap()] = false;
         }
     }
+}
+
+/// Wrapper: convert row-major input to band, run AB band kernel, convert output back to row.
+#[allow(dead_code)]
+#[inline]
+fn band_ab(
+    b_row: &[f64], d_row: &mut [f64],
+    _n: usize, _tri: &PackedTriIndex, band: &BandIndex,
+    band_in: &mut [f64], band_out: &mut [f64], row_sums: &mut [f64],
+    perf: &mut KernelPerf, track: bool,
+) {
+    row_to_band(b_row, band_in, band);
+    if track {
+        let t0 = Instant::now();
+        calculate_ab_band(band_in, band_out, band, row_sums);
+        perf.calc_ab_calls += 1;
+        perf.calc_ab_time += t0.elapsed();
+    } else {
+        calculate_ab_band(band_in, band_out, band, row_sums);
+    }
+    band_to_row(band_out, d_row, band);
+}
+
+/// Wrapper: convert row-major input to band, run ATX band kernel, convert output back to row.
+#[inline]
+fn band_atx(
+    d_row: &[f64], p_row: &mut [f64],
+    _n: usize, _tri: &PackedTriIndex, band: &BandIndex,
+    band_in: &mut [f64], band_out: &mut [f64], row_sums: &mut [f64],
+    perf: &mut KernelPerf, track: bool,
+) {
+    row_to_band(d_row, band_in, band);
+    if track {
+        let t0 = Instant::now();
+        calculate_atx_band(band_in, band_out, band, row_sums);
+        perf.calc_atx_calls += 1;
+        perf.calc_atx_time += t0.elapsed();
+    } else {
+        calculate_atx_band(band_in, band_out, band, row_sums);
+    }
+    band_to_row(band_out, p_row, band);
 }
 
 fn worst_indices_reuse(
@@ -487,6 +592,7 @@ fn rowsum(n: usize, d: &[f64], k: usize) -> f64 {
 
 /// Compute all row sums of a packed upper-triangular vector in one contiguous pass.
 /// sums[k] = sum of all d[pair(i,j)] where i==k or j==k.
+#[allow(dead_code)]
 fn batch_rowsums(d: &[f64], sums: &mut [f64], n: usize) {
     sums[..n].fill(0.0);
     let mut idx = 0;
@@ -506,6 +612,7 @@ fn calculate_atx(n: usize, d: &[f64], p: &mut [f64]) {
     calculate_atx_indexed(d, p, &tri_idx, &mut row_sums);
 }
 
+#[allow(dead_code)]
 fn calculate_atx_indexed(d: &[f64], p: &mut [f64], tri_idx: &PackedTriIndex, row_sums: &mut [f64]) {
     let n = tri_idx.n;
     let npairs = tri_idx.npairs;
@@ -564,6 +671,7 @@ fn calculate_ab(n: usize, b: &[f64], d: &mut [f64]) {
     calculate_ab_indexed(b, d, &tri_idx, &mut row_sums);
 }
 
+#[allow(dead_code)]
 fn calculate_ab_indexed(b: &[f64], d: &mut [f64], tri_idx: &PackedTriIndex, row_sums: &mut [f64]) {
     let n = tri_idx.n;
     let npairs = tri_idx.npairs;
@@ -612,6 +720,352 @@ fn calculate_ab_indexed(b: &[f64], d: &mut [f64], tri_idx: &PackedTriIndex, row_
     }
 }
 
+/// Compute row sums from band-major data in the same accumulation order as
+/// row-major batch_rowsums, to ensure FP-identical results.
+fn batch_rowsums_band(b: &[f64], sums: &mut [f64], band: &BandIndex) {
+    let n = band.n;
+    sums[..n].fill(0.0);
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let k = j - i;
+            let val = b[band.band_offsets[k - 1] + i];
+            sums[i] += val;
+            sums[j] += val;
+        }
+    }
+}
+
+/// Band-major kernel: compute d = A * b where A is the circular split design matrix.
+/// Both b and d are in band-major layout.
+/// Compute out[i] = a[i] + b[i] - c[i] - 2*d[i] using platform SIMD.
+/// All slices must have the same length.
+#[inline]
+fn vectorized_add4(out: &mut [f64], a: &[f64], b_arr: &[f64], c: &[f64], d_arr: &[f64]) {
+    let len = out.len();
+    debug_assert_eq!(len, a.len());
+    debug_assert_eq!(len, b_arr.len());
+    debug_assert_eq!(len, c.len());
+    debug_assert_eq!(len, d_arr.len());
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+        let chunks = len / 2;
+        unsafe {
+            let two = vdupq_n_f64(2.0);
+            let out_ptr = out.as_mut_ptr();
+            let a_ptr = a.as_ptr();
+            let b_ptr = b_arr.as_ptr();
+            let c_ptr = c.as_ptr();
+            let d_ptr = d_arr.as_ptr();
+            for i in 0..chunks {
+                let off = i * 2;
+                let va = vld1q_f64(a_ptr.add(off));
+                let vb = vld1q_f64(b_ptr.add(off));
+                let vc = vld1q_f64(c_ptr.add(off));
+                let vd = vld1q_f64(d_ptr.add(off));
+                let result = vsubq_f64(vsubq_f64(vaddq_f64(va, vb), vc), vmulq_f64(two, vd));
+                vst1q_f64(out_ptr.add(off), result);
+            }
+            if len % 2 != 0 {
+                let i = chunks * 2;
+                *out_ptr.add(i) =
+                    *a_ptr.add(i) + *b_ptr.add(i) - *c_ptr.add(i) - 2.0 * *d_ptr.add(i);
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::arch::x86_64::*;
+        unsafe {
+            // AVX path: 4×f64 (256-bit)
+            #[cfg(target_feature = "avx")]
+            {
+                let two = _mm256_set1_pd(2.0);
+                let chunks = len / 4;
+                let out_ptr = out.as_mut_ptr();
+                let a_ptr = a.as_ptr();
+                let b_ptr = b_arr.as_ptr();
+                let c_ptr = c.as_ptr();
+                let d_ptr = d_arr.as_ptr();
+                for i in 0..chunks {
+                    let off = i * 4;
+                    let va = _mm256_loadu_pd(a_ptr.add(off));
+                    let vb = _mm256_loadu_pd(b_ptr.add(off));
+                    let vc = _mm256_loadu_pd(c_ptr.add(off));
+                    let vd = _mm256_loadu_pd(d_ptr.add(off));
+                    let result = _mm256_sub_pd(
+                        _mm256_sub_pd(_mm256_add_pd(va, vb), vc),
+                        _mm256_mul_pd(two, vd),
+                    );
+                    _mm256_storeu_pd(out_ptr.add(off), result);
+                }
+                for i in (chunks * 4)..len {
+                    *out_ptr.add(i) =
+                        *a_ptr.add(i) + *b_ptr.add(i) - *c_ptr.add(i) - 2.0 * *d_ptr.add(i);
+                }
+            }
+
+            // SSE2 path: 2×f64 (128-bit, always available on x86_64)
+            #[cfg(not(target_feature = "avx"))]
+            {
+                let two = _mm_set1_pd(2.0);
+                let chunks = len / 2;
+                let out_ptr = out.as_mut_ptr();
+                let a_ptr = a.as_ptr();
+                let b_ptr = b_arr.as_ptr();
+                let c_ptr = c.as_ptr();
+                let d_ptr = d_arr.as_ptr();
+                for i in 0..chunks {
+                    let off = i * 2;
+                    let va = _mm_loadu_pd(a_ptr.add(off));
+                    let vb = _mm_loadu_pd(b_ptr.add(off));
+                    let vc = _mm_loadu_pd(c_ptr.add(off));
+                    let vd = _mm_loadu_pd(d_ptr.add(off));
+                    let result =
+                        _mm_sub_pd(_mm_sub_pd(_mm_add_pd(va, vb), vc), _mm_mul_pd(two, vd));
+                    _mm_storeu_pd(out_ptr.add(off), result);
+                }
+                if len % 2 != 0 {
+                    let i = chunks * 2;
+                    *out_ptr.add(i) =
+                        *a_ptr.add(i) + *b_ptr.add(i) - *c_ptr.add(i) - 2.0 * *d_ptr.add(i);
+                }
+            }
+        }
+    }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        for i in 0..len {
+            out[i] = a[i] + b_arr[i] - c[i] - 2.0 * d_arr[i];
+        }
+    }
+}
+
+/// Compute out[i] = a[i] + b[i] - 2*c[i] using platform SIMD.
+/// All slices must have the same length.
+#[inline]
+fn vectorized_add3(out: &mut [f64], a: &[f64], b_arr: &[f64], c: &[f64]) {
+    let len = out.len();
+    debug_assert_eq!(len, a.len());
+    debug_assert_eq!(len, b_arr.len());
+    debug_assert_eq!(len, c.len());
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+        let chunks = len / 2;
+        unsafe {
+            let two = vdupq_n_f64(2.0);
+            let out_ptr = out.as_mut_ptr();
+            let a_ptr = a.as_ptr();
+            let b_ptr = b_arr.as_ptr();
+            let c_ptr = c.as_ptr();
+            for i in 0..chunks {
+                let off = i * 2;
+                let va = vld1q_f64(a_ptr.add(off));
+                let vb = vld1q_f64(b_ptr.add(off));
+                let vc = vld1q_f64(c_ptr.add(off));
+                let result = vsubq_f64(vaddq_f64(va, vb), vmulq_f64(two, vc));
+                vst1q_f64(out_ptr.add(off), result);
+            }
+            if len % 2 != 0 {
+                let i = chunks * 2;
+                *out_ptr.add(i) = *a_ptr.add(i) + *b_ptr.add(i) - 2.0 * *c_ptr.add(i);
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        use std::arch::x86_64::*;
+        unsafe {
+            #[cfg(target_feature = "avx")]
+            {
+                let two = _mm256_set1_pd(2.0);
+                let chunks = len / 4;
+                let out_ptr = out.as_mut_ptr();
+                let a_ptr = a.as_ptr();
+                let b_ptr = b_arr.as_ptr();
+                let c_ptr = c.as_ptr();
+                for i in 0..chunks {
+                    let off = i * 4;
+                    let va = _mm256_loadu_pd(a_ptr.add(off));
+                    let vb = _mm256_loadu_pd(b_ptr.add(off));
+                    let vc = _mm256_loadu_pd(c_ptr.add(off));
+                    let result =
+                        _mm256_sub_pd(_mm256_add_pd(va, vb), _mm256_mul_pd(two, vc));
+                    _mm256_storeu_pd(out_ptr.add(off), result);
+                }
+                for i in (chunks * 4)..len {
+                    *out_ptr.add(i) = *a_ptr.add(i) + *b_ptr.add(i) - 2.0 * *c_ptr.add(i);
+                }
+            }
+
+            #[cfg(not(target_feature = "avx"))]
+            {
+                let two = _mm_set1_pd(2.0);
+                let chunks = len / 2;
+                let out_ptr = out.as_mut_ptr();
+                let a_ptr = a.as_ptr();
+                let b_ptr = b_arr.as_ptr();
+                let c_ptr = c.as_ptr();
+                for i in 0..chunks {
+                    let off = i * 2;
+                    let va = _mm_loadu_pd(a_ptr.add(off));
+                    let vb = _mm_loadu_pd(b_ptr.add(off));
+                    let vc = _mm_loadu_pd(c_ptr.add(off));
+                    let result = _mm_sub_pd(_mm_add_pd(va, vb), _mm_mul_pd(two, vc));
+                    _mm_storeu_pd(out_ptr.add(off), result);
+                }
+                if len % 2 != 0 {
+                    let i = chunks * 2;
+                    *out_ptr.add(i) = *a_ptr.add(i) + *b_ptr.add(i) - 2.0 * *c_ptr.add(i);
+                }
+            }
+        }
+    }
+
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        for i in 0..len {
+            out[i] = a[i] + b_arr[i] - 2.0 * c[i];
+        }
+    }
+}
+
+fn calculate_ab_band(b: &[f64], d: &mut [f64], band: &BandIndex, row_sums: &mut [f64]) {
+    let n = band.n;
+
+    // Pass 1: compute row sums of b (using row-major accumulation order for FP compatibility)
+    batch_rowsums_band(b, row_sums, band);
+
+    // Initialize band 1 of d: d[i, i+1] = row_sums[i]
+    let (d1_start, d1_end) = band.band_range(1);
+    d[d1_start..d1_end].copy_from_slice(&row_sums[..n - 1]);
+
+    // Pre-allocate buffer for the shifted slice d_km1[1..].
+    // This eliminates the overlapping access pattern d_km1[i]/d_km1[i+1]
+    // that prevents SIMD auto-vectorization.
+    let mut shifted = vec![0.0f64; n];
+
+    // Pass 2+3: for k=2..n-1, compute band k from bands k-1 and k-2
+    for k in 2..n {
+        let band_len = n - k;
+        let (km1_off, _) = band.band_range(k - 1);
+        let (k_off, _) = band.band_range(k);
+        let b_km1_off = band.band_offsets[k - 2];
+
+        // Use split_at_mut to give the compiler non-aliasing slices.
+        let (d_lo, d_hi) = d.split_at_mut(k_off);
+        let d_out = &mut d_hi[..band_len];
+        let d_km1 = &d_lo[km1_off..km1_off + band_len + 1];
+        let b_inp = &b[b_km1_off..b_km1_off + band_len];
+
+        // Copy the shifted view into a separate buffer so all loop accesses
+        // are stride-1 with no overlap — enabling SIMD vectorization.
+        shifted[..band_len].copy_from_slice(&d_km1[1..band_len + 1]);
+        let d_km1_base = &d_km1[..band_len];
+        let shifted_slice = &shifted[..band_len];
+
+        if k == 2 {
+            vectorized_add3(d_out, d_km1_base, shifted_slice, b_inp);
+        } else {
+            let km2_off = band.band_offsets[k - 3];
+            let d_km2 = &d_lo[km2_off + 1..km2_off + 1 + band_len];
+            vectorized_add4(d_out, d_km1_base, shifted_slice, d_km2, b_inp);
+        }
+    }
+}
+
+/// Band-major kernel: compute p = A^T * d where A is the circular split design matrix.
+/// Both d and p are in band-major layout.
+fn calculate_atx_band(d: &[f64], p: &mut [f64], band: &BandIndex, row_sums: &mut [f64]) {
+    let n = band.n;
+
+    // Pass 1: compute row sums of d (using row-major accumulation order for FP compatibility)
+    batch_rowsums_band(d, row_sums, band);
+
+    // Initialize band 1 of p: p[i, i+1] = row_sums[i+1]
+    let (p1_start, p1_end) = band.band_range(1);
+    p[p1_start..p1_end].copy_from_slice(&row_sums[1..n]);
+
+    // Pre-allocate buffer for the shifted slice p_km1[1..].
+    let mut shifted = vec![0.0f64; n];
+
+    // Pass 2+3: for k=2..n-1, compute band k from bands k-1 and k-2
+    // ATX: p_band_k[i] = p_band_{k-1}[i] + p_band_{k-1}[i+1] - p_band_{k-2}[i+1] - 2*d_band_{k-1}[i+1]
+    for k in 2..n {
+        let band_len = n - k;
+        let (km1_off, _) = band.band_range(k - 1);
+        let (k_off, _) = band.band_range(k);
+        let d_km1_off = band.band_offsets[k - 2];
+
+        // Use split_at_mut for non-aliasing slices
+        let (p_lo, p_hi) = p.split_at_mut(k_off);
+        let p_out = &mut p_hi[..band_len];
+        let p_km1 = &p_lo[km1_off..km1_off + band_len + 1];
+        let d_inp = &d[d_km1_off + 1..d_km1_off + 1 + band_len];
+
+        // Copy the shifted view into a separate buffer so all loop accesses
+        // are stride-1 with no overlap — enabling SIMD vectorization.
+        shifted[..band_len].copy_from_slice(&p_km1[1..band_len + 1]);
+        let p_km1_base = &p_km1[..band_len];
+        let shifted_slice = &shifted[..band_len];
+
+        if k == 2 {
+            vectorized_add3(p_out, p_km1_base, shifted_slice, d_inp);
+        } else {
+            let km2_off = band.band_offsets[k - 3];
+            let p_km2 = &p_lo[km2_off + 1..km2_off + 1 + band_len];
+            vectorized_add4(p_out, p_km1_base, shifted_slice, p_km2, d_inp);
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[inline]
+fn profiled_calculate_ab_band(
+    b: &[f64],
+    d: &mut [f64],
+    band: &BandIndex,
+    perf: &mut KernelPerf,
+    track: bool,
+    row_sums: &mut [f64],
+) {
+    if track {
+        let t0 = Instant::now();
+        calculate_ab_band(b, d, band, row_sums);
+        perf.calc_ab_calls += 1;
+        perf.calc_ab_time += t0.elapsed();
+    } else {
+        calculate_ab_band(b, d, band, row_sums);
+    }
+}
+
+#[allow(dead_code)]
+#[inline]
+fn profiled_calculate_atx_band(
+    d: &[f64],
+    p: &mut [f64],
+    band: &BandIndex,
+    perf: &mut KernelPerf,
+    track: bool,
+    row_sums: &mut [f64],
+) {
+    if track {
+        let t0 = Instant::now();
+        calculate_atx_band(d, p, band, row_sums);
+        perf.calc_atx_calls += 1;
+        perf.calc_atx_time += t0.elapsed();
+    } else {
+        calculate_atx_band(d, p, band, row_sums);
+    }
+}
+
+#[allow(dead_code)]
 #[inline]
 fn profiled_calculate_ab(
     b: &[f64],
@@ -631,6 +1085,7 @@ fn profiled_calculate_ab(
     }
 }
 
+#[allow(dead_code)]
 #[inline]
 fn profiled_calculate_atx(
     d: &[f64],
@@ -676,6 +1131,356 @@ fn compute_ata_diagonal(n: usize, npairs: usize) -> Vec<f64> {
     diag
 }
 
+/// Compute r = A^T * A * x by chaining AB and ATX band kernel calls.
+/// Input x and output r are in row-major layout.
+/// The intermediate result (A*x) stays in band-major buffers,
+/// eliminating 2 of the 4 row/band conversions per kernel pair.
+#[inline]
+fn chained_ata_band(
+    x_row: &[f64],
+    r_row: &mut [f64],
+    band: &BandIndex,
+    band_buf1: &mut [f64],
+    band_buf2: &mut [f64],
+    row_sums: &mut [f64],
+    perf: &mut KernelPerf,
+    track: bool,
+) {
+    row_to_band(x_row, band_buf1, band);
+    if track {
+        let t0 = Instant::now();
+        calculate_ab_band(band_buf1, band_buf2, band, row_sums);
+        perf.calc_ab_calls += 1;
+        perf.calc_ab_time += t0.elapsed();
+        let t0 = Instant::now();
+        calculate_atx_band(band_buf2, band_buf1, band, row_sums);
+        perf.calc_atx_calls += 1;
+        perf.calc_atx_time += t0.elapsed();
+    } else {
+        calculate_ab_band(band_buf1, band_buf2, band, row_sums);
+        calculate_atx_band(band_buf2, band_buf1, band, row_sums);
+    }
+    band_to_row(band_buf1, r_row, band);
+}
+
+/// Compute r = A^T * W * A * x by chaining AB, optional weight multiply, and ATX.
+/// Weights (if any) must be in band-major layout.
+/// Eliminates the intermediate band→row→band conversion between AB and ATX.
+#[inline]
+fn chained_atwa_band(
+    x_row: &[f64],
+    r_row: &mut [f64],
+    w_band: Option<&[f64]>,
+    band: &BandIndex,
+    band_buf1: &mut [f64],
+    band_buf2: &mut [f64],
+    row_sums: &mut [f64],
+    perf: &mut KernelPerf,
+    track: bool,
+) {
+    row_to_band(x_row, band_buf1, band);
+    if track {
+        let t0 = Instant::now();
+        calculate_ab_band(band_buf1, band_buf2, band, row_sums);
+        perf.calc_ab_calls += 1;
+        perf.calc_ab_time += t0.elapsed();
+    } else {
+        calculate_ab_band(band_buf1, band_buf2, band, row_sums);
+    }
+    if let Some(wb) = w_band {
+        for (b, w) in band_buf2.iter_mut().zip(wb.iter()) {
+            *b *= *w;
+        }
+    }
+    if track {
+        let t0 = Instant::now();
+        calculate_atx_band(band_buf2, band_buf1, band, row_sums);
+        perf.calc_atx_calls += 1;
+        perf.calc_atx_time += t0.elapsed();
+    } else {
+        calculate_atx_band(band_buf2, band_buf1, band, row_sums);
+    }
+    band_to_row(band_buf1, r_row, band);
+}
+
+/// CG solver using chained AB+ATX kernel calls to avoid intermediate row/band conversions.
+/// All CG vectors remain in row-major layout, preserving FP accumulation order.
+/// Saves 2 conversions per kernel pair vs the non-chained version.
+fn circular_conjugate_grads_chained(
+    npairs: usize,
+    r: &mut [f64],
+    w: &mut [f64],
+    p: &mut [f64],
+    b: &[f64],
+    active: &[bool],
+    x: &mut [f64],
+    band: &BandIndex,
+    band_buf1: &mut [f64],
+    band_buf2: &mut [f64],
+    row_sums: &mut [f64],
+    progress: &mut SolveProgress,
+    kernel_perf: &mut KernelPerf,
+    track_kernel_perf: bool,
+    free_indices: &[usize],
+) {
+    let kmax = band.npairs;
+    progress.cg_calls += 1;
+    let cg_call = progress.cg_calls;
+
+    // r = A^T * A * x (chained: 2 conversions instead of 4)
+    chained_ata_band(x, r, band, band_buf1, band_buf2, row_sums, kernel_perf, track_kernel_perf);
+
+    for k in 0..npairs {
+        if !active[k] {
+            r[k] = b[k] - r[k];
+        } else {
+            r[k] = 0.0;
+        }
+    }
+
+    let mut rho: f64 = r.iter().map(|v| v * v).sum();
+    let mut r_norm_sq: f64 = rho;
+    let mut rho_old = 0.0;
+
+    let b_norm_sq: f64 = b.iter().map(|v| v * v).sum();
+    let e0_sq = 1e-8 * b_norm_sq;
+    let mut k = 0usize;
+
+    while r_norm_sq > e0_sq && k < kmax {
+        k += 1;
+        if k == 1 {
+            p.copy_from_slice(r);
+        } else {
+            let beta = rho / rho_old;
+            for &i in free_indices {
+                p[i] = r[i] + beta * p[i];
+            }
+        }
+
+        // w = A^T * A * p (chained: 2 conversions instead of 4)
+        chained_ata_band(p, w, band, band_buf1, band_buf2, row_sums, kernel_perf, track_kernel_perf);
+
+        let mut alpha_den = 0.0;
+        for &i in free_indices {
+            alpha_den += p[i] * w[i];
+        }
+        let alpha = rho / alpha_den;
+
+        let mut rho_new = 0.0;
+        for &i in free_indices {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * w[i];
+            rho_new += r[i] * r[i];
+        }
+        rho_old = rho;
+        rho = rho_new;
+        r_norm_sq = rho_new;
+
+        if track_kernel_perf && (k & 255) == 0 {
+            let now = Instant::now();
+            if now >= progress.next_inner_log {
+                info!(
+                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    progress.outer_iter,
+                    cg_call,
+                    k,
+                    progress.cg_iters_total + k,
+                    progress.started.elapsed().as_secs_f64(),
+                    r_norm_sq,
+                    e0_sq
+                );
+                progress.next_inner_log = now + Duration::from_secs(10);
+            }
+        }
+    }
+    progress.cg_iters_total += k;
+}
+
+#[allow(dead_code)]
+fn circular_conjugate_grads_bandkernel(
+    npairs: usize,
+    n: usize,
+    r: &mut [f64],
+    w: &mut [f64],
+    p: &mut [f64],
+    y: &mut [f64],
+    b: &[f64],
+    active: &[bool],
+    x: &mut [f64],
+    tri_idx: &PackedTriIndex,
+    band: &BandIndex,
+    band_in: &mut [f64],
+    band_out: &mut [f64],
+    row_sums: &mut [f64],
+    progress: &mut SolveProgress,
+    kernel_perf: &mut KernelPerf,
+    track_kernel_perf: bool,
+    free_indices: &[usize],
+) {
+    let kmax = tri_idx.npairs;
+    progress.cg_calls += 1;
+    let cg_call = progress.cg_calls;
+
+    band_ab(x, y, n, tri_idx, band, band_in, band_out, row_sums, kernel_perf, track_kernel_perf);
+    band_atx(y, r, n, tri_idx, band, band_in, band_out, row_sums, kernel_perf, track_kernel_perf);
+
+    for k in 0..npairs {
+        if !active[k] {
+            r[k] = b[k] - r[k];
+        } else {
+            r[k] = 0.0;
+        }
+    }
+
+    let mut rho: f64 = r.iter().map(|v| v * v).sum();
+    let mut r_norm_sq: f64 = rho;
+    let mut rho_old = 0.0;
+
+    let b_norm_sq: f64 = b.iter().map(|v| v * v).sum();
+    let e0_sq = 1e-8 * b_norm_sq;
+    let mut k = 0usize;
+
+    while r_norm_sq > e0_sq && k < kmax {
+        k += 1;
+        if k == 1 {
+            p.copy_from_slice(r);
+        } else {
+            let beta = rho / rho_old;
+            for &i in free_indices {
+                p[i] = r[i] + beta * p[i];
+            }
+        }
+
+        band_ab(p, y, n, tri_idx, band, band_in, band_out, row_sums, kernel_perf, track_kernel_perf);
+        band_atx(y, w, n, tri_idx, band, band_in, band_out, row_sums, kernel_perf, track_kernel_perf);
+
+        let mut alpha_den = 0.0;
+        for &i in free_indices {
+            alpha_den += p[i] * w[i];
+        }
+        let alpha = rho / alpha_den;
+
+        let mut rho_new = 0.0;
+        for &i in free_indices {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * w[i];
+            rho_new += r[i] * r[i];
+        }
+        rho_old = rho;
+        rho = rho_new;
+        r_norm_sq = rho_new;
+
+        if track_kernel_perf && (k & 255) == 0 {
+            let now = Instant::now();
+            if now >= progress.next_inner_log {
+                info!(
+                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    progress.outer_iter,
+                    cg_call,
+                    k,
+                    progress.cg_iters_total + k,
+                    progress.started.elapsed().as_secs_f64(),
+                    r_norm_sq,
+                    e0_sq
+                );
+                progress.next_inner_log = now + Duration::from_secs(10);
+            }
+        }
+    }
+    progress.cg_iters_total += k;
+}
+
+#[allow(dead_code)]
+fn circular_conjugate_grads_band(
+    npairs: usize,
+    r: &mut [f64],
+    w: &mut [f64],
+    p: &mut [f64],
+    y: &mut [f64],
+    b: &[f64],
+    active: &[bool],
+    x: &mut [f64],
+    band: &BandIndex,
+    row_sums: &mut [f64],
+    progress: &mut SolveProgress,
+    kernel_perf: &mut KernelPerf,
+    track_kernel_perf: bool,
+    free_indices: &[usize],
+) {
+    let kmax = band.npairs;
+    progress.cg_calls += 1;
+    let cg_call = progress.cg_calls;
+
+    profiled_calculate_ab_band(x, y, band, kernel_perf, track_kernel_perf, row_sums);
+    profiled_calculate_atx_band(y, r, band, kernel_perf, track_kernel_perf, row_sums);
+
+    for k in 0..npairs {
+        if !active[k] {
+            r[k] = b[k] - r[k];
+        } else {
+            r[k] = 0.0;
+        }
+    }
+
+    let mut rho: f64 = r.iter().map(|v| v * v).sum();
+    let mut r_norm_sq: f64 = rho;
+    let mut rho_old = 0.0;
+
+    let b_norm_sq: f64 = b.iter().map(|v| v * v).sum();
+    let e0_sq = 1e-8 * b_norm_sq;
+    let mut k = 0usize;
+
+    while r_norm_sq > e0_sq && k < kmax {
+        k += 1;
+        if k == 1 {
+            p.copy_from_slice(r);
+        } else {
+            let beta = rho / rho_old;
+            for &i in free_indices {
+                p[i] = r[i] + beta * p[i];
+            }
+        }
+
+        profiled_calculate_ab_band(p, y, band, kernel_perf, track_kernel_perf, row_sums);
+        profiled_calculate_atx_band(y, w, band, kernel_perf, track_kernel_perf, row_sums);
+
+        let mut alpha_den = 0.0;
+        for &i in free_indices {
+            alpha_den += p[i] * w[i];
+        }
+        let alpha = rho / alpha_den;
+
+        let mut rho_new = 0.0;
+        for &i in free_indices {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * w[i];
+            rho_new += r[i] * r[i];
+        }
+        rho_old = rho;
+        rho = rho_new;
+        r_norm_sq = rho_new;
+
+        if track_kernel_perf && (k & 255) == 0 {
+            let now = Instant::now();
+            if now >= progress.next_inner_log {
+                info!(
+                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    progress.outer_iter,
+                    cg_call,
+                    k,
+                    progress.cg_iters_total + k,
+                    progress.started.elapsed().as_secs_f64(),
+                    r_norm_sq,
+                    e0_sq
+                );
+                progress.next_inner_log = now + Duration::from_secs(10);
+            }
+        }
+    }
+    progress.cg_iters_total += k;
+}
+
+#[allow(dead_code)]
 fn circular_conjugate_grads(
     npairs: usize,
     r: &mut [f64],
