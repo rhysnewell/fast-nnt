@@ -28,11 +28,15 @@ fn bench_splitstree4_weights(c: &mut Criterion) {
         // cycle: 0-prefixed identity ordering [0, 1, 2, ..., n]
         let cycle: Vec<usize> = (0..=n).collect();
 
-        group.bench_with_input(BenchmarkId::new("weights", n), &(dist, cycle), |b, (d, c)| {
-            b.iter(|| {
-                let _ = compute_splits(black_box(c), black_box(d)).unwrap();
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("weights", n),
+            &(dist, cycle),
+            |b, (d, c)| {
+                b.iter(|| {
+                    let _ = compute_splits(black_box(c), black_box(d)).unwrap();
+                });
+            },
+        );
     }
 
     // Larger sizes that exercise the preconditioner (npairs > 100_000 => n > ~450)
@@ -40,11 +44,15 @@ fn bench_splitstree4_weights(c: &mut Criterion) {
         let dist = make_distance_matrix(n, 2024);
         let cycle: Vec<usize> = (0..=n).collect();
 
-        group.bench_with_input(BenchmarkId::new("weights", n), &(dist, cycle), |b, (d, c)| {
-            b.iter(|| {
-                let _ = compute_splits(black_box(c), black_box(d)).unwrap();
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("weights", n),
+            &(dist, cycle),
+            |b, (d, c)| {
+                b.iter(|| {
+                    let _ = compute_splits(black_box(c), black_box(d)).unwrap();
+                });
+            },
+        );
     }
 
     group.finish();

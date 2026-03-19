@@ -1,4 +1,5 @@
 pub mod active_set_weights;
+pub mod band;
 pub mod splitstree4_weights;
 
 use clap::ValueEnum;

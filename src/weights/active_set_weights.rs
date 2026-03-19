@@ -9,6 +9,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::band::{
+    BandIndex, BandKernelPerf, avg_band_time_us, band_to_row, calculate_ab_band,
+    calculate_forward_band, row_to_band,
+};
 use crate::splits::asplit::ASplit;
 
 const EPS: f64 = 1e-12;
@@ -52,6 +56,7 @@ impl PackedTriIndex {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Default, Debug)]
 struct KernelPerf {
     calc_ax_calls: usize,
@@ -210,20 +215,39 @@ pub fn compute_use_1d(
         };
         params.active_set_rho = 0.4;
 
+        // Convert to band-major for SIMD kernels
+        let band = BandIndex::new(n);
+        let mut d_band = vec![0.0; npairs];
+        row_to_band(&d, &mut d_band, &band);
+
+        // Convert x to band-major
+        let mut x_band = vec![0.0; npairs];
+        row_to_band(&x, &mut x_band, &band);
+
+        // Convert active set to band-major
+        let mut active_band = vec![false; npairs];
+        for (row_idx, &band_idx) in band.row_to_band_map.iter().enumerate() {
+            active_band[band_idx] = active[row_idx];
+        }
+
         active_set_method(
-            &mut x,
+            &mut x_band,
             &mut xstar,
-            &d,
+            &d_band,
             &tri_idx,
             params,
-            &mut active,
+            &mut active_band,
             &mut scratch,
             &mut splits_idx,
             &mut order_idx,
             &mut vals,
             progress,
             start,
+            &band,
         )?;
+
+        // Convert x back to row-major
+        band_to_row(&x_band, &mut x, &band);
     }
 
     // Build ASplit-compatible pairs: (bitset A, weight)
@@ -251,18 +275,19 @@ pub fn compute_use_1d(
 /* ===================== Active-Set + CGNR ===================== */
 
 fn active_set_method(
-    x: &mut [f64],     // feasible (x >= 0)
+    x: &mut [f64],     // feasible (x >= 0), band-major
     xstar: &mut [f64], // workspace for candidate solution
-    d: &[f64],
+    d: &[f64],         // band-major
     tri_idx: &PackedTriIndex,
     params: &mut NNLSParams,
-    active: &mut [bool],
+    active: &mut [bool],   // band-major
     scratch: &mut Scratch, // p, r, z, w
     tmp_splits: &mut [usize],
     idx_sorted: &mut [usize],
     vals: &mut [f64],
     progress: Option<&dyn Progress>,
     started: Instant,
+    band: &BandIndex,
 ) -> Result<()> {
     let n = tri_idx.n;
     let npairs = x.len();
@@ -272,7 +297,8 @@ fn active_set_method(
     let mut next_info_iter = 10usize;
     let small_problem = npairs <= 4096;
     let track_kernel_perf = !small_problem;
-    let mut kernel_perf = KernelPerf::default();
+    let mut kernel_perf = BandKernelPerf::default();
+    let mut row_sums = vec![0.0; n];
     if small_problem {
         debug!("active set {:?}", active);
         debug!("==============================");
@@ -282,14 +308,17 @@ fn active_set_method(
     }
 
     // Compute Jacobi preconditioner for CGNR (only for large problems)
+    // Computed in row-major (called once), then convert to band-major
     let precond = if !small_problem {
         let t0 = Instant::now();
-        let diag = estimate_ata_diagonal(tri_idx);
+        let diag_row = estimate_ata_diagonal(tri_idx);
+        let mut diag_band = vec![0.0; npairs];
+        row_to_band(&diag_row, &mut diag_band, band);
         info!(
             "NNLS preconditioner computed in {:.2}s",
             t0.elapsed().as_secs_f64()
         );
-        Some(diag)
+        Some(diag_band)
     } else {
         None
     };
@@ -314,6 +343,8 @@ fn active_set_method(
                 progress,
                 started,
                 params.max_time_ms,
+                band,
+                &mut row_sums,
             )?;
 
             k_outer += 1;
@@ -346,7 +377,7 @@ fn active_set_method(
         }
 
         x.copy_from_slice(&xstar[..npairs]);
-        // projected gradient check at current x
+        // projected gradient check at current x (all in band-major)
         let (p, r) = (&mut scratch.p, &mut scratch.r);
 
         // print sum of x, d, p, r
@@ -358,19 +389,28 @@ fn active_set_method(
         }
         if !small_problem && k_outer >= next_info_iter {
             info!(
-                "NNLS progress: outer_iter={} elapsed={:.1}s active_fraction={:.3} ax_calls={} atx_calls={} ax_avg_us={:.1} atx_avg_us={:.1}",
+                "NNLS progress: outer_iter={} elapsed={:.1}s active_fraction={:.3} ab_calls={} atx_calls={} ab_avg_us={:.1} atx_avg_us={:.1}",
                 k_outer,
                 outer_started.elapsed().as_secs_f64(),
                 active.iter().filter(|&&a| a).count() as f64 / npairs as f64,
-                kernel_perf.calc_ax_calls,
+                kernel_perf.calc_ab_calls,
                 kernel_perf.calc_atx_calls,
-                avg_time_us(kernel_perf.calc_ax_time, kernel_perf.calc_ax_calls),
-                avg_time_us(kernel_perf.calc_atx_time, kernel_perf.calc_atx_calls),
+                avg_band_time_us(kernel_perf.calc_ab_time, kernel_perf.calc_ab_calls),
+                avg_band_time_us(kernel_perf.calc_atx_time, kernel_perf.calc_atx_calls),
             );
             next_info_iter += 10;
         }
 
-        eval_gradient(x, d, p, r, tri_idx, &mut kernel_perf, track_kernel_perf); // p := grad
+        eval_gradient_band(
+            x,
+            d,
+            p,
+            r,
+            band,
+            &mut row_sums,
+            &mut kernel_perf,
+            track_kernel_perf,
+        ); // p := grad
 
         p.iter_mut().zip(x.iter()).for_each(|(gi, &xi)| {
             if xi == 0.0 {
@@ -382,7 +422,7 @@ fn active_set_method(
         if small_problem {
             debug!("Projected gradient sum {}: {:?}", n, p.iter().sum::<f64>());
         }
-        let pg = sum_array_squared_indexed(p, tri_idx);
+        let pg = sum_array_squared_band(p, band, tri_idx);
         if (pg - params.proj_grad_bound) < -EPS {
             return Ok(());
         }
@@ -662,16 +702,15 @@ pub fn calc_ainv_y(y: &[f64], x: &mut [f64], n: usize) {
         // Remaining elements: x[pair(i,j)] for j = i+2..=n
         let row_len = n - i;
         for col in 1..row_len {
-            x[s_idx + col] = (y[prev + col] + y[s_idx + col]
-                - y[s_idx + col - 1]
-                - y[prev + col + 1])
-                / 2.0;
+            x[s_idx + col] =
+                (y[prev + col] + y[s_idx + col] - y[s_idx + col - 1] - y[prev + col + 1]) / 2.0;
         }
     }
 }
 
 /* ===================== Gradient & CGNR (rayon-accelerated) ===================== */
 
+#[allow(dead_code)]
 fn eval_gradient(
     x: &[f64],
     d: &[f64],
@@ -788,19 +827,21 @@ fn estimate_ata_diagonal(tri_idx: &PackedTriIndex) -> Vec<f64> {
 }
 
 fn cgnr(
-    x: &mut [f64],
-    d: &[f64],
-    active_set: &[bool],
+    x: &mut [f64],       // band-major
+    d: &[f64],           // band-major
+    active_set: &[bool], // band-major
     max_iters: usize,
     tol: f64,
     scratch: &mut Scratch,
     tri_idx: &PackedTriIndex,
-    precond: Option<&[f64]>,
-    kernel_perf: &mut KernelPerf,
+    precond: Option<&[f64]>, // band-major
+    kernel_perf: &mut BandKernelPerf,
     track_kernel_perf: bool,
     progress: Option<&dyn Progress>,
     started: Instant,
     max_time_ms: u64,
+    band: &BandIndex,
+    row_sums: &mut [f64],
 ) -> Result<usize> {
     let n = tri_idx.n;
     let (p, r, z, w) = (
@@ -820,22 +861,26 @@ fn cgnr(
     let mut z_free = vec![0.0; nfree];
     let mut s_free = vec![0.0; nfree]; // preconditioned gradient (= z_free when no precond)
 
-    // r = d - A x
-    profiled_calc_ax(x, r, tri_idx, kernel_perf, track_kernel_perf);
+    // r = d - A x (band-major)
+    // NOTE: active_set's A = calculate_forward_band (FP-matching calc_ax_indexed)
+    profiled_forward_band(x, r, band, row_sums, kernel_perf, track_kernel_perf);
     r.iter_mut()
         .zip(d.iter())
         .for_each(|(ri, &di)| *ri = di - *ri);
 
-    // z = Aᵀ r over the free set only
-    profiled_calc_atx(r, z, tri_idx, kernel_perf, track_kernel_perf);
+    // z = Aᵀ r over the free set only (band-major)
+    // NOTE: active_set's A^T = splitstree4's A = calculate_ab_band
+    profiled_adjoint_band(r, z, band, row_sums, kernel_perf, track_kernel_perf);
     gather_by_index(z, &free_indices, &mut z_free);
 
     // Apply preconditioner: s = M^{-1} z (or s = z when unpreconditioned)
-    apply_precond(&z_free, &mut s_free, precond, &free_indices);
+    // free_indices are band-major indices, precond is band-major — direct indexing works
+    apply_precond_band(&z_free, &mut s_free, precond, &free_indices);
     p_free.copy_from_slice(&s_free);
 
-    // Inner product: z^T s (preserves original row-wise accumulation order when unpreconditioned)
-    let mut zts = precond_inner_product(z, active_set, &z_free, &s_free, precond, tri_idx);
+    // Inner product: z^T s
+    let mut zts =
+        precond_inner_product_band(z, active_set, &z_free, &s_free, precond, band, tri_idx);
     if zts <= EPS || !zts.is_finite() {
         return Ok(1);
     }
@@ -846,9 +891,9 @@ fn cgnr(
         p.fill(0.0);
         scatter_by_index(&p_free, &free_indices, p);
 
-        // w = A p
-        profiled_calc_ax(p, w, tri_idx, kernel_perf, track_kernel_perf);
-        let denom = sum_array_squared_indexed(w, tri_idx);
+        // w = A p (band-major)
+        profiled_forward_band(p, w, band, row_sums, kernel_perf, track_kernel_perf);
+        let denom = sum_array_squared_band(w, band, tri_idx);
         if denom <= EPS || !denom.is_finite() {
             break;
         }
@@ -862,13 +907,14 @@ fn cgnr(
             r[i] -= alpha * w[i];
         }
 
-        // z = Aᵀ r over the free set only
-        profiled_calc_atx(r, z, tri_idx, kernel_perf, track_kernel_perf);
+        // z = Aᵀ r over the free set only (band-major): active_set A^T = calculate_ab_band
+        profiled_adjoint_band(r, z, band, row_sums, kernel_perf, track_kernel_perf);
         gather_by_index(z, &free_indices, &mut z_free);
 
         // Apply preconditioner
-        apply_precond(&z_free, &mut s_free, precond, &free_indices);
-        let zts_new = precond_inner_product(z, active_set, &z_free, &s_free, precond, tri_idx);
+        apply_precond_band(&z_free, &mut s_free, precond, &free_indices);
+        let zts_new =
+            precond_inner_product_band(z, active_set, &z_free, &s_free, precond, band, tri_idx);
         if zts <= EPS || !zts.is_finite() {
             break;
         }
@@ -908,6 +954,7 @@ fn cgnr(
 /// Compute the inner product for CGNR convergence. When unpreconditioned, uses
 /// the original row-wise accumulation (sum_array_squared_masked_indexed) for
 /// bit-exact parity. When preconditioned, uses z^T s over free indices.
+#[allow(dead_code)]
 #[inline]
 fn precond_inner_product(
     z_full: &[f64],
@@ -927,8 +974,14 @@ fn precond_inner_product(
     }
 }
 
+#[allow(dead_code)]
 #[inline]
-fn apply_precond(z_free: &[f64], s_free: &mut [f64], precond: Option<&[f64]>, free_indices: &[usize]) {
+fn apply_precond(
+    z_free: &[f64],
+    s_free: &mut [f64],
+    precond: Option<&[f64]>,
+    free_indices: &[usize],
+) {
     match precond {
         Some(m) => {
             for i in 0..z_free.len() {
@@ -938,6 +991,166 @@ fn apply_precond(z_free: &[f64], s_free: &mut [f64], precond: Option<&[f64]>, fr
         None => {
             s_free.copy_from_slice(z_free);
         }
+    }
+}
+
+/// Band-major eval_gradient: compute gradient = A^T(Ax - d) using band kernels.
+/// All inputs/outputs are in band-major layout.
+///
+/// NOTE: The active_set A and A^T operators have different row sum
+/// accumulation orders. We use:
+///   - calculate_forward_band for "A*x" (bit-identical to calc_ax_indexed)
+///   - calculate_ab_band for "A^T*r" (bit-identical to calc_atx_indexed)
+fn eval_gradient_band(
+    x: &[f64],
+    d: &[f64],
+    gradient: &mut [f64],
+    residual: &mut [f64],
+    band: &BandIndex,
+    row_sums: &mut [f64],
+    kernel_perf: &mut BandKernelPerf,
+    track_kernel_perf: bool,
+) {
+    // A*x (forward) = calculate_forward_band
+    profiled_forward_band(x, residual, band, row_sums, kernel_perf, track_kernel_perf);
+    residual
+        .par_iter_mut()
+        .zip(d.par_iter())
+        .for_each(|(ri, &di)| *ri -= di);
+    // A^T*r (adjoint) = calculate_ab_band
+    profiled_adjoint_band(
+        residual,
+        gradient,
+        band,
+        row_sums,
+        kernel_perf,
+        track_kernel_perf,
+    );
+}
+
+/// Sum of squares preserving row-wise FP accumulation order.
+/// x is in band-major layout, but we iterate in row-major order via band_to_row_map.
+fn sum_array_squared_band(x: &[f64], band: &BandIndex, tri_idx: &PackedTriIndex) -> f64 {
+    let mut total = 0.0f64;
+    for i in 1..=tri_idx.n {
+        let start = tri_idx.row_offsets[i];
+        let len = tri_idx.n - i;
+        let mut s_i = 0.0f64;
+        for row_idx in start..start + len {
+            let val = x[band.row_to_band_map[row_idx]];
+            s_i += val * val;
+        }
+        total += s_i;
+    }
+    total
+}
+
+/// Masked sum of squares preserving row-wise FP accumulation order.
+/// Both x and active_set are in band-major layout.
+fn sum_array_squared_masked_band(
+    x: &[f64],
+    active_set: &[bool],
+    band: &BandIndex,
+    tri_idx: &PackedTriIndex,
+) -> f64 {
+    let mut total = 0.0f64;
+    for i in 1..=tri_idx.n {
+        let start = tri_idx.row_offsets[i];
+        let len = tri_idx.n - i;
+        let mut s_i = 0.0f64;
+        for row_idx in start..start + len {
+            let band_idx = band.row_to_band_map[row_idx];
+            if !active_set[band_idx] {
+                let val = x[band_idx];
+                s_i += val * val;
+            }
+        }
+        total += s_i;
+    }
+    total
+}
+
+/// Band-major inner product for CGNR convergence.
+/// When unpreconditioned, preserves row-wise accumulation order.
+/// When preconditioned, uses z^T s over free indices (band-order acceptable).
+#[inline]
+fn precond_inner_product_band(
+    z_full: &[f64],
+    active_set: &[bool],
+    z_free: &[f64],
+    s_free: &[f64],
+    precond: Option<&[f64]>,
+    band: &BandIndex,
+    tri_idx: &PackedTriIndex,
+) -> f64 {
+    match precond {
+        None => sum_array_squared_masked_band(z_full, active_set, band, tri_idx),
+        Some(_) => z_free
+            .iter()
+            .zip(s_free.iter())
+            .map(|(&zi, &si)| zi * si)
+            .sum(),
+    }
+}
+
+/// Band-major preconditioner application. Both precond and free_indices are band-major.
+#[inline]
+fn apply_precond_band(
+    z_free: &[f64],
+    s_free: &mut [f64],
+    precond: Option<&[f64]>,
+    free_indices: &[usize],
+) {
+    match precond {
+        Some(m) => {
+            for i in 0..z_free.len() {
+                s_free[i] = z_free[i] / m[free_indices[i]];
+            }
+        }
+        None => {
+            s_free.copy_from_slice(z_free);
+        }
+    }
+}
+
+/// Profiled forward multiply (active_set A*x).
+/// Uses calculate_forward_band which matches the FP accumulation order of calc_ax_indexed.
+#[inline]
+fn profiled_forward_band(
+    x: &[f64],
+    y: &mut [f64],
+    band: &BandIndex,
+    row_sums: &mut [f64],
+    perf: &mut BandKernelPerf,
+    track: bool,
+) {
+    if track {
+        let t0 = Instant::now();
+        calculate_forward_band(x, y, band, row_sums);
+        perf.calc_ab_calls += 1;
+        perf.calc_ab_time += t0.elapsed();
+    } else {
+        calculate_forward_band(x, y, band, row_sums);
+    }
+}
+
+/// Profiled adjoint multiply (active_set A^T = splitstree4 A = calculate_ab_band).
+#[inline]
+fn profiled_adjoint_band(
+    x: &[f64],
+    y: &mut [f64],
+    band: &BandIndex,
+    row_sums: &mut [f64],
+    perf: &mut BandKernelPerf,
+    track: bool,
+) {
+    if track {
+        let t0 = Instant::now();
+        calculate_ab_band(x, y, band, row_sums);
+        perf.calc_atx_calls += 1;
+        perf.calc_atx_time += t0.elapsed();
+    } else {
+        calculate_ab_band(x, y, band, row_sums);
     }
 }
 
@@ -998,6 +1211,7 @@ fn sum_array_squared_masked_indexed(
     total
 }
 
+#[allow(dead_code)]
 #[inline]
 fn profiled_calc_ax(
     x: &[f64],
@@ -1016,6 +1230,7 @@ fn profiled_calc_ax(
     }
 }
 
+#[allow(dead_code)]
 #[inline]
 fn profiled_calc_atx(
     x: &[f64],
@@ -1034,6 +1249,7 @@ fn profiled_calc_atx(
     }
 }
 
+#[allow(dead_code)]
 #[inline]
 fn avg_time_us(total: Duration, calls: usize) -> f64 {
     if calls == 0 {
@@ -1223,6 +1439,62 @@ mod tests {
         d
     }
 
+    #[test]
+    fn band_kernels_match_row_major() {
+        use super::super::band::{BandIndex, band_to_row, calculate_forward_band, row_to_band};
+        for n in [5, 10, 20, 50] {
+            let npairs = n * (n - 1) / 2;
+            let tri_idx = PackedTriIndex::new(n);
+            let band = BandIndex::new(n);
+            let x_row = build_pairs_from_fn(n, |i, j| ((3 * i + 7 * j) as f64).sin().abs() + 0.01);
+
+            // Forward: calc_ax_indexed (row-major)
+            let mut ax_row = vec![0.0; npairs];
+            calc_ax_indexed(&x_row, &mut ax_row, &tri_idx);
+
+            // Forward: calculate_forward_band (band-major, FP-matching active_set's A)
+            let mut x_band = vec![0.0; npairs];
+            row_to_band(&x_row, &mut x_band, &band);
+            let mut ax_band = vec![0.0; npairs];
+            let mut row_sums = vec![0.0; n];
+            calculate_forward_band(&x_band, &mut ax_band, &band, &mut row_sums);
+            let mut ax_band_as_row = vec![0.0; npairs];
+            band_to_row(&ax_band, &mut ax_band_as_row, &band);
+
+            for i in 0..npairs {
+                assert!(
+                    ax_row[i] == ax_band_as_row[i],
+                    "n={} forward mismatch at {}: row={} band={}",
+                    n,
+                    i,
+                    ax_row[i],
+                    ax_band_as_row[i]
+                );
+            }
+
+            // Adjoint: calc_atx_indexed (row-major)
+            let mut atx_row = vec![0.0; npairs];
+            calc_atx_indexed(&x_row, &mut atx_row, &tri_idx);
+
+            // Adjoint: calculate_ab_band (band-major, which is active_set's A^T)
+            let mut atx_band = vec![0.0; npairs];
+            calculate_ab_band(&x_band, &mut atx_band, &band, &mut row_sums);
+            let mut atx_band_as_row = vec![0.0; npairs];
+            band_to_row(&atx_band, &mut atx_band_as_row, &band);
+
+            for i in 0..npairs {
+                assert!(
+                    atx_row[i] == atx_band_as_row[i],
+                    "n={} adjoint mismatch at {}: row={} band={}",
+                    n,
+                    i,
+                    atx_row[i],
+                    atx_band_as_row[i]
+                );
+            }
+        }
+    }
+
     fn cgnr_reference_full_space(
         x: &mut [f64],
         d: &[f64],
@@ -1290,6 +1562,7 @@ mod tests {
 
     #[test]
     fn cgnr_reduced_space_matches_full_space_reference() {
+        use super::super::band::{BandIndex, BandKernelPerf, band_to_row, row_to_band};
         let n = 9usize;
         let npairs = n * (n - 1) / 2;
         let x_seed = build_pairs_from_fn(n, |i, j| ((3 * i + 5 * j) as f64).sin().abs() + 0.05);
@@ -1308,16 +1581,30 @@ mod tests {
             x0[0] = x_seed[0].max(1e-6);
         }
 
-        let mut x_new = x0.clone();
+        // Reference: row-major full-space CG
         let mut x_ref = x0.clone();
+        let it_ref = cgnr_reference_full_space(&mut x_ref, &d, &active, n, 200, 1e-14);
 
-        let mut scratch = Scratch::new(npairs);
+        // New: band-major CGNR
+        let band = BandIndex::new(n);
         let tri_idx = PackedTriIndex::new(n);
-        let mut kernel_perf = KernelPerf::default();
+        let mut d_band = vec![0.0; npairs];
+        row_to_band(&d, &mut d_band, &band);
+        let mut x0_band = vec![0.0; npairs];
+        row_to_band(&x0, &mut x0_band, &band);
+        let mut active_band = vec![false; npairs];
+        for (row_idx, &band_idx) in band.row_to_band_map.iter().enumerate() {
+            active_band[band_idx] = active[row_idx];
+        }
+
+        let mut x_new_band = x0_band.clone();
+        let mut scratch = Scratch::new(npairs);
+        let mut kernel_perf = BandKernelPerf::default();
+        let mut row_sums = vec![0.0; n];
         let it_new = cgnr(
-            &mut x_new,
-            &d,
-            &active,
+            &mut x_new_band,
+            &d_band,
+            &active_band,
             200,
             1e-14,
             &mut scratch,
@@ -1328,9 +1615,14 @@ mod tests {
             None,
             Instant::now(),
             u64::MAX,
+            &band,
+            &mut row_sums,
         )
         .unwrap();
-        let it_ref = cgnr_reference_full_space(&mut x_ref, &d, &active, n, 200, 1e-14);
+
+        // Convert back to row-major for comparison
+        let mut x_new = vec![0.0; npairs];
+        band_to_row(&x_new_band, &mut x_new, &band);
 
         assert_eq!(it_new, it_ref, "iteration count changed");
         compare_float_array(&x_new, &x_ref, 1e-10);

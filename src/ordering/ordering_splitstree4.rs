@@ -160,8 +160,10 @@ fn join_nodes(
             };
             let pn = nodes[p].nbr.context("expected partner (pn)")?;
             let qn = nodes[q].nbr.context("expected partner (qn)")?;
-            let lhs = d[nodes[p].id * stride + nodes[q].id] + d[nodes[pn].id * stride + nodes[qn].id];
-            let rhs = d[nodes[p].id * stride + nodes[qn].id] + d[nodes[pn].id * stride + nodes[q].id];
+            let lhs =
+                d[nodes[p].id * stride + nodes[q].id] + d[nodes[pn].id * stride + nodes[qn].id];
+            let rhs =
+                d[nodes[p].id * stride + nodes[qn].id] + d[nodes[pn].id * stride + nodes[q].id];
             if lhs < rhs {
                 join3way(p, q, qn, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
             } else {
@@ -173,7 +175,10 @@ fn join_nodes(
         fill_cluster_representatives(nodes, head, &mut reps_buf);
 
         // Precompute max Sx for pruning bounds
-        let max_sx = reps_buf.iter().map(|&r| nodes[r].sx).fold(f64::NEG_INFINITY, f64::max);
+        let max_sx = reps_buf
+            .iter()
+            .map(|&r| nodes[r].sx)
+            .fold(f64::NEG_INFINITY, f64::max);
 
         // --- Choose representatives ---
         let (cx, cy, _bestq) = {
@@ -253,12 +258,14 @@ fn join_nodes(
             m += 1;
         }
 
-        let mut best_q =
-            (m as f64 - 2.0) * d[nodes[cx].id * stride + nodes[cy].id] - nodes[cx].rx - nodes[cy].rx;
+        let mut best_q = (m as f64 - 2.0) * d[nodes[cx].id * stride + nodes[cy].id]
+            - nodes[cx].rx
+            - nodes[cy].rx;
 
         if let Some(cxb) = nodes[cx].nbr {
-            let qv =
-                (m as f64 - 2.0) * d[nodes[cxb].id * stride + nodes[cy].id] - nodes[cxb].rx - nodes[cy].rx;
+            let qv = (m as f64 - 2.0) * d[nodes[cxb].id * stride + nodes[cy].id]
+                - nodes[cxb].rx
+                - nodes[cy].rx;
             if fuzzy_lt(qv, best_q) {
                 best_q = qv;
                 x = cxb;
@@ -266,8 +273,9 @@ fn join_nodes(
             }
         }
         if let Some(cyb) = nodes[cy].nbr {
-            let qv =
-                (m as f64 - 2.0) * d[nodes[cx].id * stride + nodes[cyb].id] - nodes[cx].rx - nodes[cyb].rx;
+            let qv = (m as f64 - 2.0) * d[nodes[cx].id * stride + nodes[cyb].id]
+                - nodes[cx].rx
+                - nodes[cyb].rx;
             if fuzzy_lt(qv, best_q) {
                 best_q = qv;
                 x = cx;
@@ -275,8 +283,9 @@ fn join_nodes(
             }
         }
         if let (Some(cxb), Some(cyb)) = (nodes[cx].nbr, nodes[cy].nbr) {
-            let qv =
-                (m as f64 - 2.0) * d[nodes[cxb].id * stride + nodes[cyb].id] - nodes[cxb].rx - nodes[cyb].rx;
+            let qv = (m as f64 - 2.0) * d[nodes[cxb].id * stride + nodes[cyb].id]
+                - nodes[cxb].rx
+                - nodes[cyb].rx;
             if fuzzy_lt(qv, best_q) {
                 x = cxb;
                 y = cyb;
@@ -301,8 +310,27 @@ fn join_nodes(
                     .nbr
                     .context("expected y.nbr for 3-way agglomeration")?;
                 debug!("Join 3(1) way: x {} y {} num_active {}", x, y, num_active);
-                let new_rep = join3way(x, y, y_nbr, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
-                update_sx_after_merge(d, stride, nodes, &reps_buf, rem_a, rem_b, new_rep, &mut updates_buf);
+                let new_rep = join3way(
+                    x,
+                    y,
+                    y_nbr,
+                    &mut joins,
+                    d,
+                    stride,
+                    nodes,
+                    head,
+                    &mut num_nodes,
+                )?;
+                update_sx_after_merge(
+                    d,
+                    stride,
+                    nodes,
+                    &reps_buf,
+                    rem_a,
+                    rem_b,
+                    new_rep,
+                    &mut updates_buf,
+                );
                 num_nodes += 2;
                 num_active -= 1;
                 num_clusters -= 1;
@@ -320,8 +348,27 @@ fn join_nodes(
                     "Join 3(2) way: x2 {} y2 {} num_active {}",
                     x2, y2, num_active
                 );
-                let new_rep = join3way(x2, y2, y2_nbr, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
-                update_sx_after_merge(d, stride, nodes, &reps_buf, rem_a, rem_b, new_rep, &mut updates_buf);
+                let new_rep = join3way(
+                    x2,
+                    y2,
+                    y2_nbr,
+                    &mut joins,
+                    d,
+                    stride,
+                    nodes,
+                    head,
+                    &mut num_nodes,
+                )?;
+                update_sx_after_merge(
+                    d,
+                    stride,
+                    nodes,
+                    &reps_buf,
+                    rem_a,
+                    rem_b,
+                    new_rep,
+                    &mut updates_buf,
+                );
                 num_nodes += 2;
                 num_active -= 1;
                 num_clusters -= 1;
@@ -337,8 +384,28 @@ fn join_nodes(
                     "Join 4-way: xb {} x {} y {} yb {} num_active {}",
                     xb, x, y, yb, num_active
                 );
-                let new_rep = join4way(xb, x, y, yb, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
-                update_sx_after_merge(d, stride, nodes, &reps_buf, rem_a, rem_b, new_rep, &mut updates_buf);
+                let new_rep = join4way(
+                    xb,
+                    x,
+                    y,
+                    yb,
+                    &mut joins,
+                    d,
+                    stride,
+                    nodes,
+                    head,
+                    &mut num_nodes,
+                )?;
+                update_sx_after_merge(
+                    d,
+                    stride,
+                    nodes,
+                    &reps_buf,
+                    rem_a,
+                    rem_b,
+                    new_rep,
+                    &mut updates_buf,
+                );
                 num_active -= 2;
                 num_clusters -= 1;
             }
@@ -422,10 +489,19 @@ fn set_cluster_sx(nodes: &mut [NetNode], rep: usize, sx: f64) {
 }
 
 #[inline]
-fn avg_cluster_dist_to_singleton(mat: &[f64], stride: usize, nodes: &[NetNode], p: usize, s: usize) -> f64 {
+fn avg_cluster_dist_to_singleton(
+    mat: &[f64],
+    stride: usize,
+    nodes: &[NetNode],
+    p: usize,
+    s: usize,
+) -> f64 {
     match nodes[p].nbr {
         None => mat[nodes[p].id * stride + nodes[s].id],
-        Some(pb) => 0.5 * (mat[nodes[p].id * stride + nodes[s].id] + mat[nodes[pb].id * stride + nodes[s].id]),
+        Some(pb) => {
+            0.5 * (mat[nodes[p].id * stride + nodes[s].id]
+                + mat[nodes[pb].id * stride + nodes[s].id])
+        }
     }
 }
 
@@ -569,10 +645,12 @@ fn join3way(
         while let Some(p) = p_opt {
             let pid = nodes[p].id;
 
-            mat[u * stride + pid] = (2.0 / 3.0) * mat[xid * stride + pid] + (1.0 / 3.0) * mat[yid * stride + pid];
+            mat[u * stride + pid] =
+                (2.0 / 3.0) * mat[xid * stride + pid] + (1.0 / 3.0) * mat[yid * stride + pid];
             mat[pid * stride + u] = mat[u * stride + pid];
 
-            mat[v * stride + pid] = (2.0 / 3.0) * mat[zid * stride + pid] + (1.0 / 3.0) * mat[yid * stride + pid];
+            mat[v * stride + pid] =
+                (2.0 / 3.0) * mat[zid * stride + pid] + (1.0 / 3.0) * mat[yid * stride + pid];
             mat[pid * stride + v] = mat[v * stride + pid];
 
             p_opt = nodes[p].next;
@@ -621,8 +699,14 @@ fn join4way(
 fn avg_cluster_dist(mat: &[f64], stride: usize, nodes: &[NetNode], p: usize, q: usize) -> f64 {
     match (nodes[p].nbr, nodes[q].nbr) {
         (None, None) => mat[nodes[p].id * stride + nodes[q].id],
-        (Some(pb), None) => 0.5 * (mat[nodes[p].id * stride + nodes[q].id] + mat[nodes[pb].id * stride + nodes[q].id]),
-        (None, Some(qb)) => 0.5 * (mat[nodes[p].id * stride + nodes[q].id] + mat[nodes[p].id * stride + nodes[qb].id]),
+        (Some(pb), None) => {
+            0.5 * (mat[nodes[p].id * stride + nodes[q].id]
+                + mat[nodes[pb].id * stride + nodes[q].id])
+        }
+        (None, Some(qb)) => {
+            0.5 * (mat[nodes[p].id * stride + nodes[q].id]
+                + mat[nodes[p].id * stride + nodes[qb].id])
+        }
         (Some(pb), Some(qb)) => {
             0.25 * (mat[nodes[p].id * stride + nodes[q].id]
                 + mat[nodes[p].id * stride + nodes[qb].id]
