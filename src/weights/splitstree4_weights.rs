@@ -56,6 +56,9 @@ struct SolveProgress {
     cg_iters_total: usize,
     collapse_events: usize,
     collapsed_indices_total: usize,
+    max_cg_iters_single_call: usize,
+    inner_loop_activations: usize,
+    stagnation_exits: usize,
 }
 
 impl SolveProgress {
@@ -69,6 +72,9 @@ impl SolveProgress {
             cg_iters_total: 0,
             collapse_events: 0,
             collapsed_indices_total: 0,
+            max_cg_iters_single_call: 0,
+            inner_loop_activations: 0,
+            stagnation_exits: 0,
         }
     }
 }
@@ -291,6 +297,8 @@ fn run_active_conjugate(
     let mut first_pass = true;
     loop {
         progress.outer_iter += 1;
+        let tol_factor = 1e-8;
+
         loop {
             if !first_pass {
                 free_indices = (0..npairs).filter(|&i| !active[i]).collect();
@@ -310,6 +318,7 @@ fn run_active_conjugate(
                     &mut kernel_perf,
                     track_kernel_perf,
                     &free_indices,
+                    tol_factor,
                 );
             }
             first_pass = false;
@@ -340,6 +349,7 @@ fn run_active_conjugate(
                         &mut kernel_perf,
                         track_kernel_perf,
                         &free_indices,
+                        tol_factor,
                     );
                 }
             }
@@ -365,6 +375,7 @@ fn run_active_conjugate(
                 let min_i = min_i.unwrap();
                 active[min_i] = true;
                 x[min_i] = 0.0;
+                progress.inner_loop_activations += 1;
             }
         }
 
@@ -384,12 +395,15 @@ fn run_active_conjugate(
         if track_kernel_perf && Instant::now() >= progress.next_log {
             let active_count = active.iter().filter(|&&f| f).count();
             info!(
-                "SplitsTree4 inference progress: outer_iter={} elapsed={:.1}s cg_calls={} cg_iters_total={} active={} collapse_events={} collapsed_total={} ab_calls={} atx_calls={} ab_avg_us={:.1} atx_avg_us={:.1}",
+                "SplitsTree4 inference progress: outer_iter={} elapsed={:.1}s cg_calls={} cg_iters_total={} max_cg_single={} active={} inner_activations={} stagnation_exits={} collapse_events={} collapsed_total={} ab_calls={} atx_calls={} ab_avg_us={:.1} atx_avg_us={:.1}",
                 progress.outer_iter,
                 progress.started.elapsed().as_secs_f64(),
                 progress.cg_calls,
                 progress.cg_iters_total,
+                progress.max_cg_iters_single_call,
                 active_count,
+                progress.inner_loop_activations,
+                progress.stagnation_exits,
                 progress.collapse_events,
                 progress.collapsed_indices_total,
                 kernel_perf.calc_ab_calls,
@@ -414,6 +428,20 @@ fn run_active_conjugate(
         }
 
         if min_i.is_none() || min_grad > -0.0001 {
+            if track_kernel_perf {
+                info!(
+                    "SplitsTree4 inference complete: outer_iters={} elapsed={:.1}s cg_calls={} cg_iters_total={} max_cg_single={} inner_activations={} stagnation_exits={} collapse_events={} collapsed_total={}",
+                    progress.outer_iter,
+                    progress.started.elapsed().as_secs_f64(),
+                    progress.cg_calls,
+                    progress.cg_iters_total,
+                    progress.max_cg_iters_single_call,
+                    progress.inner_loop_activations,
+                    progress.stagnation_exits,
+                    progress.collapse_events,
+                    progress.collapsed_indices_total,
+                );
+            }
             return;
         } else {
             active[min_i.unwrap()] = false;
@@ -844,8 +872,11 @@ fn circular_conjugate_grads_chained(
     kernel_perf: &mut KernelPerf,
     track_kernel_perf: bool,
     free_indices: &[usize],
+    tol_factor: f64,
 ) {
-    let kmax = band.npairs;
+    // Cap CG iterations: 2x free variables as generous FP-safe bound,
+    // never exceeding the total pair count (original behavior).
+    let kmax = (2 * free_indices.len()).min(band.npairs);
     progress.cg_calls += 1;
     let cg_call = progress.cg_calls;
 
@@ -874,8 +905,9 @@ fn circular_conjugate_grads_chained(
     let mut rho_old = 0.0;
 
     let b_norm_sq: f64 = b.iter().map(|v| v * v).sum();
-    let e0_sq = 1e-8 * b_norm_sq;
+    let e0_sq = tol_factor * b_norm_sq;
     let mut k = 0usize;
+    let mut checkpoint_norm = r_norm_sq;
 
     while r_norm_sq > e0_sq && k < kmax {
         k += 1;
@@ -916,14 +948,28 @@ fn circular_conjugate_grads_chained(
         rho = rho_new;
         r_norm_sq = rho_new;
 
+        // Stagnation detection: if residual hasn't halved in 200 iterations, CG is
+        // spinning without meaningful progress (FP breakdown). Exit early — the
+        // active-set outer loop still converges correctly.
+        if k > 0 && k % 200 == 0 {
+            if r_norm_sq > 0.5 * checkpoint_norm {
+                if track_kernel_perf {
+                    progress.stagnation_exits += 1;
+                }
+                break;
+            }
+            checkpoint_norm = r_norm_sq;
+        }
+
         if track_kernel_perf && (k & 255) == 0 {
             let now = Instant::now();
             if now >= progress.next_inner_log {
                 info!(
-                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={}/{} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
                     progress.outer_iter,
                     cg_call,
                     k,
+                    kmax,
                     progress.cg_iters_total + k,
                     progress.started.elapsed().as_secs_f64(),
                     r_norm_sq,
@@ -934,6 +980,9 @@ fn circular_conjugate_grads_chained(
         }
     }
     progress.cg_iters_total += k;
+    if k > progress.max_cg_iters_single_call {
+        progress.max_cg_iters_single_call = k;
+    }
 }
 
 #[allow(dead_code)]
