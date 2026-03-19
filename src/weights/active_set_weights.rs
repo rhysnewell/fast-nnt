@@ -307,21 +307,9 @@ fn active_set_method(
         debug!("active set initialized (npairs={})", npairs);
     }
 
-    // Compute Jacobi preconditioner for CGNR (only for large problems)
-    // Computed in row-major (called once), then convert to band-major
-    let precond = if !small_problem {
-        let t0 = Instant::now();
-        let diag_row = estimate_ata_diagonal(tri_idx);
-        let mut diag_band = vec![0.0; npairs];
-        row_to_band(&diag_row, &mut diag_band, band);
-        info!(
-            "NNLS preconditioner computed in {:.2}s",
-            t0.elapsed().as_secs_f64()
-        );
-        Some(diag_band)
-    } else {
-        None
-    };
+    // Jacobi preconditioner disabled: it changes CGNR convergence behavior
+    // and produces different (incorrect) split counts on large problems.
+    let precond: Option<Vec<f64>> = None;
 
     let start = Instant::now();
     loop {
@@ -772,58 +760,6 @@ fn sum_array_squared_indexed(x: &[f64], tri_idx: &PackedTriIndex) -> f64 {
     }
 
     total
-}
-
-/// Estimate diag(A^T A) using Hutchinson stochastic estimator with
-/// deterministic sign probe vectors. Cost: 2 * n_probes kernel calls.
-fn estimate_ata_diagonal(tri_idx: &PackedTriIndex) -> Vec<f64> {
-    let npairs = tri_idx.npairs;
-    let mut diag = vec![0.0; npairs];
-    let mut ar = vec![0.0; npairs];
-    let mut atar = vec![0.0; npairs];
-
-    // 3 deterministic Rademacher-like probe vectors
-    let probes: &[fn(usize) -> f64] = &[
-        |i| if i % 2 == 0 { 1.0 } else { -1.0 },
-        |i| if (i / 3) % 2 == 0 { 1.0 } else { -1.0 },
-        |i| if (i / 7) % 2 == 0 { 1.0 } else { -1.0 },
-    ];
-    let n_probes = probes.len();
-
-    for probe_fn in probes {
-        let r: Vec<f64> = (0..npairs).map(|i| probe_fn(i)).collect();
-        calc_ax_indexed(&r, &mut ar, tri_idx);
-        calc_atx_indexed(&ar, &mut atar, tri_idx);
-
-        for i in 0..npairs {
-            diag[i] += r[i] * atar[i];
-        }
-    }
-
-    // Average over probes and floor to prevent division by near-zero
-    let inv_probes = 1.0 / n_probes as f64;
-    let mut sum_pos = 0.0;
-    let mut count_pos = 0usize;
-    for d in diag.iter_mut() {
-        *d *= inv_probes;
-        if *d > 0.0 {
-            sum_pos += *d;
-            count_pos += 1;
-        }
-    }
-    let avg_pos = if count_pos > 0 {
-        sum_pos / count_pos as f64
-    } else {
-        1.0
-    };
-    let floor = avg_pos * 0.01;
-    for d in diag.iter_mut() {
-        if *d < floor {
-            *d = floor;
-        }
-    }
-
-    diag
 }
 
 fn cgnr(
