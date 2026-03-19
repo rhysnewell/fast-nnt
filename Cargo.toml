@@ -64,6 +64,7 @@ name = "splitstree4_weights"
 harness = false
 
 [profile.release]
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 

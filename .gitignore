@@ -29,3 +29,4 @@ scratch/
 
 /target
 output/
+.cargo/config.toml

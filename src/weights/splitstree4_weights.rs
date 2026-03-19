@@ -218,10 +218,6 @@ fn run_active_conjugate(
     let npairs = d.len();
     let tri_idx = PackedTriIndex::new(n);
     debug_assert_eq!(npairs, tri_idx.npairs);
-    // Note: Jacobi preconditioning (compute_ata_diagonal) reduces CG iterations ~27%
-    // but changes the active-set path, producing a different split set. Batch freeing
-    // fixes the outer-loop explosion but the combined solution still diverges too much.
-    let precond: Option<&[f64]> = None;
     let track_kernel_perf = npairs > 4096;
     let mut kernel_perf = KernelPerf::default();
     let started = Instant::now();
@@ -283,7 +279,6 @@ fn run_active_conjugate(
                     &mut wtmp,
                     &mut p,
                     &mut y,
-                    w,
                     &atwd,
                     &active,
                     x,
@@ -292,7 +287,6 @@ fn run_active_conjugate(
                     &mut progress,
                     &mut kernel_perf,
                     track_kernel_perf,
-                    precond,
                     &free_indices,
                 );
             }
@@ -314,7 +308,6 @@ fn run_active_conjugate(
                         &mut wtmp,
                         &mut p,
                         &mut y,
-                        w,
                         &atwd,
                         &active,
                         x,
@@ -323,7 +316,6 @@ fn run_active_conjugate(
                         &mut progress,
                         &mut kernel_perf,
                         track_kernel_perf,
-                        precond,
                         &free_indices,
                     );
                 }
@@ -516,6 +508,9 @@ fn calculate_atx(n: usize, d: &[f64], p: &mut [f64]) {
 
 fn calculate_atx_indexed(d: &[f64], p: &mut [f64], tri_idx: &PackedTriIndex, row_sums: &mut [f64]) {
     let n = tri_idx.n;
+    let npairs = tri_idx.npairs;
+    debug_assert!(p.len() >= npairs);
+    debug_assert!(d.len() >= npairs);
 
     // Pass 1: batch row sums (D)
     batch_rowsums(d, row_sums, n);
@@ -526,22 +521,36 @@ fn calculate_atx_indexed(d: &[f64], p: &mut [f64], tri_idx: &PackedTriIndex, row
     }
 
     // Pass 2: stride-based (E)
+    // Safety: index visits row_offsets[i]+1 for i=0..n-3, all < npairs.
+    // below = index + below_offset is a valid packed position < npairs.
+    // index-1 = row_offsets[i] >= 0.
     let mut index = 1;
     let mut below_offset = n - 2;
     for _i in 0..n - 2 {
         let below = index + below_offset;
-        p[index] = p[index - 1] + p[below] - 2.0 * d[below];
+        unsafe {
+            *p.get_unchecked_mut(index) = *p.get_unchecked(index - 1)
+                + *p.get_unchecked(below)
+                - 2.0 * *d.get_unchecked(below);
+        }
         index += below_offset + 1;
         below_offset -= 1;
     }
 
     // Pass 3: stride-based (E)
+    // Safety: idx >= k-1 >= 2, so idx-1 >= 1. below >= idx+1 >= 3, so below-1 >= 2.
+    // All positions are valid packed triangle indices < npairs.
     for k in 3..=n - 1 {
         let mut idx = k - 1;
         let mut below_offset = n - 2;
         for _i in 0..=n - k - 1 {
             let below = idx + below_offset;
-            p[idx] = p[idx - 1] + p[below] - p[below - 1] - 2.0 * d[below];
+            unsafe {
+                *p.get_unchecked_mut(idx) = *p.get_unchecked(idx - 1)
+                    + *p.get_unchecked(below)
+                    - *p.get_unchecked(below - 1)
+                    - 2.0 * *d.get_unchecked(below);
+            }
             idx += below_offset + 1;
             below_offset -= 1;
         }
@@ -557,6 +566,9 @@ fn calculate_ab(n: usize, b: &[f64], d: &mut [f64]) {
 
 fn calculate_ab_indexed(b: &[f64], d: &mut [f64], tri_idx: &PackedTriIndex, row_sums: &mut [f64]) {
     let n = tri_idx.n;
+    let npairs = tri_idx.npairs;
+    debug_assert!(b.len() >= npairs);
+    debug_assert!(d.len() >= npairs);
 
     // Pass 1: batch row sums (D)
     batch_rowsums(b, row_sums, n);
@@ -567,21 +579,33 @@ fn calculate_ab_indexed(b: &[f64], d: &mut [f64], tri_idx: &PackedTriIndex, row_
     }
 
     // Pass 2: stride-based (E)
+    // Safety: same index pattern as calculate_atx_indexed pass 2.
     let mut index = 1usize;
     let mut below_offset = n - 2;
     for _i in 0..=n - 3 {
-        d[index] = d[index - 1] + d[index + below_offset] - 2.0 * b[index - 1];
+        let below = index + below_offset;
+        unsafe {
+            *d.get_unchecked_mut(index) = *d.get_unchecked(index - 1)
+                + *d.get_unchecked(below)
+                - 2.0 * *b.get_unchecked(index - 1);
+        }
         index += 1 + below_offset;
         below_offset -= 1;
     }
 
     // Pass 3: stride-based (E)
+    // Safety: idx >= k-1 >= 2, so idx-1 >= 1. below >= idx+1 >= 3, so below-1 >= 2.
     for k in 3..=n - 1 {
         let mut idx = k - 1;
         let mut below_offset = n - 2;
         for _i in 0..=n - k - 1 {
             let below = idx + below_offset;
-            d[idx] = d[idx - 1] + d[below] - d[below - 1] - 2.0 * b[idx - 1];
+            unsafe {
+                *d.get_unchecked_mut(idx) = *d.get_unchecked(idx - 1)
+                    + *d.get_unchecked(below)
+                    - *d.get_unchecked(below - 1)
+                    - 2.0 * *b.get_unchecked(idx - 1);
+            }
             idx += below_offset + 1;
             below_offset -= 1;
         }
@@ -658,7 +682,6 @@ fn circular_conjugate_grads(
     w: &mut [f64],
     p: &mut [f64],
     y: &mut [f64],
-    weights: Option<&[f64]>,
     b: &[f64],
     active: &[bool],
     x: &mut [f64],
@@ -667,7 +690,6 @@ fn circular_conjugate_grads(
     progress: &mut SolveProgress,
     kernel_perf: &mut KernelPerf,
     track_kernel_perf: bool,
-    precond: Option<&[f64]>,
     free_indices: &[usize],
 ) {
     let kmax = tri_idx.npairs;
@@ -675,11 +697,6 @@ fn circular_conjugate_grads(
     let cg_call = progress.cg_calls;
 
     profiled_calculate_ab(x, y, tri_idx, kernel_perf, track_kernel_perf, row_sums);
-    if let Some(wt) = weights {
-        for k in 0..npairs {
-            y[k] *= wt[k];
-        }
-    }
     profiled_calculate_atx(y, r, tri_idx, kernel_perf, track_kernel_perf, row_sums);
 
     for k in 0..npairs {
@@ -690,41 +707,17 @@ fn circular_conjugate_grads(
         }
     }
 
-    // rho = r^T M^{-1} r (preconditioned) or r^T r (unpreconditioned)
-    let mut rho: f64;
-    let mut r_norm_sq: f64;
-    if let Some(m) = precond {
-        rho = 0.0;
-        r_norm_sq = 0.0;
-        for i in 0..npairs {
-            let ri2 = r[i] * r[i];
-            r_norm_sq += ri2;
-            rho += ri2 / m[i];
-        }
-    } else {
-        rho = r.iter().map(|v| v * v).sum();
-        r_norm_sq = rho;
-    }
+    let mut rho: f64 = r.iter().map(|v| v * v).sum();
+    let mut r_norm_sq: f64 = rho;
     let mut rho_old = 0.0;
 
     let b_norm_sq: f64 = b.iter().map(|v| v * v).sum();
-    let e0 = 0.0001 * b_norm_sq.sqrt();
+    let e0_sq = 1e-8 * b_norm_sq;
     let mut k = 0usize;
 
-    while r_norm_sq > e0 * e0 && k < kmax {
+    while r_norm_sq > e0_sq && k < kmax {
         k += 1;
-        if let Some(m) = precond {
-            if k == 1 {
-                for i in 0..npairs {
-                    p[i] = r[i] / m[i];
-                }
-            } else {
-                let beta = rho / rho_old;
-                for i in 0..npairs {
-                    p[i] = r[i] / m[i] + beta * p[i];
-                }
-            }
-        } else if k == 1 {
+        if k == 1 {
             p.copy_from_slice(r);
         } else {
             let beta = rho / rho_old;
@@ -734,11 +727,6 @@ fn circular_conjugate_grads(
         }
 
         profiled_calculate_ab(p, y, tri_idx, kernel_perf, track_kernel_perf, row_sums);
-        if let Some(wt) = weights {
-            for i in 0..npairs {
-                y[i] *= wt[i];
-            }
-        }
         profiled_calculate_atx(y, w, tri_idx, kernel_perf, track_kernel_perf, row_sums);
 
         let mut alpha_den = 0.0;
@@ -747,30 +735,15 @@ fn circular_conjugate_grads(
         }
         let alpha = rho / alpha_den;
 
-        if let Some(m) = precond {
-            let mut rho_new = 0.0;
-            let mut r_norm_sq_new = 0.0;
-            for i in 0..npairs {
-                x[i] += alpha * p[i];
-                r[i] -= alpha * w[i];
-                let ri2 = r[i] * r[i];
-                r_norm_sq_new += ri2;
-                rho_new += ri2 / m[i];
-            }
-            rho_old = rho;
-            rho = rho_new;
-            r_norm_sq = r_norm_sq_new;
-        } else {
-            let mut rho_new = 0.0;
-            for &i in free_indices {
-                x[i] += alpha * p[i];
-                r[i] -= alpha * w[i];
-                rho_new += r[i] * r[i];
-            }
-            rho_old = rho;
-            rho = rho_new;
-            r_norm_sq = rho_new;
+        let mut rho_new = 0.0;
+        for &i in free_indices {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * w[i];
+            rho_new += r[i] * r[i];
         }
+        rho_old = rho;
+        rho = rho_new;
+        r_norm_sq = rho_new;
 
         if track_kernel_perf && (k & 255) == 0 {
             let now = Instant::now();
@@ -783,7 +756,7 @@ fn circular_conjugate_grads(
                     progress.cg_iters_total + k,
                     progress.started.elapsed().as_secs_f64(),
                     r_norm_sq,
-                    e0 * e0
+                    e0_sq
                 );
                 progress.next_inner_log = now + Duration::from_secs(10);
             }
