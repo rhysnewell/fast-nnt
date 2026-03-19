@@ -218,6 +218,10 @@ fn run_active_conjugate(
     let npairs = d.len();
     let tri_idx = PackedTriIndex::new(n);
     debug_assert_eq!(npairs, tri_idx.npairs);
+    // Note: Jacobi preconditioning (compute_ata_diagonal) was tested but causes
+    // regressions: while CG converges ~27% faster, the different solution path
+    // causes the outer active-set loop to do 5-10x more iterations.
+    let precond: Option<&[f64]> = None;
     let track_kernel_perf = npairs > 4096;
     let mut kernel_perf = KernelPerf::default();
     let started = Instant::now();
@@ -286,6 +290,7 @@ fn run_active_conjugate(
                     &mut progress,
                     &mut kernel_perf,
                     track_kernel_perf,
+                    precond,
                 );
             }
             first_pass = false;
@@ -314,6 +319,7 @@ fn run_active_conjugate(
                         &mut progress,
                         &mut kernel_perf,
                         track_kernel_perf,
+                        precond,
                     );
                 }
             }
@@ -487,13 +493,31 @@ fn rowsum(n: usize, d: &[f64], k: usize) -> f64 {
 /// Compute all row sums of a packed upper-triangular vector in one contiguous pass.
 /// sums[k] = sum of all d[pair(i,j)] where i==k or j==k.
 fn batch_rowsums(d: &[f64], sums: &mut [f64], n: usize) {
-    sums[..n].fill(0.0);
-    let mut idx = 0;
-    for i in 0..n {
-        for j in (i + 1)..n {
-            sums[i] += d[idx];
-            sums[j] += d[idx];
-            idx += 1;
+    if n >= 300 {
+        use rayon::prelude::*;
+        sums[..n].par_iter_mut().enumerate().for_each(|(k, sum)| {
+            let mut s = 0.0;
+            // As first index: entries are contiguous at row offset
+            let offset = k * n - k * (k + 1) / 2;
+            for j in 0..(n - k - 1) {
+                s += d[offset + j];
+            }
+            // As second index: entries are strided
+            for i in 0..k {
+                let i_offset = i * n - i * (i + 1) / 2;
+                s += d[i_offset + (k - i - 1)];
+            }
+            *sum = s;
+        });
+    } else {
+        sums[..n].fill(0.0);
+        let mut idx = 0;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                sums[i] += d[idx];
+                sums[j] += d[idx];
+                idx += 1;
+            }
         }
     }
 }
@@ -626,6 +650,22 @@ fn avg_time_us(total: Duration, calls: usize) -> f64 {
     }
 }
 
+/// Compute exact diagonal of A^T A for the circular split system.
+/// For split (i, j): diag[k] = (j-i) * (n - (j-i)), the number of
+/// distance pairs separated by that split.
+fn compute_ata_diagonal(n: usize, npairs: usize) -> Vec<f64> {
+    let mut diag = vec![0.0; npairs];
+    let mut index = 0;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let split_size = j - i;
+            diag[index] = (split_size * (n - split_size)) as f64;
+            index += 1;
+        }
+    }
+    diag
+}
+
 fn circular_conjugate_grads(
     npairs: usize,
     r: &mut [f64],
@@ -641,6 +681,7 @@ fn circular_conjugate_grads(
     progress: &mut SolveProgress,
     kernel_perf: &mut KernelPerf,
     track_kernel_perf: bool,
+    precond: Option<&[f64]>,
 ) {
     let kmax = tri_idx.npairs;
     progress.cg_calls += 1;
@@ -662,16 +703,41 @@ fn circular_conjugate_grads(
         }
     }
 
-    let mut rho: f64 = r.iter().map(|v| v * v).sum();
+    // rho = r^T M^{-1} r (preconditioned) or r^T r (unpreconditioned)
+    let mut rho: f64;
+    let mut r_norm_sq: f64;
+    if let Some(m) = precond {
+        rho = 0.0;
+        r_norm_sq = 0.0;
+        for i in 0..npairs {
+            let ri2 = r[i] * r[i];
+            r_norm_sq += ri2;
+            rho += ri2 / m[i];
+        }
+    } else {
+        rho = r.iter().map(|v| v * v).sum();
+        r_norm_sq = rho;
+    }
     let mut rho_old = 0.0;
 
     let b_norm_sq: f64 = b.iter().map(|v| v * v).sum();
     let e0 = 0.0001 * b_norm_sq.sqrt();
     let mut k = 0usize;
 
-    while rho > e0 * e0 && k < kmax {
+    while r_norm_sq > e0 * e0 && k < kmax {
         k += 1;
-        if k == 1 {
+        if let Some(m) = precond {
+            if k == 1 {
+                for i in 0..npairs {
+                    p[i] = r[i] / m[i];
+                }
+            } else {
+                let beta = rho / rho_old;
+                for i in 0..npairs {
+                    p[i] = r[i] / m[i] + beta * p[i];
+                }
+            }
+        } else if k == 1 {
             p.copy_from_slice(r);
         } else {
             let beta = rho / rho_old;
@@ -698,26 +764,42 @@ fn circular_conjugate_grads(
         }
         let alpha = rho / alpha_den;
 
-        let mut rho_new = 0.0;
-        for i in 0..npairs {
-            x[i] += alpha * p[i];
-            r[i] -= alpha * w[i];
-            rho_new += r[i] * r[i];
+        if let Some(m) = precond {
+            let mut rho_new = 0.0;
+            let mut r_norm_sq_new = 0.0;
+            for i in 0..npairs {
+                x[i] += alpha * p[i];
+                r[i] -= alpha * w[i];
+                let ri2 = r[i] * r[i];
+                r_norm_sq_new += ri2;
+                rho_new += ri2 / m[i];
+            }
+            rho_old = rho;
+            rho = rho_new;
+            r_norm_sq = r_norm_sq_new;
+        } else {
+            let mut rho_new = 0.0;
+            for i in 0..npairs {
+                x[i] += alpha * p[i];
+                r[i] -= alpha * w[i];
+                rho_new += r[i] * r[i];
+            }
+            rho_old = rho;
+            rho = rho_new;
+            r_norm_sq = rho_new;
         }
-        rho_old = rho;
-        rho = rho_new;
 
         if track_kernel_perf && (k & 255) == 0 {
             let now = Instant::now();
             if now >= progress.next_inner_log {
                 info!(
-                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s rho={:.6e} threshold={:.6e}",
+                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
                     progress.outer_iter,
                     cg_call,
                     k,
                     progress.cg_iters_total + k,
                     progress.started.elapsed().as_secs_f64(),
-                    rho,
+                    r_norm_sq,
                     e0 * e0
                 );
                 progress.next_inner_log = now + Duration::from_secs(10);
