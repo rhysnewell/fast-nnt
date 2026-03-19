@@ -218,9 +218,9 @@ fn run_active_conjugate(
     let npairs = d.len();
     let tri_idx = PackedTriIndex::new(n);
     debug_assert_eq!(npairs, tri_idx.npairs);
-    // Note: Jacobi preconditioning (compute_ata_diagonal) was tested but causes
-    // regressions: while CG converges ~27% faster, the different solution path
-    // causes the outer active-set loop to do 5-10x more iterations.
+    // Note: Jacobi preconditioning (compute_ata_diagonal) reduces CG iterations ~27%
+    // but changes the active-set path, producing a different split set. Batch freeing
+    // fixes the outer-loop explosion but the combined solution still diverges too much.
     let precond: Option<&[f64]> = None;
     let track_kernel_perf = npairs > 4096;
     let mut kernel_perf = KernelPerf::default();
@@ -246,6 +246,7 @@ fn run_active_conjugate(
 
     let mut active = vec![false; npairs];
     let fixed_active = vec![false; npairs];
+    let mut free_indices: Vec<usize> = (0..npairs).collect();
     let mut atwd = vec![0.0; npairs];
     match w {
         Some(weights) => {
@@ -275,6 +276,7 @@ fn run_active_conjugate(
         progress.outer_iter += 1;
         loop {
             if !first_pass {
+                free_indices = (0..npairs).filter(|&i| !active[i]).collect();
                 circular_conjugate_grads(
                     npairs,
                     &mut r,
@@ -291,6 +293,7 @@ fn run_active_conjugate(
                     &mut kernel_perf,
                     track_kernel_perf,
                     precond,
+                    &free_indices,
                 );
             }
             first_pass = false;
@@ -304,6 +307,7 @@ fn run_active_conjugate(
                         x[idx] = 0.0;
                         active[idx] = true;
                     }
+                    free_indices = (0..npairs).filter(|&i| !active[i]).collect();
                     circular_conjugate_grads(
                         npairs,
                         &mut r,
@@ -320,13 +324,14 @@ fn run_active_conjugate(
                         &mut kernel_perf,
                         track_kernel_perf,
                         precond,
+                        &free_indices,
                     );
                 }
             }
 
             let mut min_i: Option<usize> = None;
             let mut min_xi = -1.0_f64;
-            for i in 0..npairs {
+            for &i in &free_indices {
                 if x[i] < 0.0 {
                     let xi = old_x[i] / (old_x[i] - x[i]);
                     if min_i.is_none() || xi < min_xi {
@@ -339,10 +344,8 @@ fn run_active_conjugate(
             if min_i.is_none() {
                 break;
             } else {
-                for i in 0..npairs {
-                    if !active[i] {
-                        old_x[i] += min_xi * (x[i] - old_x[i]);
-                    }
+                for &i in &free_indices {
+                    old_x[i] += min_xi * (x[i] - old_x[i]);
                 }
                 let min_i = min_i.unwrap();
                 active[min_i] = true;
@@ -493,31 +496,13 @@ fn rowsum(n: usize, d: &[f64], k: usize) -> f64 {
 /// Compute all row sums of a packed upper-triangular vector in one contiguous pass.
 /// sums[k] = sum of all d[pair(i,j)] where i==k or j==k.
 fn batch_rowsums(d: &[f64], sums: &mut [f64], n: usize) {
-    if n >= 300 {
-        use rayon::prelude::*;
-        sums[..n].par_iter_mut().enumerate().for_each(|(k, sum)| {
-            let mut s = 0.0;
-            // As first index: entries are contiguous at row offset
-            let offset = k * n - k * (k + 1) / 2;
-            for j in 0..(n - k - 1) {
-                s += d[offset + j];
-            }
-            // As second index: entries are strided
-            for i in 0..k {
-                let i_offset = i * n - i * (i + 1) / 2;
-                s += d[i_offset + (k - i - 1)];
-            }
-            *sum = s;
-        });
-    } else {
-        sums[..n].fill(0.0);
-        let mut idx = 0;
-        for i in 0..n {
-            for j in (i + 1)..n {
-                sums[i] += d[idx];
-                sums[j] += d[idx];
-                idx += 1;
-            }
+    sums[..n].fill(0.0);
+    let mut idx = 0;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            sums[i] += d[idx];
+            sums[j] += d[idx];
+            idx += 1;
         }
     }
 }
@@ -653,6 +638,7 @@ fn avg_time_us(total: Duration, calls: usize) -> f64 {
 /// Compute exact diagonal of A^T A for the circular split system.
 /// For split (i, j): diag[k] = (j-i) * (n - (j-i)), the number of
 /// distance pairs separated by that split.
+#[allow(dead_code)]
 fn compute_ata_diagonal(n: usize, npairs: usize) -> Vec<f64> {
     let mut diag = vec![0.0; npairs];
     let mut index = 0;
@@ -682,6 +668,7 @@ fn circular_conjugate_grads(
     kernel_perf: &mut KernelPerf,
     track_kernel_perf: bool,
     precond: Option<&[f64]>,
+    free_indices: &[usize],
 ) {
     let kmax = tri_idx.npairs;
     progress.cg_calls += 1;
@@ -741,7 +728,7 @@ fn circular_conjugate_grads(
             p.copy_from_slice(r);
         } else {
             let beta = rho / rho_old;
-            for i in 0..npairs {
+            for &i in free_indices {
                 p[i] = r[i] + beta * p[i];
             }
         }
@@ -755,12 +742,8 @@ fn circular_conjugate_grads(
         profiled_calculate_atx(y, w, tri_idx, kernel_perf, track_kernel_perf, row_sums);
 
         let mut alpha_den = 0.0;
-        for i in 0..npairs {
-            if active[i] {
-                w[i] = 0.0;
-            } else {
-                alpha_den += p[i] * w[i];
-            }
+        for &i in free_indices {
+            alpha_den += p[i] * w[i];
         }
         let alpha = rho / alpha_den;
 
@@ -779,7 +762,7 @@ fn circular_conjugate_grads(
             r_norm_sq = r_norm_sq_new;
         } else {
             let mut rho_new = 0.0;
-            for i in 0..npairs {
+            for &i in free_indices {
                 x[i] += alpha * p[i];
                 r[i] -= alpha * w[i];
                 rho_new += r[i] * r[i];

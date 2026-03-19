@@ -1,7 +1,6 @@
 use crate::splits::asplit::ASplit;
 use fixedbitset::FixedBitSet;
 use ndarray::Array2;
-use rayon::prelude::*;
 
 /// Compute the least-squares fit (%) of the given splits to the distances.
 /// - `distances`: symmetric n×n (0-based indices)
@@ -13,62 +12,46 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
     let n = distances.nrows();
     assert_eq!(n, distances.ncols(), "distances must be square");
 
-    // Build split-induced distances for the packed upper triangle (i<j) in parallel:
+    // Build split-induced distances for the packed upper triangle (i<j):
     // S[i,j] = Σ_{splits} weight * [i∈A && j∈B or i∈B && j∈A]
     let tri_len = n * (n - 1) / 2;
-    let split_dist = splits
-        .par_iter()
-        .map(|s| {
-            let mut acc = vec![0.0_f64; tri_len];
-            let w = s.get_weight();
-            let a: &FixedBitSet = s.get_a();
-            let b: &FixedBitSet = s.get_b();
+    let mut split_dist = vec![0.0_f64; tri_len];
+    for s in splits {
+        let w = s.get_weight();
+        let a: &FixedBitSet = s.get_a();
+        let b: &FixedBitSet = s.get_b();
 
-            for i1 in a.ones() {
-                if i1 == 0 || i1 > n {
+        for i1 in a.ones() {
+            if i1 == 0 || i1 > n {
+                continue;
+            }
+            let ii = i1 - 1; // 0-based
+            for j1 in b.ones() {
+                if j1 == 0 || j1 > n {
                     continue;
                 }
-                let ii = i1 - 1; // 0-based
-                for j1 in b.ones() {
-                    if j1 == 0 || j1 > n {
-                        continue;
-                    }
-                    let jj = j1 - 1;
-                    let (i, j) = if ii < jj { (ii, jj) } else { (jj, ii) };
-                    let idx = pair_index(i, j, n);
-                    acc[idx] += w;
-                }
+                let jj = j1 - 1;
+                let (i, j) = if ii < jj { (ii, jj) } else { (jj, ii) };
+                let idx = pair_index(i, j, n);
+                split_dist[idx] += w;
             }
-            acc
-        })
-        .reduce(
-            || vec![0.0_f64; tri_len],
-            |mut acc, m| {
-                for (a, b) in acc.iter_mut().zip(m.iter()) {
-                    *a += b;
-                }
-                acc
-            },
-        );
+        }
+    }
 
-    // Sum over the upper triangle (i<j) in parallel
-    let (sum_diff_sq, sum_d_sq) = (0..n - 1)
-        .into_par_iter()
-        .map(|i| {
-            let mut diff_sum = 0.0;
-            let mut d_sum = 0.0;
-            let start = row_start(i, n);
-            for j in (i + 1)..n {
-                let idx = start + (j - i - 1);
-                let sij = split_dist[idx];
-                let dij = distances[[i, j]];
-                let diff = sij - dij;
-                diff_sum += diff * diff;
-                d_sum += dij * dij;
-            }
-            (diff_sum, d_sum)
-        })
-        .reduce(|| (0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
+    // Sum over the upper triangle (i<j)
+    let mut sum_diff_sq = 0.0_f64;
+    let mut sum_d_sq = 0.0_f64;
+    for i in 0..n - 1 {
+        let start = row_start(i, n);
+        for j in (i + 1)..n {
+            let idx = start + (j - i - 1);
+            let sij = split_dist[idx];
+            let dij = distances[[i, j]];
+            let diff = sij - dij;
+            sum_diff_sq += diff * diff;
+            sum_d_sq += dij * dij;
+        }
+    }
 
     let fit = if sum_d_sq > 0.0 {
         100.0 * (1.0 - (sum_diff_sq / sum_d_sq))
