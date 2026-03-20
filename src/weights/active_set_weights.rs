@@ -300,6 +300,7 @@ fn active_set_method(
     let track_kernel_perf = !small_problem;
     let mut kernel_perf = BandKernelPerf::default();
     let mut row_sums = vec![0.0; n];
+    let mut shifted = vec![0.0; n];
     if small_problem {
         debug!("active set {:?}", active);
         debug!("==============================");
@@ -392,6 +393,7 @@ fn active_set_method(
             r,
             band,
             &mut row_sums,
+            &mut shifted,
             &mut kernel_perf,
             track_kernel_perf,
         ); // p := grad
@@ -959,6 +961,7 @@ fn eval_gradient_band(
     residual: &mut [f64],
     band: &BandIndex,
     row_sums: &mut [f64],
+    shifted: &mut [f64],
     kernel_perf: &mut BandKernelPerf,
     track_kernel_perf: bool,
 ) {
@@ -974,6 +977,7 @@ fn eval_gradient_band(
         gradient,
         band,
         row_sums,
+        shifted,
         kernel_perf,
         track_kernel_perf,
     );
@@ -1050,16 +1054,17 @@ fn profiled_adjoint_band(
     y: &mut [f64],
     band: &BandIndex,
     row_sums: &mut [f64],
+    shifted: &mut [f64],
     perf: &mut BandKernelPerf,
     track: bool,
 ) {
     if track {
         let t0 = Instant::now();
-        calculate_ab_band(x, y, band, row_sums);
+        calculate_ab_band(x, y, band, row_sums, shifted);
         perf.calc_atx_calls += 1;
         perf.calc_atx_time += t0.elapsed();
     } else {
-        calculate_ab_band(x, y, band, row_sums);
+        calculate_ab_band(x, y, band, row_sums, shifted);
     }
 }
 
@@ -1451,7 +1456,8 @@ mod tests {
 
             // Adjoint: calculate_ab_band (band-major, which is active_set's A^T)
             let mut atx_band = vec![0.0; npairs];
-            calculate_ab_band(&x_band, &mut atx_band, &band, &mut row_sums);
+            let mut shifted = vec![0.0; n];
+            calculate_ab_band(&x_band, &mut atx_band, &band, &mut row_sums, &mut shifted);
             let mut atx_band_as_row = vec![0.0; npairs];
             band_to_row(&atx_band, &mut atx_band_as_row, &band);
 
@@ -3731,7 +3737,7 @@ mod tests {
             );
 
             let mut z_ref = vec![0.0; npairs];
-            calculate_ab_band(&b, &mut z_ref, &band, &mut row_sums);
+            calculate_ab_band(&b, &mut z_ref, &band, &mut row_sums, &mut shifted);
             let masked_norm_ref = sum_array_squared_masked_band(&z_ref, &active_set, &band, &tri_idx);
 
             assert_eq!(z_fused, z_ref, "adjoint output mismatch for n={}", n);

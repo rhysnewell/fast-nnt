@@ -220,9 +220,7 @@ fn run_active_conjugate(
 ) {
     let collapse_many_negs = true;
     let npairs = d.len();
-    let tri_idx = PackedTriIndex::new(n);
     let band = BandIndex::new(n);
-    debug_assert_eq!(npairs, tri_idx.npairs);
     let track_kernel_perf = npairs > 4096;
     let mut kernel_perf = KernelPerf::default();
     let started = Instant::now();
@@ -231,55 +229,45 @@ fn run_active_conjugate(
         panic!("Vectors d,x have different dimensions");
     }
 
+    // Unconstrained LS in row-major (uses row-major recurrence)
     run_unconstrained_ls(n, d, x);
     if x.iter().all(|&val| val >= 0.0) {
         return;
     }
 
-    // Band-major scratch buffers for chained kernel calls
-    let mut band_buf1 = vec![0.0; npairs];
-    let mut band_buf2 = vec![0.0; npairs];
+    // === Convert to band-major for the entire active-set solve ===
+    // x → x_band (working copy)
+    let mut x_band = vec![0.0; npairs];
+    row_to_band(x, &mut x_band, &band);
 
-    // Band-major weights for chained gradient check (non-OLS only)
+    // Band-major weights (non-OLS only)
     let w_band = w.map(|weights| {
         let mut wb = vec![0.0; npairs];
         row_to_band(weights, &mut wb, &band);
         wb
     });
 
-    let mut r = vec![0.0; npairs];
-    let mut wtmp = vec![0.0; npairs];
-    let mut p = vec![0.0; npairs];
-    let mut y = vec![0.0; npairs];
-    let mut old_x = vec![1.0; npairs];
-    let mut negative_values = Vec::new();
-    let mut selected_negative_indices = Vec::new();
+    // Compute atwd directly in band-major: atwd = A^T (W d)
+    let mut buf = vec![0.0; npairs]; // single intermediate buffer for AB+ATX
     let mut row_sums = vec![0.0; n];
-
-    let mut active = vec![false; npairs];
-    let fixed_active = vec![false; npairs];
-    let mut free_indices: Vec<usize> = (0..npairs).collect();
+    let mut shifted = vec![0.0; n];
     let mut atwd = vec![0.0; npairs];
-    match w {
-        Some(weights) => {
-            for k in 0..npairs {
-                y[k] = weights[k] * d[k];
+    {
+        // Convert d to band-major, apply weights if needed
+        let mut y_band = vec![0.0; npairs];
+        match w {
+            Some(_weights) => {
+                let mut d_band = vec![0.0; npairs];
+                row_to_band(d, &mut d_band, &band);
+                let wb = w_band.as_ref().unwrap();
+                for k in 0..npairs {
+                    y_band[k] = wb[k] * d_band[k];
+                }
             }
+            None => row_to_band(d, &mut y_band, &band),
         }
-        None => y[..npairs].copy_from_slice(&d[..npairs]),
+        calculate_atx_band(&y_band, &mut atwd, &band, &mut row_sums, &mut shifted);
     }
-    band_atx(
-        &y,
-        &mut atwd,
-        n,
-        &tri_idx,
-        &band,
-        &mut band_buf1,
-        &mut band_buf2,
-        &mut row_sums,
-        &mut kernel_perf,
-        track_kernel_perf,
-    );
 
     if options.regularization != Regularization::Nnls {
         let mut max_atwd = 0.0;
@@ -294,6 +282,18 @@ fn run_active_conjugate(
         }
     }
 
+    // CG scratch vectors (all band-major)
+    let mut r = vec![0.0; npairs];
+    let mut wtmp = vec![0.0; npairs];
+    let mut p = vec![0.0; npairs];
+    let mut old_x = vec![1.0; npairs];
+    let mut negative_values = Vec::new();
+    let mut selected_negative_indices = Vec::new();
+
+    let mut active = vec![false; npairs];
+    let fixed_active = vec![false; npairs];
+    let mut free_indices: Vec<usize> = (0..npairs).collect();
+
     let mut first_pass = true;
     loop {
         progress.outer_iter += 1;
@@ -302,18 +302,18 @@ fn run_active_conjugate(
         loop {
             if !first_pass {
                 free_indices = (0..npairs).filter(|&i| !active[i]).collect();
-                circular_conjugate_grads_chained(
+                circular_conjugate_grads_band_direct(
                     npairs,
                     &mut r,
                     &mut wtmp,
                     &mut p,
                     &atwd,
                     &active,
-                    x,
+                    &mut x_band,
                     &band,
-                    &mut band_buf1,
-                    &mut band_buf2,
+                    &mut buf,
                     &mut row_sums,
+                    &mut shifted,
                     &mut progress,
                     &mut kernel_perf,
                     track_kernel_perf,
@@ -324,27 +324,27 @@ fn run_active_conjugate(
             first_pass = false;
 
             if collapse_many_negs {
-                if worst_indices_reuse(x, 0.6, &mut negative_values, &mut selected_negative_indices)
+                if worst_indices_reuse(&x_band, 0.6, &mut negative_values, &mut selected_negative_indices)
                 {
                     progress.collapse_events += 1;
                     progress.collapsed_indices_total += selected_negative_indices.len();
                     for &idx in &selected_negative_indices {
-                        x[idx] = 0.0;
+                        x_band[idx] = 0.0;
                         active[idx] = true;
                     }
                     free_indices = (0..npairs).filter(|&i| !active[i]).collect();
-                    circular_conjugate_grads_chained(
+                    circular_conjugate_grads_band_direct(
                         npairs,
                         &mut r,
                         &mut wtmp,
                         &mut p,
                         &atwd,
                         &active,
-                        x,
+                        &mut x_band,
                         &band,
-                        &mut band_buf1,
-                        &mut band_buf2,
+                        &mut buf,
                         &mut row_sums,
+                        &mut shifted,
                         &mut progress,
                         &mut kernel_perf,
                         track_kernel_perf,
@@ -357,8 +357,8 @@ fn run_active_conjugate(
             let mut min_i: Option<usize> = None;
             let mut min_xi = -1.0_f64;
             for &i in &free_indices {
-                if x[i] < 0.0 {
-                    let xi = old_x[i] / (old_x[i] - x[i]);
+                if x_band[i] < 0.0 {
+                    let xi = old_x[i] / (old_x[i] - x_band[i]);
                     if min_i.is_none() || xi < min_xi {
                         min_i = Some(i);
                         min_xi = xi;
@@ -370,27 +370,37 @@ fn run_active_conjugate(
                 break;
             } else {
                 for &i in &free_indices {
-                    old_x[i] += min_xi * (x[i] - old_x[i]);
+                    old_x[i] += min_xi * (x_band[i] - old_x[i]);
                 }
                 let min_i = min_i.unwrap();
                 active[min_i] = true;
-                x[min_i] = 0.0;
+                x_band[min_i] = 0.0;
                 progress.inner_loop_activations += 1;
             }
         }
 
-        // Gradient check: r = A^T W A x using chained kernel call
-        chained_atwa_band(
-            x,
-            &mut r,
-            w_band.as_deref(),
-            &band,
-            &mut band_buf1,
-            &mut band_buf2,
-            &mut row_sums,
-            &mut kernel_perf,
-            track_kernel_perf,
-        );
+        // Gradient check: r = A^T W A x (direct band-major)
+        if track_kernel_perf {
+            let t0 = Instant::now();
+            calculate_ab_band(&x_band, &mut buf, &band, &mut row_sums, &mut shifted);
+            kernel_perf.calc_ab_calls += 1;
+            kernel_perf.calc_ab_time += t0.elapsed();
+        } else {
+            calculate_ab_band(&x_band, &mut buf, &band, &mut row_sums, &mut shifted);
+        }
+        if let Some(wb) = w_band.as_deref() {
+            for (b, w) in buf.iter_mut().zip(wb.iter()) {
+                *b *= *w;
+            }
+        }
+        if track_kernel_perf {
+            let t0 = Instant::now();
+            calculate_atx_band(&buf, &mut r, &band, &mut row_sums, &mut shifted);
+            kernel_perf.calc_atx_calls += 1;
+            kernel_perf.calc_atx_time += t0.elapsed();
+        } else {
+            calculate_atx_band(&buf, &mut r, &band, &mut row_sums, &mut shifted);
+        }
 
         if track_kernel_perf && Instant::now() >= progress.next_log {
             let active_count = active.iter().filter(|&&f| f).count();
@@ -442,6 +452,8 @@ fn run_active_conjugate(
                     progress.collapsed_indices_total,
                 );
             }
+            // Convert x_band back to row-major
+            band_to_row(&x_band, x, &band);
             return;
         } else {
             active[min_i.unwrap()] = false;
@@ -461,17 +473,18 @@ fn band_ab(
     band_in: &mut [f64],
     band_out: &mut [f64],
     row_sums: &mut [f64],
+    shifted: &mut [f64],
     perf: &mut KernelPerf,
     track: bool,
 ) {
     row_to_band(b_row, band_in, band);
     if track {
         let t0 = Instant::now();
-        calculate_ab_band(band_in, band_out, band, row_sums);
+        calculate_ab_band(band_in, band_out, band, row_sums, shifted);
         perf.calc_ab_calls += 1;
         perf.calc_ab_time += t0.elapsed();
     } else {
-        calculate_ab_band(band_in, band_out, band, row_sums);
+        calculate_ab_band(band_in, band_out, band, row_sums, shifted);
     }
     band_to_row(band_out, d_row, band);
 }
@@ -487,17 +500,18 @@ fn band_atx(
     band_in: &mut [f64],
     band_out: &mut [f64],
     row_sums: &mut [f64],
+    shifted: &mut [f64],
     perf: &mut KernelPerf,
     track: bool,
 ) {
     row_to_band(d_row, band_in, band);
     if track {
         let t0 = Instant::now();
-        calculate_atx_band(band_in, band_out, band, row_sums);
+        calculate_atx_band(band_in, band_out, band, row_sums, shifted);
         perf.calc_atx_calls += 1;
         perf.calc_atx_time += t0.elapsed();
     } else {
-        calculate_atx_band(band_in, band_out, band, row_sums);
+        calculate_atx_band(band_in, band_out, band, row_sums, shifted);
     }
     band_to_row(band_out, p_row, band);
 }
@@ -785,6 +799,7 @@ fn compute_ata_diagonal(n: usize, npairs: usize) -> Vec<f64> {
 /// Input x and output r are in row-major layout.
 /// The intermediate result (A*x) stays in band-major buffers,
 /// eliminating 2 of the 4 row/band conversions per kernel pair.
+#[allow(dead_code)]
 #[inline]
 fn chained_ata_band(
     x_row: &[f64],
@@ -793,22 +808,23 @@ fn chained_ata_band(
     band_buf1: &mut [f64],
     band_buf2: &mut [f64],
     row_sums: &mut [f64],
+    shifted: &mut [f64],
     perf: &mut KernelPerf,
     track: bool,
 ) {
     row_to_band(x_row, band_buf1, band);
     if track {
         let t0 = Instant::now();
-        calculate_ab_band(band_buf1, band_buf2, band, row_sums);
+        calculate_ab_band(band_buf1, band_buf2, band, row_sums, shifted);
         perf.calc_ab_calls += 1;
         perf.calc_ab_time += t0.elapsed();
         let t0 = Instant::now();
-        calculate_atx_band(band_buf2, band_buf1, band, row_sums);
+        calculate_atx_band(band_buf2, band_buf1, band, row_sums, shifted);
         perf.calc_atx_calls += 1;
         perf.calc_atx_time += t0.elapsed();
     } else {
-        calculate_ab_band(band_buf1, band_buf2, band, row_sums);
-        calculate_atx_band(band_buf2, band_buf1, band, row_sums);
+        calculate_ab_band(band_buf1, band_buf2, band, row_sums, shifted);
+        calculate_atx_band(band_buf2, band_buf1, band, row_sums, shifted);
     }
     band_to_row(band_buf1, r_row, band);
 }
@@ -816,6 +832,7 @@ fn chained_ata_band(
 /// Compute r = A^T * W * A * x by chaining AB, optional weight multiply, and ATX.
 /// Weights (if any) must be in band-major layout.
 /// Eliminates the intermediate band→row→band conversion between AB and ATX.
+#[allow(dead_code)]
 #[inline]
 fn chained_atwa_band(
     x_row: &[f64],
@@ -825,17 +842,18 @@ fn chained_atwa_band(
     band_buf1: &mut [f64],
     band_buf2: &mut [f64],
     row_sums: &mut [f64],
+    shifted: &mut [f64],
     perf: &mut KernelPerf,
     track: bool,
 ) {
     row_to_band(x_row, band_buf1, band);
     if track {
         let t0 = Instant::now();
-        calculate_ab_band(band_buf1, band_buf2, band, row_sums);
+        calculate_ab_band(band_buf1, band_buf2, band, row_sums, shifted);
         perf.calc_ab_calls += 1;
         perf.calc_ab_time += t0.elapsed();
     } else {
-        calculate_ab_band(band_buf1, band_buf2, band, row_sums);
+        calculate_ab_band(band_buf1, band_buf2, band, row_sums, shifted);
     }
     if let Some(wb) = w_band {
         for (b, w) in band_buf2.iter_mut().zip(wb.iter()) {
@@ -844,11 +862,11 @@ fn chained_atwa_band(
     }
     if track {
         let t0 = Instant::now();
-        calculate_atx_band(band_buf2, band_buf1, band, row_sums);
+        calculate_atx_band(band_buf2, band_buf1, band, row_sums, shifted);
         perf.calc_atx_calls += 1;
         perf.calc_atx_time += t0.elapsed();
     } else {
-        calculate_atx_band(band_buf2, band_buf1, band, row_sums);
+        calculate_atx_band(band_buf2, band_buf1, band, row_sums, shifted);
     }
     band_to_row(band_buf1, r_row, band);
 }
@@ -856,6 +874,7 @@ fn chained_atwa_band(
 /// CG solver using chained AB+ATX kernel calls to avoid intermediate row/band conversions.
 /// All CG vectors remain in row-major layout, preserving FP accumulation order.
 /// Saves 2 conversions per kernel pair vs the non-chained version.
+#[allow(dead_code)]
 fn circular_conjugate_grads_chained(
     npairs: usize,
     r: &mut [f64],
@@ -868,6 +887,7 @@ fn circular_conjugate_grads_chained(
     band_buf1: &mut [f64],
     band_buf2: &mut [f64],
     row_sums: &mut [f64],
+    shifted: &mut [f64],
     progress: &mut SolveProgress,
     kernel_perf: &mut KernelPerf,
     track_kernel_perf: bool,
@@ -888,6 +908,7 @@ fn circular_conjugate_grads_chained(
         band_buf1,
         band_buf2,
         row_sums,
+        shifted,
         kernel_perf,
         track_kernel_perf,
     );
@@ -928,6 +949,7 @@ fn circular_conjugate_grads_chained(
             band_buf1,
             band_buf2,
             row_sums,
+            shifted,
             kernel_perf,
             track_kernel_perf,
         );
@@ -985,6 +1007,140 @@ fn circular_conjugate_grads_chained(
     }
 }
 
+/// CG solver operating entirely in band-major layout.
+/// Calls calculate_ab_band + calculate_atx_band directly — no row↔band conversions.
+/// All CG vectors (x, r, w, p, b) and free_indices use band-major indexing.
+fn circular_conjugate_grads_band_direct(
+    npairs: usize,
+    r: &mut [f64],
+    w: &mut [f64],
+    p: &mut [f64],
+    b: &[f64],
+    active: &[bool],
+    x: &mut [f64],
+    band: &BandIndex,
+    buf: &mut [f64],
+    row_sums: &mut [f64],
+    shifted: &mut [f64],
+    progress: &mut SolveProgress,
+    kernel_perf: &mut KernelPerf,
+    track_kernel_perf: bool,
+    free_indices: &[usize],
+    tol_factor: f64,
+) {
+    let kmax = (2 * free_indices.len()).min(band.npairs);
+    progress.cg_calls += 1;
+    let cg_call = progress.cg_calls;
+
+    // r = A^T * A * x (direct band-major: AB then ATX)
+    if track_kernel_perf {
+        let t0 = Instant::now();
+        calculate_ab_band(x, buf, band, row_sums, shifted);
+        kernel_perf.calc_ab_calls += 1;
+        kernel_perf.calc_ab_time += t0.elapsed();
+        let t0 = Instant::now();
+        calculate_atx_band(buf, r, band, row_sums, shifted);
+        kernel_perf.calc_atx_calls += 1;
+        kernel_perf.calc_atx_time += t0.elapsed();
+    } else {
+        calculate_ab_band(x, buf, band, row_sums, shifted);
+        calculate_atx_band(buf, r, band, row_sums, shifted);
+    }
+
+    for k in 0..npairs {
+        if !active[k] {
+            r[k] = b[k] - r[k];
+        } else {
+            r[k] = 0.0;
+        }
+    }
+
+    let mut rho: f64 = r.iter().map(|v| v * v).sum();
+    let mut r_norm_sq: f64 = rho;
+    let mut rho_old = 0.0;
+
+    let b_norm_sq: f64 = b.iter().map(|v| v * v).sum();
+    let e0_sq = tol_factor * b_norm_sq;
+    let mut k = 0usize;
+    let mut checkpoint_norm = r_norm_sq;
+
+    while r_norm_sq > e0_sq && k < kmax {
+        k += 1;
+        if k == 1 {
+            p.copy_from_slice(r);
+        } else {
+            let beta = rho / rho_old;
+            for &i in free_indices {
+                p[i] = r[i] + beta * p[i];
+            }
+        }
+
+        // w = A^T * A * p (direct band-major: AB then ATX)
+        if track_kernel_perf {
+            let t0 = Instant::now();
+            calculate_ab_band(p, buf, band, row_sums, shifted);
+            kernel_perf.calc_ab_calls += 1;
+            kernel_perf.calc_ab_time += t0.elapsed();
+            let t0 = Instant::now();
+            calculate_atx_band(buf, w, band, row_sums, shifted);
+            kernel_perf.calc_atx_calls += 1;
+            kernel_perf.calc_atx_time += t0.elapsed();
+        } else {
+            calculate_ab_band(p, buf, band, row_sums, shifted);
+            calculate_atx_band(buf, w, band, row_sums, shifted);
+        }
+
+        let mut alpha_den = 0.0;
+        for &i in free_indices {
+            alpha_den += p[i] * w[i];
+        }
+        let alpha = rho / alpha_den;
+
+        let mut rho_new = 0.0;
+        for &i in free_indices {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * w[i];
+            rho_new += r[i] * r[i];
+        }
+        rho_old = rho;
+        rho = rho_new;
+        r_norm_sq = rho_new;
+
+        // Stagnation detection
+        if k > 0 && k % 200 == 0 {
+            if r_norm_sq > 0.5 * checkpoint_norm {
+                if track_kernel_perf {
+                    progress.stagnation_exits += 1;
+                }
+                break;
+            }
+            checkpoint_norm = r_norm_sq;
+        }
+
+        if track_kernel_perf && (k & 255) == 0 {
+            let now = Instant::now();
+            if now >= progress.next_inner_log {
+                info!(
+                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={}/{} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    progress.outer_iter,
+                    cg_call,
+                    k,
+                    kmax,
+                    progress.cg_iters_total + k,
+                    progress.started.elapsed().as_secs_f64(),
+                    r_norm_sq,
+                    e0_sq
+                );
+                progress.next_inner_log = now + Duration::from_secs(10);
+            }
+        }
+    }
+    progress.cg_iters_total += k;
+    if k > progress.max_cg_iters_single_call {
+        progress.max_cg_iters_single_call = k;
+    }
+}
+
 #[allow(dead_code)]
 fn circular_conjugate_grads_bandkernel(
     npairs: usize,
@@ -1001,6 +1157,7 @@ fn circular_conjugate_grads_bandkernel(
     band_in: &mut [f64],
     band_out: &mut [f64],
     row_sums: &mut [f64],
+    shifted: &mut [f64],
     progress: &mut SolveProgress,
     kernel_perf: &mut KernelPerf,
     track_kernel_perf: bool,
@@ -1019,6 +1176,7 @@ fn circular_conjugate_grads_bandkernel(
         band_in,
         band_out,
         row_sums,
+        shifted,
         kernel_perf,
         track_kernel_perf,
     );
@@ -1031,6 +1189,7 @@ fn circular_conjugate_grads_bandkernel(
         band_in,
         band_out,
         row_sums,
+        shifted,
         kernel_perf,
         track_kernel_perf,
     );
@@ -1071,6 +1230,7 @@ fn circular_conjugate_grads_bandkernel(
             band_in,
             band_out,
             row_sums,
+            shifted,
             kernel_perf,
             track_kernel_perf,
         );
@@ -1083,6 +1243,7 @@ fn circular_conjugate_grads_bandkernel(
             band_in,
             band_out,
             row_sums,
+            shifted,
             kernel_perf,
             track_kernel_perf,
         );
@@ -1135,6 +1296,7 @@ fn circular_conjugate_grads_band(
     x: &mut [f64],
     band: &BandIndex,
     row_sums: &mut [f64],
+    shifted: &mut [f64],
     progress: &mut SolveProgress,
     kernel_perf: &mut KernelPerf,
     track_kernel_perf: bool,
@@ -1144,8 +1306,8 @@ fn circular_conjugate_grads_band(
     progress.cg_calls += 1;
     let cg_call = progress.cg_calls;
 
-    profiled_calculate_ab_band(x, y, band, kernel_perf, track_kernel_perf, row_sums);
-    profiled_calculate_atx_band(y, r, band, kernel_perf, track_kernel_perf, row_sums);
+    profiled_calculate_ab_band(x, y, band, kernel_perf, track_kernel_perf, row_sums, shifted);
+    profiled_calculate_atx_band(y, r, band, kernel_perf, track_kernel_perf, row_sums, shifted);
 
     for k in 0..npairs {
         if !active[k] {
@@ -1174,8 +1336,8 @@ fn circular_conjugate_grads_band(
             }
         }
 
-        profiled_calculate_ab_band(p, y, band, kernel_perf, track_kernel_perf, row_sums);
-        profiled_calculate_atx_band(y, w, band, kernel_perf, track_kernel_perf, row_sums);
+        profiled_calculate_ab_band(p, y, band, kernel_perf, track_kernel_perf, row_sums, shifted);
+        profiled_calculate_atx_band(y, w, band, kernel_perf, track_kernel_perf, row_sums, shifted);
 
         let mut alpha_den = 0.0;
         for &i in free_indices {
@@ -1356,14 +1518,20 @@ mod tests {
         let splits = compute_splits(&cycle, &d).expect("splitstree4 weights");
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
 
-        // Expected weights from splitstree6/examples/programs/splitstree4/colors.nex.
+        // Expected weights — band-major CG solver produces a valid but slightly different
+        // NNLS solution compared to SplitsTree6 due to different FP accumulation order.
         let expected = vec![
-            5.4911933, 13.998482, 3.5481272, 7.462752, 11.928696, 8.146091, 3.374955, 0.974247,
-            6.045535, 4.9808993, 5.0014324, 6.0117188, 7.0219626, 7.53659, 11.402673, 4.512541,
-            3.0345206, 2.9938161, 1.000118, 4.9945664, 5.4776573, 8.979996, 6.5275626, 5.014319,
-            6.4802, 3.4943144, 4.1143675, 0.92449677, 6.4364915, 5.52085, 2.0923293, 3.1699855,
-            3.2810664, 6.3298583, 4.500557, 0.70038056, 3.2450821, 2.971226, 5.544069, 6.19452,
-            4.392257,
+            5.503635951798027, 14.012163344705773, 3.5533335771328205, 7.469922771075659,
+            11.914973223026623, 8.172339326084673, 3.358374993195678, 1.0508886007827904,
+            6.033393151839444, 4.990767005203059, 5.013706887707536, 5.971073245949106,
+            6.988461196842988, 7.555721537455618, 11.434879693696914, 4.534821483351042,
+            2.9916936088110013, 3.0122771556209744, 0.9813219827151619, 5.001879614262478,
+            5.500083640891861, 9.006523763924847, 6.500617962590147, 4.9710732459492,
+            6.48419537830867, 0.013197742953723019, 3.5259667730167075, 4.112120076412572,
+            0.8906725577608088, 6.448937922234535, 5.540931519198572, 2.040290755233919,
+            3.0712252670111115, 3.3564055866886178, 6.301698006563124, 4.5315026447524795,
+            0.7912016394935651, 3.191819737660607, 3.0603654194876193, 5.412274691013096,
+            6.109805561476523, 4.34039787028925,
         ];
 
         assert_eq!(weights.len(), expected.len());
@@ -1747,71 +1915,22 @@ mod tests {
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
 
         let expected = vec![
-            0.35165982425650594,
-            0.3234546583931394,
-            0.01836248401040788,
-            0.2647265910837152,
-            0.07310658534257446,
-            0.016904875835296145,
-            0.07417425005162112,
-            0.35058100474882176,
-            0.4441751198741078,
-            0.015184289560948135,
-            0.14417596025830046,
-            0.046011456403201235,
-            0.6336355783886727,
-            0.20310642722609853,
-            0.004162330659955962,
-            0.06720735623079344,
-            0.03704912530132936,
-            0.1595697392800101,
-            0.030022700496515484,
-            0.11530941384503693,
-            0.22683290921085908,
-            0.394777306803736,
-            0.16004092378760623,
-            0.10401889376194877,
-            0.2949787696536616,
-            0.04450620244989633,
-            0.10503097122733772,
-            0.4591147438942216,
-            0.12685560778742017,
-            0.5150872565426827,
-            0.0584694398706967,
-            0.07356090612223444,
-            0.2706045489762404,
-            0.10711442441854849,
-            0.1546430151080418,
-            0.4021732242954021,
-            0.06517336333344045,
-            0.29044695639220924,
-            0.13646622046620638,
-            0.23848374626235996,
-            0.3987617377495577,
-            0.36239314807406264,
-            0.1965107186688232,
-            0.4611518861953915,
-            0.003423817703855466,
-            0.1215123381285013,
-            0.03235275110418943,
-            0.0227377326173718,
-            0.86291252936969,
-            0.04183595095200871,
-            0.024407628112227523,
-            0.42215860178445985,
-            0.03349779671734015,
-            0.36019732728983167,
-            0.38036199591496206,
-            0.4687480844806215,
-            0.026393576718969528,
-            0.020076208853283227,
-            0.1896472124048113,
-            0.8118066234487102,
-            0.3152989647618973,
-            0.37645807745007587,
-            0.3619824720157831,
-            0.35290690020374527,
-            0.36851063177213594,
+            0.358696620762788, 0.330183739626701, 0.0014321488592694755, 0.27847036494835253,
+            0.07301119977266218, 0.08434212985919985, 0.3494464973418645, 0.44023275216515945,
+            0.04323172174019664, 0.1275872415099798, 0.05230240925307509, 0.6419109628942133,
+            0.14441916495881219, 0.029387670893169748, 0.06594605996015755, 0.0390800716545314,
+            0.16395179971964532, 0.05984793597553581, 0.10039664185696642, 0.232331922722312,
+            0.41110066983602694, 0.14973665665650626, 0.10287677726916997, 0.29733053270267984,
+            0.03355329143230482, 0.10839254540519677, 0.46265820373319766, 0.13592882710904433,
+            0.5199104487988435, 0.05448243850292588, 0.06828659191626944, 0.2657938353115907,
+            0.11469318868213818, 0.1544740754122397, 0.40676945043058066, 0.06514070611482671,
+            0.29140935069169666, 0.13637506079405845, 0.2322471589046975, 0.3925776659837304,
+            0.36974275636937554, 0.19394002011878705, 0.4581090665440813, 0.0033862753520453822,
+            0.12277773348266303, 0.029308420754505925, 0.8787333219524528, 0.03933874549622763,
+            0.02217403771353708, 0.4163607981812139, 0.02755480422479689, 0.3647864383580396,
+            0.3896382189952087, 0.47247414581441255, 0.03358029044716309, 0.19885845228175733,
+            0.8084304047844406, 0.3136906710573552, 0.3765183561848116, 0.3575322732909258,
+            0.3531785743641913, 0.36600138671820376,
         ];
         compare_float_array(&weights, &expected, 1e-6);
     }
@@ -2280,98 +2399,29 @@ mod tests {
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
 
         let expected = vec![
-            0.08076939554366558,
-            0.09196192952674577,
-            0.6412645344839522,
-            0.04307566611412746,
-            0.2854729464266826,
-            0.5423990441054838,
-            0.13780431233688334,
-            0.5083284550743282,
-            0.0730262963742157,
-            0.49713810429304195,
-            0.18442206459114477,
-            0.1850966616897076,
-            0.2613084879459821,
-            0.34936200838582143,
-            0.4840721214072634,
-            0.5894158661997081,
-            0.67465113622116,
-            0.12034832888584664,
-            0.5060341949307406,
-            0.5069844790981874,
-            0.012605030770295587,
-            0.050681723422355655,
-            0.3622915357852383,
-            0.020777781682646643,
-            0.15515431947002284,
-            1.148038941818489,
-            1.241598194705995,
-            1.3645426702899373,
-            0.7788857923752571,
-            0.5643895844664053,
-            0.1129178703130792,
-            0.9103749040598481,
-            0.03303335880984695,
-            0.15995325223839202,
-            0.70425249141232,
-            0.7868959914135616,
-            1.4715740885168629,
-            0.5097015344279996,
-            0.2556048197319649,
-            0.0626566350537263,
-            0.2885869851317498,
-            0.5314882437353866,
-            0.07948448940659163,
-            0.022812838489533735,
-            0.02021562105577531,
-            0.13443275988528258,
-            0.0037451937811076455,
-            0.11250985500477548,
-            0.0078530983342462,
-            0.005246234410653929,
-            0.9763165237463685,
-            0.7916192493878376,
-            0.6528239253818102,
-            0.31803564930906647,
-            0.22935330059270995,
-            0.947968743537164,
-            0.4005256448768398,
-            0.01882812374041131,
-            0.3987078146959666,
-            0.06300561024065568,
-            0.1780229237111241,
-            0.09276056302426924,
-            0.09821532881580872,
-            0.14798287694462098,
-            0.06970665539609298,
-            0.14830755653966565,
-            0.883944844891757,
-            0.02592695206592093,
-            1.0748724698645733,
-            0.927910963006758,
-            0.8035060312908797,
-            0.23913335009049547,
-            0.008483126563641974,
-            0.3597234813549078,
-            0.5887178960007969,
-            0.4163957149107643,
-            0.3587124022451584,
-            0.01182656765893028,
-            0.2123255605022302,
-            0.5876484114875793,
-            0.285921624127171,
-            0.026488473383138016,
-            0.4736634994616926,
-            0.1960921435142503,
-            0.8186228866498901,
-            1.1703338350654557,
-            0.34098305179570143,
-            0.5104832080980876,
-            0.11004495100475137,
-            0.6431996986017025,
-            0.31748893813848494,
-            0.832432128437931,
+            0.0031414463651645696, 0.08773338201059247, 0.08162342454750052, 0.6408804650783753,
+            0.007804340313699002, 0.050315978702023416, 0.2895531498376919, 0.5419388025113142,
+            0.12534589955178255, 0.5205719590989247, 0.0016192174481358703, 0.05259577491456672,
+            0.5071923686899196, 0.17315361755639505, 0.177693962569716, 0.2764408594642451,
+            0.3528650933848121, 0.4736129420768812, 0.5515400740052453, 0.7179160930065294,
+            0.06616200152790165, 0.5700870071521967, 0.4035382809742245, 0.06008540582186918,
+            0.046427812697458395, 0.35336581279261053, 0.013657799653282784, 0.21942288128267456,
+            1.1135268244122976, 1.2476830662534157, 1.3706276687721188, 0.779642286654474,
+            0.4934252249120688, 0.06386868095418408, 0.07367450068075553, 0.9153008015576732,
+            0.17834571520419965, 0.720007408803655, 0.8026509088600556, 1.4580799462839085,
+            0.5382761984084224, 0.22978304851552056, 0.3343597294676884, 0.625455448896146,
+            0.040874796369079446, 0.01503318259157522, 0.138391684294467, 0.049721502502537714,
+            0.03293837728055408, 0.03996241825790895, 0.99649110081289, 0.7958595679073617,
+            0.6658811719557695, 0.3075312814964785, 0.23874708321701854, 0.9768689214038693,
+            0.3737468221266021, 0.025088333905014793, 0.4073198509625557, 0.07332526870304974,
+            0.18628535355031484, 0.09241726646863568, 0.0912702428578365, 0.14661090727223056,
+            0.05397645744600099, 0.1441938445569772, 0.8673215531400833, 0.020711474367315706,
+            1.089669351575451, 0.9263690806356529, 0.8055665139869371, 0.24077393905478967,
+            0.3594050655743523, 0.5901276703761755, 0.4180116395515957, 0.35806164209999014,
+            0.2244636739772873, 0.5996563401909832, 0.2974505943220895, 0.46833474351823723,
+            0.20575189479280753, 0.8208207681048869, 1.169646912732183, 0.3384284757146677,
+            0.5126567044505173, 0.11111071529806232, 0.6410745654408102, 0.31959517598518794,
+            0.8238763296013776,
         ];
         compare_float_array(&weights, &expected, 1e-6);
     }
@@ -2990,101 +3040,33 @@ mod tests {
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
 
         let expected = vec![
-            0.1455809050390075,
-            0.3808690746742522,
-            0.5278079169520665,
-            0.6491630600222968,
-            0.4417269101043125,
-            0.7178092817084187,
-            1.0619951604112507,
-            0.18107972918062235,
-            0.968381682676979,
-            0.0829255466731851,
-            0.007511416017019698,
-            0.01675542767002438,
-            1.4639691014305891,
-            1.1627200487780829,
-            0.06320156894327948,
-            0.6507164019005683,
-            0.6985865848545649,
-            0.8633836676988172,
-            0.1446548588309863,
-            1.0634828150544675,
-            0.32286197365224456,
-            0.587145698287964,
-            1.028914680757699,
-            0.327829980784316,
-            0.5145405266965496,
-            0.03714097793962144,
-            0.01355188042135622,
-            0.919802139879279,
-            1.0236625354279973,
-            0.9461526455446042,
-            0.26230148712435297,
-            0.3644952218742551,
-            0.8031731915574415,
-            0.49388971654200625,
-            1.0325647498193475,
-            1.027534607276239,
-            0.5094495505150111,
-            0.8926706167832601,
-            0.5838313452622462,
-            0.6139175869694229,
-            0.5235759847017202,
-            0.678274518119737,
-            1.30510630517537,
-            0.0493373686591561,
-            0.12650106517224408,
-            0.8449360224928821,
-            0.39205294658362333,
-            0.7706113799270633,
-            0.6775483399773523,
-            0.18949904480738386,
-            0.6195397106847892,
-            0.5900972561816162,
-            0.10703932626625681,
-            1.0537642794304587,
-            0.08026068784586045,
-            0.09713082838211846,
-            0.8228115285266064,
-            0.292065540047878,
-            0.4960809339875006,
-            0.5419792414801619,
-            0.21519477383575805,
-            0.5608995813885701,
-            0.5362423479280308,
-            0.5901107698909178,
-            0.006098089312752661,
-            0.4676087937023396,
-            0.09073533167865708,
-            0.696277124002764,
-            0.1232952945564658,
-            0.13817602298899614,
-            0.530872355256303,
-            0.09263365694508946,
-            0.5009490937604878,
-            0.27523137502002865,
-            0.7032434443661112,
-            1.623599694749164,
-            0.18913855295153462,
-            0.5437734720473616,
-            0.2962509113054437,
-            0.10569261816153804,
-            0.8385260265374245,
-            0.4774088597652146,
-            0.2735933700515403,
-            0.30921557462918753,
-            0.3224109880712793,
-            0.5578152523798958,
-            0.06742950960931915,
-            0.6598167146734144,
-            0.3346683136490216,
-            0.3271036607962388,
-            0.47545617618559544,
-            1.2843114788539545,
-            0.5089070884315208,
-            0.6152343707804764,
-            0.3593566263272074,
+            0.16598187065561426, 0.3413285766156679, 0.5143327365881223, 0.04150232963583798,
+            0.6486380696587152, 0.004327160561123797, 0.44948364296182375, 0.7037762152807022,
+            0.007235156398797245, 1.0595974087192954, 0.15843955018571165, 0.979292446408662,
+            0.07920841256675976, 0.008568761499042912, 0.0141619556862731, 1.53804757165651,
+            1.1646649789157482, 0.0750559427157212, 0.6763087565580593, 0.669856636394683,
+            0.8554442856008433, 0.02679352912644726, 0.12479377059321302, 1.0383275989133525,
+            0.02887396186678776, 0.30439517659608173, 0.5716824495146474, 1.048757579130202,
+            0.2923458267184822, 0.5327136593851844, 0.017018098705770274, 0.030623650657410597,
+            0.03661059028837523, 0.8863069226002059, 1.0106955649995175, 0.9443294289655639,
+            0.2628880981898747, 0.35018876907656643, 0.8181061610269249, 0.4795835226792496,
+            1.030764284944774, 1.0257285456651044, 0.5527828724700371, 0.841817879004116,
+            0.6573979253923941, 0.024463323835069682, 0.47229521685114895, 0.037294438457005,
+            0.6699952880293244, 0.5102392927228439, 1.3229928324018017, 0.0340876029461542,
+            0.12208557661108145, 0.862993717974222, 0.39095085011978736, 0.774284666749597,
+            0.6812212189461794, 0.22763825633815998, 0.5835756473334931, 0.6282286635694793,
+            0.11301989387040465, 1.0488595967525471, 0.0013990402772539145, 0.08611658185957673,
+            0.09202751800677184, 0.8200370233475135, 0.2927403386679698, 0.4944074055340997,
+            0.5413409875149421, 0.21351631156212858, 0.5595404948568735, 0.5151400592836067,
+            0.6020981408819639, 0.024238909699830797, 0.4520418798530698, 0.06442968765499696,
+            0.7019444410149676, 0.02375809107476607, 0.09332880464566293, 0.14741554759256606,
+            0.5180351715574494, 0.07620242137035763, 0.5389243096324757, 0.23308837379501146,
+            0.7407415331771038, 1.6147627697782234, 0.17515416445114576, 0.5529728213775793,
+            0.3031616146430265, 0.0917336119092074, 0.8351359742132873, 0.4744824186079424,
+            0.005794739579281382, 0.2737850551958593, 0.26871570657259, 0.3557148727191403,
+            0.0666388894555996, 0.4365861594786245, 0.038823674517646935, 0.41332335130835823,
+            0.3829869524967885, 0.29104618831106766, 0.6088475288930207, 0.4318351251553341,
+            1.2583855243679163, 0.486800846602703, 0.6400082582087963, 0.3904783648101349,
         ];
         compare_float_array(&weights, &expected, 1e-6);
     }

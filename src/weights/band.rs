@@ -95,6 +95,27 @@ pub fn batch_rowsums_band(b: &[f64], sums: &mut [f64], band: &BandIndex) {
     }
 }
 
+/// Compute row sums from band-major data using band-sequential traversal.
+/// Iterates bands k=1..n-1 in order, reading each band contiguously (stride-1).
+/// Much faster than batch_rowsums_band for large n because it avoids stride-n
+/// random access through the 42MB array.
+/// Accumulation order differs (band-order vs row-order), so FP results may
+/// differ by ~n*eps*max_val. This is well below CG tolerance.
+pub fn batch_rowsums_band_sequential(b: &[f64], sums: &mut [f64], band: &BandIndex) {
+    let n = band.n;
+    sums[..n].fill(0.0);
+    for k in 1..n {
+        let (start, end) = band.band_range(k);
+        let band_slice = &b[start..end];
+        for (i, &val) in band_slice.iter().enumerate() {
+            unsafe {
+                *sums.get_unchecked_mut(i) += val;
+                *sums.get_unchecked_mut(i + k) += val;
+            }
+        }
+    }
+}
+
 /// Compute row sums from band-major data in the same accumulation order as
 /// calc_ax_indexed Pass 1: for each vertex v, row entries first (v as first index),
 /// then column entries (v as second index). This matches the active_set forward operator.
@@ -158,7 +179,7 @@ pub fn calculate_forward_band(b: &[f64], d: &mut [f64], band: &BandIndex, row_su
 
 /// Band-major kernel: compute d = A * b where A is the circular split design matrix.
 /// Both b and d are in band-major layout.
-pub fn calculate_ab_band(b: &[f64], d: &mut [f64], band: &BandIndex, row_sums: &mut [f64]) {
+pub fn calculate_ab_band(b: &[f64], d: &mut [f64], band: &BandIndex, row_sums: &mut [f64], shifted: &mut [f64]) {
     let n = band.n;
 
     // Pass 1: compute row sums of b (using row-major accumulation order for FP compatibility)
@@ -167,11 +188,6 @@ pub fn calculate_ab_band(b: &[f64], d: &mut [f64], band: &BandIndex, row_sums: &
     // Initialize band 1 of d: d[i, i+1] = row_sums[i]
     let (d1_start, d1_end) = band.band_range(1);
     d[d1_start..d1_end].copy_from_slice(&row_sums[..n - 1]);
-
-    // Pre-allocate buffer for the shifted slice d_km1[1..].
-    // This eliminates the overlapping access pattern d_km1[i]/d_km1[i+1]
-    // that prevents SIMD auto-vectorization.
-    let mut shifted = vec![0.0f64; n];
 
     // Pass 2+3: for k=2..n-1, compute band k from bands k-1 and k-2
     for k in 2..n {
@@ -283,7 +299,7 @@ pub fn calculate_ab_band_with_masked_norm_sq(
     let n = band.n;
     row_sq_accum[..n].fill(0.0);
 
-    // Pass 1: compute row sums of b
+    // Pass 1: compute row sums of b (row-major accumulation order for FP compatibility)
     batch_rowsums_band(b, row_sums, band);
 
     // Initialize band 1 of d: d[i, i+1] = row_sums[i]
@@ -344,7 +360,7 @@ pub fn calculate_ab_band_with_masked_norm_sq(
 
 /// Band-major kernel: compute p = A^T * d where A is the circular split design matrix.
 /// Both d and p are in band-major layout.
-pub fn calculate_atx_band(d: &[f64], p: &mut [f64], band: &BandIndex, row_sums: &mut [f64]) {
+pub fn calculate_atx_band(d: &[f64], p: &mut [f64], band: &BandIndex, row_sums: &mut [f64], shifted: &mut [f64]) {
     let n = band.n;
 
     // Pass 1: compute row sums of d (using row-major accumulation order for FP compatibility)
@@ -353,9 +369,6 @@ pub fn calculate_atx_band(d: &[f64], p: &mut [f64], band: &BandIndex, row_sums: 
     // Initialize band 1 of p: p[i, i+1] = row_sums[i+1]
     let (p1_start, p1_end) = band.band_range(1);
     p[p1_start..p1_end].copy_from_slice(&row_sums[1..n]);
-
-    // Pre-allocate buffer for the shifted slice p_km1[1..].
-    let mut shifted = vec![0.0f64; n];
 
     // Pass 2+3: for k=2..n-1, compute band k from bands k-1 and k-2
     // ATX: p_band_k[i] = p_band_{k-1}[i] + p_band_{k-1}[i+1] - p_band_{k-2}[i+1] - 2*d_band_{k-1}[i+1]
@@ -601,14 +614,15 @@ pub fn profiled_calculate_ab_band(
     perf: &mut BandKernelPerf,
     track: bool,
     row_sums: &mut [f64],
+    shifted: &mut [f64],
 ) {
     if track {
         let t0 = Instant::now();
-        calculate_ab_band(b, d, band, row_sums);
+        calculate_ab_band(b, d, band, row_sums, shifted);
         perf.calc_ab_calls += 1;
         perf.calc_ab_time += t0.elapsed();
     } else {
-        calculate_ab_band(b, d, band, row_sums);
+        calculate_ab_band(b, d, band, row_sums, shifted);
     }
 }
 
@@ -620,14 +634,15 @@ pub fn profiled_calculate_atx_band(
     perf: &mut BandKernelPerf,
     track: bool,
     row_sums: &mut [f64],
+    shifted: &mut [f64],
 ) {
     if track {
         let t0 = Instant::now();
-        calculate_atx_band(d, p, band, row_sums);
+        calculate_atx_band(d, p, band, row_sums, shifted);
         perf.calc_atx_calls += 1;
         perf.calc_atx_time += t0.elapsed();
     } else {
-        calculate_atx_band(d, p, band, row_sums);
+        calculate_atx_band(d, p, band, row_sums, shifted);
     }
 }
 
