@@ -24,7 +24,7 @@ use crate::utils::compute_least_squares_fit;
 use crate::weights::InferenceMethod;
 use crate::weights::active_set_weights::{NNLSParams, compute_asplits};
 use crate::weights::splitstree4_weights::{
-    DEFAULT_CUTOFF, compute_splits as compute_splitstree4_splits,
+    DEFAULT_CUTOFF, SplitsTree4SolveStats, compute_splits as compute_splitstree4_splits,
 };
 
 pub struct NeighbourNet {
@@ -88,7 +88,8 @@ impl NeighbourNet {
 
         // 3) Split weight inference
         let t_nnls = Instant::now();
-        let (params, splits) = self.compute_asplits(&cycle).context("ASplits solved")?;
+        let (params, splits, st4_stats) =
+            self.compute_asplits(&cycle).context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
             "Estimated {} splits (cutoff = {}) in {:.3}s",
@@ -145,6 +146,7 @@ impl NeighbourNet {
             &splits_blocks,
             &params,
             fit,
+            st4_stats,
             RunTimings {
                 load_sec: self.parse_meta.load_sec,
                 cycle_sec,
@@ -177,7 +179,8 @@ impl NeighbourNet {
 
         // 3) Split weight inference
         let t_nnls = Instant::now();
-        let (_params, splits) = self.compute_asplits(&cycle).context("ASplits solved")?;
+        let (_params, splits, _st4_stats) =
+            self.compute_asplits(&cycle).context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
             "Estimated {} splits (cutoff = {}) in {:.3}s",
@@ -236,20 +239,24 @@ impl NeighbourNet {
         Ok(cycle)
     }
 
-    pub fn compute_asplits(&self, cycle: &[usize]) -> Result<(NNLSParams, Vec<ASplit>)> {
+    pub fn compute_asplits(
+        &self,
+        cycle: &[usize],
+    ) -> Result<(NNLSParams, Vec<ASplit>, Option<SplitsTree4SolveStats>)> {
         match self.args.inference {
             InferenceMethod::ActiveSet => {
                 let mut params = self.args.nnls_params.clone();
                 let splits = compute_asplits(&cycle, &self.distance_matrix, &mut params, None)
                     .context("ASplits solved")?;
-                Ok((params, splits))
+                Ok((params, splits, None))
             }
             InferenceMethod::SplitsTree4 => {
-                let splits = compute_splitstree4_splits(cycle, &self.distance_matrix)
-                    .context("SplitsTree4 weights solved")?;
+                let (splits, solve_stats) =
+                    compute_splitstree4_splits(cycle, &self.distance_matrix)
+                        .context("SplitsTree4 weights solved")?;
                 let mut params = self.args.nnls_params.clone();
                 params.cutoff = DEFAULT_CUTOFF;
-                Ok((params, splits))
+                Ok((params, splits, Some(solve_stats)))
             }
         }
     }
@@ -514,6 +521,7 @@ impl NeighbourNet {
         splits: &SplitsBlock,
         nnls: &NNLSParams,
         fit_percent: f32,
+        splitstree4_solve_stats: Option<SplitsTree4SolveStats>,
         timings: RunTimings,
     ) -> RunLog {
         let n = labels.len();
@@ -563,6 +571,7 @@ impl NeighbourNet {
                 sum_weights,
             },
             fit_percent,
+            splitstree4_solve_stats,
             timings,
             system: sys,
             inference: self.args.inference.as_str().to_string(),
@@ -634,6 +643,7 @@ struct RunLog {
     nnls: NNLSMeta,
     inference: String,
     fit_percent: f32,
+    splitstree4_solve_stats: Option<SplitsTree4SolveStats>,
     timings: RunTimings,
     system: SystemStats,
 }

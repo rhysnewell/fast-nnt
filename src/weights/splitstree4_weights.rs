@@ -12,6 +12,21 @@ use crate::splits::asplit::ASplit;
 
 pub const DEFAULT_CUTOFF: f64 = 1e-6;
 
+#[derive(Debug, Clone, serde::Serialize, Default)]
+pub struct SplitsTree4SolveStats {
+    pub outer_iterations: usize,
+    pub cg_calls: usize,
+    pub cg_iters_total: usize,
+    pub max_cg_iters_single_call: usize,
+    pub stagnation_exits: usize,
+    pub inner_loop_activations: usize,
+    pub collapse_events: usize,
+    pub collapsed_indices_total: usize,
+    pub kernel_ab_calls: usize,
+    pub kernel_atx_calls: usize,
+    pub elapsed_secs: f64,
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 struct PackedTriIndex {
@@ -120,7 +135,10 @@ impl Default for Splitstree4Options {
 
 /// Compute split weights using the SplitsTree4-style optimizer used in SplitsTree6.
 /// `cycle` is 1-based with leading 0 sentinel.
-pub fn compute_splits(cycle: &[usize], distances: &Array2<f64>) -> Result<Vec<ASplit>> {
+pub fn compute_splits(
+    cycle: &[usize],
+    distances: &Array2<f64>,
+) -> Result<(Vec<ASplit>, SplitsTree4SolveStats)> {
     compute_weighted_splits(cycle, distances, Splitstree4Options::default())
 }
 
@@ -128,10 +146,10 @@ fn compute_weighted_splits(
     cycle: &[usize],
     distances: &Array2<f64>,
     options: Splitstree4Options,
-) -> Result<Vec<ASplit>> {
+) -> Result<(Vec<ASplit>, SplitsTree4SolveStats)> {
     let n = cycle.len().saturating_sub(1);
     if n <= 1 {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), SplitsTree4SolveStats::default()));
     }
     if n == 2 {
         let d_ij = distances[[cycle[1] - 1, cycle[2] - 1]];
@@ -139,9 +157,12 @@ fn compute_weighted_splits(
             let mut a = FixedBitSet::with_capacity(n + 1);
             a.grow(n + 1);
             a.set(cycle[1], true);
-            return Ok(vec![ASplit::from_a_ntax_with_weight(a, n, d_ij)]);
+            return Ok((
+                vec![ASplit::from_a_ntax_with_weight(a, n, d_ij)],
+                SplitsTree4SolveStats::default(),
+            ));
         }
-        return Ok(Vec::new());
+        return Ok((Vec::new(), SplitsTree4SolveStats::default()));
     }
 
     let npairs = n * (n - 1) / 2;
@@ -164,7 +185,7 @@ fn compute_weighted_splits(
 
     let mut x = vec![0.0; npairs];
     let weights_opt = if w.is_empty() { None } else { Some(&w[..]) };
-    run_active_conjugate(n, &d, weights_opt, &mut x, options);
+    let stats = run_active_conjugate(n, &d, weights_opt, &mut x, options);
 
     let mut splits = Vec::new();
     let mut index = 0usize;
@@ -179,7 +200,7 @@ fn compute_weighted_splits(
             index += 1;
         }
     }
-    Ok(splits)
+    Ok((splits, stats))
 }
 
 fn setup_d(distances: &Array2<f64>, cycle: &[usize], n: usize) -> Vec<f64> {
@@ -217,7 +238,7 @@ fn run_active_conjugate(
     w: Option<&[f64]>,
     x: &mut [f64],
     options: Splitstree4Options,
-) {
+) -> SplitsTree4SolveStats {
     let collapse_many_negs = true;
     let npairs = d.len();
     let band = BandIndex::new(n);
@@ -232,7 +253,10 @@ fn run_active_conjugate(
     // Unconstrained LS in row-major (uses row-major recurrence)
     run_unconstrained_ls(n, d, x);
     if x.iter().all(|&val| val >= 0.0) {
-        return;
+        return SplitsTree4SolveStats {
+            elapsed_secs: started.elapsed().as_secs_f64(),
+            ..Default::default()
+        };
     }
 
     // === Convert to band-major for the entire active-set solve ===
@@ -454,7 +478,19 @@ fn run_active_conjugate(
             }
             // Convert x_band back to row-major
             band_to_row(&x_band, x, &band);
-            return;
+            return SplitsTree4SolveStats {
+                outer_iterations: progress.outer_iter,
+                cg_calls: progress.cg_calls,
+                cg_iters_total: progress.cg_iters_total,
+                max_cg_iters_single_call: progress.max_cg_iters_single_call,
+                stagnation_exits: progress.stagnation_exits,
+                inner_loop_activations: progress.inner_loop_activations,
+                collapse_events: progress.collapse_events,
+                collapsed_indices_total: progress.collapsed_indices_total,
+                kernel_ab_calls: kernel_perf.calc_ab_calls,
+                kernel_atx_calls: kernel_perf.calc_atx_calls,
+                elapsed_secs: progress.started.elapsed().as_secs_f64(),
+            };
         } else {
             active[min_i.unwrap()] = false;
         }
@@ -1515,7 +1551,7 @@ mod tests {
         ]);
 
         let cycle: Vec<usize> = (0..=10).collect();
-        let splits = compute_splits(&cycle, &d).expect("splitstree4 weights");
+        let (splits, _stats) = compute_splits(&cycle, &d).expect("splitstree4 weights");
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
 
         // Expected weights — band-major CG solver produces a valid but slightly different
@@ -1549,7 +1585,7 @@ mod tests {
         ]);
         let ord = vec![0, 1, 2, 5, 4, 3];
 
-        let splits = compute_splits(&ord, &d).expect("splitstree4 weights");
+        let (splits, _stats) = compute_splits(&ord, &d).expect("splitstree4 weights");
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
 
         // Expected weights from splitstree6 (SplitsTree4 inference).
@@ -1573,7 +1609,7 @@ mod tests {
         ]);
         let ord = vec![0, 1, 5, 7, 9, 3, 8, 4, 2, 10, 6];
 
-        let splits = compute_splits(&ord, &d).expect("splitstree4 weights");
+        let (splits, _stats) = compute_splits(&ord, &d).expect("splitstree4 weights");
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
 
         // Expected weights from splitstree6 (SplitsTree4 inference).
@@ -1708,7 +1744,7 @@ mod tests {
             0, 1, 18, 11, 20, 12, 3, 19, 17, 2, 14, 6, 4, 15, 8, 10, 13, 7, 16, 9, 5,
         ];
 
-        let splits = compute_splits(&ord, &d).expect("splitstree4 weights");
+        let (splits, _stats) = compute_splits(&ord, &d).expect("splitstree4 weights");
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
         let expected = vec![
             0.04747073292009973,
@@ -1911,7 +1947,7 @@ mod tests {
             20, 16, 23, 25, 22, 17, 9,
         ];
 
-        let splits = compute_splits(&ord, &d).expect("splitstree4 weights");
+        let (splits, _stats) = compute_splits(&ord, &d).expect("splitstree4 weights");
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
 
         let expected = vec![
@@ -2395,7 +2431,7 @@ mod tests {
             30, 41, 50, 23, 35,
         ];
 
-        let splits = compute_splits(&ord, &d).expect("splitstree4 weights");
+        let (splits, _stats) = compute_splits(&ord, &d).expect("splitstree4 weights");
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
 
         let expected = vec![
@@ -3036,7 +3072,7 @@ mod tests {
             55, 48, 3, 31, 57, 59, 33, 47, 49, 36, 44, 26, 42, 6, 20, 17,
         ];
 
-        let splits = compute_splits(&ord, &d).expect("splitstree4 weights");
+        let (splits, _stats) = compute_splits(&ord, &d).expect("splitstree4 weights");
         let weights: Vec<f64> = splits.iter().map(|s| s.get_weight()).collect();
 
         let expected = vec![

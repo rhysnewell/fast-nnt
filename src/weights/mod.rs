@@ -2,6 +2,8 @@ pub mod active_set_weights;
 pub mod band;
 pub mod splitstree4_weights;
 
+pub use splitstree4_weights::SplitsTree4SolveStats;
+
 use clap::ValueEnum;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]

@@ -71,7 +71,7 @@ pub fn compute_order_splits_tree4_with_sx(
 }
 
 fn default_sx_mode(n_tax: usize) -> SxMode {
-    if n_tax < 300 {
+    if n_tax < 300 || rayon::current_num_threads() <= 1 {
         SxMode::Serial
     } else {
         SxMode::Parallel
