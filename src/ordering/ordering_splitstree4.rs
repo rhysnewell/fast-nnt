@@ -34,13 +34,16 @@ pub fn compute_order_splits_tree4_with_sx(
         return Ok(cycle);
     }
 
+    // Canonical pre-sort: deterministic ordering regardless of input row/column order
+    let perm = canonical_permutation(dist);
+
     let max_nodes = 3 * n_tax - 5;
     let stride = max_nodes;
     let mut mat = vec![0.0_f64; max_nodes * max_nodes];
 
     for i in 1..=n_tax {
         for j in 1..=n_tax {
-            mat[i * stride + j] = dist[(i - 1, j - 1)];
+            mat[i * stride + j] = dist[(perm[i - 1], perm[j - 1])];
         }
     }
 
@@ -67,7 +70,55 @@ pub fn compute_order_splits_tree4_with_sx(
     let joins = join_nodes(&mut mat, stride, &mut nodes, 0, n_tax, sx_mode)?;
 
     // 4) Expand joins to a circular ordering of leaves
-    expand_nodes(n_tax, &mut nodes, 0, joins)
+    let mut cycle = expand_nodes(n_tax, &mut nodes, 0, joins)?;
+
+    // Map sorted indices back to original indices through the permutation
+    for i in 1..cycle.len() {
+        cycle[i] = perm[cycle[i] - 1] + 1; // sorted 1-based → original 1-based
+    }
+    Ok(cycle)
+}
+
+/// Compute a canonical permutation of taxa for deterministic ordering.
+/// Returns `perm` where `perm[i]` is the original 0-based index of the taxon
+/// that should appear at sorted position `i`.
+///
+/// Sort criteria:
+///   1. Row sum (ascending)
+///   2. Sorted row values (lexicographic ascending) — for tiebreaking
+fn canonical_permutation(dist: &Array2<f64>) -> Vec<usize> {
+    let n = dist.nrows();
+    let row_sums: Vec<f64> = (0..n).map(|i| dist.row(i).sum()).collect();
+
+    // Pre-sort each row's values for deterministic tiebreaking
+    let sorted_rows: Vec<Vec<f64>> = (0..n)
+        .map(|i| {
+            let mut row: Vec<f64> = dist.row(i).to_vec();
+            row.sort_unstable_by(|a, b| a.total_cmp(b));
+            row
+        })
+        .collect();
+
+    let mut perm: Vec<usize> = (0..n).collect();
+    perm.sort_by(|&a, &b| {
+        row_sums[a]
+            .total_cmp(&row_sums[b])
+            .then_with(|| {
+                sorted_rows[a]
+                    .iter()
+                    .zip(sorted_rows[b].iter())
+                    .find_map(|(va, vb)| {
+                        let ord = va.total_cmp(vb);
+                        if ord.is_eq() {
+                            None
+                        } else {
+                            Some(ord)
+                        }
+                    })
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+    perm
 }
 
 fn default_sx_mode(n_tax: usize) -> SxMode {
@@ -1047,14 +1098,7 @@ mod tests {
         let ord = compute_order_splits_tree4(&d)
             .context("computing order for small square")
             .unwrap();
-        let exp = vec![0, 1, 2, 4, 3];
-        let rev_exp = vec![0, 1, 3, 4, 2];
-        assert!(
-            ord == exp || ord == rev_exp,
-            "Expected order to be either {:?} or {:?}",
-            exp,
-            rev_exp
-        );
+        assert_eq!(ord, vec![0, 2, 3, 4, 1]);
     }
 
     #[test]
@@ -1077,14 +1121,7 @@ mod tests {
         let ord = compute_order_splits_tree4(&d)
             .context("computing order for smoke 5_1")
             .unwrap();
-        let exp = vec![0, 1, 2, 5, 4, 3];
-        let rev_exp = vec![0, 1, 3, 4, 5, 2];
-        assert!(
-            ord == exp || ord == rev_exp,
-            "Expected order to be either {:?} or {:?}",
-            exp,
-            rev_exp
-        );
+        assert_eq!(ord, vec![0, 5, 4, 3, 2, 1]);
     }
 
     #[test]
@@ -1107,8 +1144,7 @@ mod tests {
         let ord = compute_order_splits_tree4(&d)
             .context("computing order for smoke 5_2")
             .unwrap();
-        let exp = vec![0, 1, 2, 4, 5, 3];
-        assert_eq!(ord, exp);
+        assert_eq!(ord, vec![0, 1, 3, 5, 4, 2]);
     }
 
     #[test]
@@ -1142,7 +1178,7 @@ mod tests {
         let ord = compute_order_splits_tree4(&d)
             .context("computing order for smoke 10_1")
             .unwrap();
-        assert_eq!(ord, vec![0, 1, 2, 10, 6, 4, 8, 3, 9, 7, 5]);
+        assert_eq!(ord, vec![0, 9, 6, 10, 2, 4, 8, 3, 1, 5, 7]);
     }
 
     #[test]
@@ -1176,15 +1212,7 @@ mod tests {
         let ord = compute_order_splits_tree4(&d)
             .context("computing order for smoke 10_2")
             .unwrap();
-        let exp_ord = vec![0, 1, 2, 4, 8, 3, 7, 9, 5, 6, 10];
-        let rev_ex_order = vec![0, 1, 10, 6, 5, 9, 7, 3, 8, 4, 2];
-        assert!(
-            ord == exp_ord || ord == rev_ex_order,
-            "Unexpected order {:?} | {:?} OR {:?}",
-            ord,
-            exp_ord,
-            rev_ex_order
-        );
+        assert_eq!(ord, vec![0, 9, 5, 6, 10, 1, 2, 4, 8, 3, 7]);
     }
 
     #[test]
@@ -1260,7 +1288,44 @@ mod tests {
             .unwrap();
         assert_eq!(
             ord,
-            vec![0, 1, 4, 15, 11, 10, 12, 14, 2, 3, 7, 8, 13, 5, 9, 6]
+            vec![0, 9, 12, 10, 11, 15, 4, 1, 6, 14, 2, 3, 7, 8, 13, 5]
         );
+    }
+
+    #[test]
+    fn permutation_invariance() {
+        // The smoke_10_1 matrix
+        let d = arr2(&[
+            [0.0, 5.0, 12.0, 7.0, 3.0, 9.0, 11.0, 6.0, 4.0, 10.0],
+            [5.0, 0.0, 8.0, 2.0, 14.0, 5.0, 13.0, 7.0, 12.0, 1.0],
+            [12.0, 8.0, 0.0, 4.0, 9.0, 3.0, 8.0, 2.0, 5.0, 6.0],
+            [7.0, 2.0, 4.0, 0.0, 11.0, 7.0, 10.0, 4.0, 6.0, 9.0],
+            [3.0, 14.0, 9.0, 11.0, 0.0, 8.0, 1.0, 13.0, 2.0, 7.0],
+            [9.0, 5.0, 3.0, 7.0, 8.0, 0.0, 12.0, 5.0, 3.0, 4.0],
+            [11.0, 13.0, 8.0, 10.0, 1.0, 12.0, 0.0, 6.0, 2.0, 8.0],
+            [6.0, 7.0, 2.0, 4.0, 13.0, 5.0, 6.0, 0.0, 9.0, 7.0],
+            [4.0, 12.0, 5.0, 6.0, 2.0, 3.0, 2.0, 9.0, 0.0, 5.0],
+            [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
+        ]);
+        let baseline = compute_order_splits_tree4(&d).unwrap();
+
+        // Apply an arbitrary permutation
+        let perm = [3, 7, 0, 5, 9, 1, 4, 8, 2, 6];
+        let n = d.nrows();
+        let mut d_perm = Array2::<f64>::zeros((n, n));
+        for i in 0..n {
+            for j in 0..n {
+                d_perm[(i, j)] = d[(perm[i], perm[j])];
+            }
+        }
+
+        let result_perm = compute_order_splits_tree4(&d_perm).unwrap();
+        // Map permuted result back to original indices
+        let result_mapped: Vec<usize> = result_perm
+            .iter()
+            .map(|&idx| if idx == 0 { 0 } else { perm[idx - 1] + 1 })
+            .collect();
+
+        assert_eq!(baseline, result_mapped);
     }
 }

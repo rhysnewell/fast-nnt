@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{anyhow, bail, Result};
 use fixedbitset::FixedBitSet;
 use petgraph::{
     csr::IndexType,
@@ -233,7 +233,7 @@ fn is_circular_by_cycle(splits: &SplitsBlock, sid: usize, cycle: &[usize]) -> bo
     if pos.is_empty() {
         return true;
     } // degenerate
-    // must be contiguous (allow wrap-around handled by cycle normalization)
+      // must be contiguous (allow wrap-around handled by cycle normalization)
     for w in pos.windows(2) {
         if w[1] != w[0] + 1 {
             return false;
@@ -430,6 +430,14 @@ pub fn assign_coordinates_to_nodes(
         &mut pts,
         root_split,
     );
+
+    // // Mirror vertically: the canonical pre-sort produces a reversed winding
+    // // direction compared to the original input ordering, so negate y to match
+    // // the expected layout orientation.
+    // for pt in pts.values_mut() {
+    //     pt.1 = -pt.1;
+    // }
+
     pts
 }
 
@@ -716,7 +724,7 @@ mod tests {
         ordering::ordering_huson2023::compute_order_huson_2023,
         phylo::phylo_splits_graph::PhyloSplitsGraph,
         utils::compute_least_squares_fit,
-        weights::active_set_weights::{NNLSParams, compute_asplits},
+        weights::active_set_weights::{compute_asplits, NNLSParams},
     };
 
     #[test]
