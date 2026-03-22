@@ -228,7 +228,11 @@ impl NeighbourNet {
         let mut cycle = match self.args.ordering {
             OrderingMethod::Huson2023 => compute_order_huson_2023(&self.distance_matrix),
             OrderingMethod::SplitsTree4 => {
-                compute_order_splits_tree4(&self.distance_matrix).context("computing cycle")?
+                compute_order_splits_tree4(
+                    &self.distance_matrix,
+                    self.args.canonical_presort,
+                )
+                .context("computing cycle")?
             }
         };
         if cycle.first().copied() != Some(0) {
@@ -839,6 +843,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
+                canonical_presort: false,
                 nnls_params: NNLSParams::default(),
             };
             // let nn = NeighbourNet::new("/tmp".to_string(), args);
@@ -869,6 +874,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
+                canonical_presort: false,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -889,6 +895,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
+                canonical_presort: false,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -910,6 +917,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
+                canonical_presort: false,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -930,6 +938,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
+                canonical_presort: false,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -955,6 +964,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
+                canonical_presort: false,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -976,6 +986,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
+                canonical_presort: false,
                 nnls_params: NNLSParams::default(),
             };
             let err = NeighbourNet::load_distance_matrix(&args.input);

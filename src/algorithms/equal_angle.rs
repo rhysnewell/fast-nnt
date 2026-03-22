@@ -431,13 +431,6 @@ pub fn assign_coordinates_to_nodes(
         root_split,
     );
 
-    // // Mirror vertically: the canonical pre-sort produces a reversed winding
-    // // direction compared to the original input ordering, so negate y to match
-    // // the expected layout orientation.
-    // for pt in pts.values_mut() {
-    //     pt.1 = -pt.1;
-    // }
-
     pts
 }
 

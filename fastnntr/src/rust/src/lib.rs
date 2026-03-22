@@ -269,6 +269,7 @@ fn run_neighbornet_networkx(
     #[default = "5000"] max_iterations: Robj,
     #[default = "NULL"] ordering_method: Robj,
     #[default = "NULL"] inference_method: Robj,
+    #[default = "FALSE"] canonical_presort: Robj,
 ) -> extendr_api::Result<List> {
     // Coerce & build Array2
     let mx = to_numeric_matrix(&x)?; let n = mx.nrows();
@@ -300,6 +301,11 @@ fn run_neighbornet_networkx(
     if !inference_method.is_null() {
         args.inference = InferenceMethod::from_option(inference_method.as_str());
     }
+    if !canonical_presort.is_null() {
+        if let Some(val) = canonical_presort.as_bool() {
+            args.canonical_presort = val;
+        }
+    }
 
     let nexus = run_fast_nnt_from_memory(arr, lbls, args)
         .map_err(|e| Error::Other(e.to_string()))?;
@@ -323,6 +329,7 @@ fn run_neighbournet_networkx(
     #[default = "5000"] max_iterations: Robj,
     #[default = "NULL"] ordering_method: Robj,
     #[default = "NULL"] inference_method: Robj,
+    #[default = "FALSE"] canonical_presort: Robj,
 ) -> extendr_api::Result<List> {
     // Alias for backward compatibility
     run_neighbornet_networkx(
@@ -332,6 +339,7 @@ fn run_neighbournet_networkx(
         max_iterations,
         ordering_method,
         inference_method,
+        canonical_presort,
     )
 }
 

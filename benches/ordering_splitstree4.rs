@@ -40,7 +40,7 @@ fn bench_splitstree4_sx(c: &mut Criterion) {
             group.bench_with_input(id, &dist, |b, d| {
                 b.iter(|| {
                     pool.install(|| {
-                        let _ = compute_order_splits_tree4_with_sx(black_box(d), SxMode::Parallel)
+                        let _ = compute_order_splits_tree4_with_sx(black_box(d), SxMode::Parallel, false)
                             .unwrap();
                     });
                 });
@@ -49,7 +49,7 @@ fn bench_splitstree4_sx(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("serial", n), &dist, |b, d| {
             b.iter(|| {
-                let _ = compute_order_splits_tree4_with_sx(black_box(d), SxMode::Serial).unwrap();
+                let _ = compute_order_splits_tree4_with_sx(black_box(d), SxMode::Serial, false).unwrap();
             });
         });
     }

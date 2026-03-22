@@ -8,10 +8,13 @@ const EPS: f64 = 1e-12;
 /// Compute the NeighborNet circular ordering (Bryant & Huson 2005).
 /// - `dist` is 0-based, shape n×n, symmetric with 0 on the diagonal.
 /// - Returns a 1-based cycle with a leading 0 sentinel: `[0, t1, t2, ..., tn]`.
-pub fn compute_order_splits_tree4(dist: &Array2<f64>) -> Result<Vec<usize>> {
+pub fn compute_order_splits_tree4(
+    dist: &Array2<f64>,
+    canonical_presort: bool,
+) -> Result<Vec<usize>> {
     let n_tax = dist.nrows();
     let sx_mode = default_sx_mode(n_tax);
-    compute_order_splits_tree4_with_sx(dist, sx_mode)
+    compute_order_splits_tree4_with_sx(dist, sx_mode, canonical_presort)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -24,6 +27,7 @@ pub enum SxMode {
 pub fn compute_order_splits_tree4_with_sx(
     dist: &Array2<f64>,
     sx_mode: SxMode,
+    canonical_presort: bool,
 ) -> Result<Vec<usize>> {
     let n_tax = dist.nrows();
     ensure!(dist.ncols() == n_tax, "Distance matrix must be square");
@@ -34,8 +38,11 @@ pub fn compute_order_splits_tree4_with_sx(
         return Ok(cycle);
     }
 
-    // Canonical pre-sort: deterministic ordering regardless of input row/column order
-    let perm = canonical_permutation(dist);
+    let perm = if canonical_presort {
+        Some(canonical_permutation(dist))
+    } else {
+        None
+    };
 
     let max_nodes = 3 * n_tax - 5;
     let stride = max_nodes;
@@ -43,7 +50,11 @@ pub fn compute_order_splits_tree4_with_sx(
 
     for i in 1..=n_tax {
         for j in 1..=n_tax {
-            mat[i * stride + j] = dist[(perm[i - 1], perm[j - 1])];
+            mat[i * stride + j] = if let Some(ref p) = perm {
+                dist[(p[i - 1], p[j - 1])]
+            } else {
+                dist[(i - 1, j - 1)]
+            };
         }
     }
 
@@ -73,8 +84,10 @@ pub fn compute_order_splits_tree4_with_sx(
     let mut cycle = expand_nodes(n_tax, &mut nodes, 0, joins)?;
 
     // Map sorted indices back to original indices through the permutation
-    for i in 1..cycle.len() {
-        cycle[i] = perm[cycle[i] - 1] + 1; // sorted 1-based → original 1-based
+    if let Some(ref p) = perm {
+        for i in 1..cycle.len() {
+            cycle[i] = p[cycle[i] - 1] + 1; // sorted 1-based → original 1-based
+        }
     }
     Ok(cycle)
 }
@@ -1075,7 +1088,7 @@ mod tests {
     fn small_triangle() {
         // 3 taxa — returns [0,1,2,3]
         let d = arr2(&[[0.0, 1.0, 2.0], [1.0, 0.0, 1.5], [2.0, 1.5, 0.0]]);
-        let ord = compute_order_splits_tree4(&d)
+        let ord = compute_order_splits_tree4(&d, false)
             .context("computing order for small triangle")
             .unwrap();
         assert_eq!(ord, vec![0, 1, 2, 3]);
@@ -1095,10 +1108,10 @@ mod tests {
             [2.0, 1.5, 0.0, 1.5],
             [3.0, 2.5, 1.5, 0.0],
         ]);
-        let ord = compute_order_splits_tree4(&d)
+        let ord = compute_order_splits_tree4(&d, false)
             .context("computing order for small square")
             .unwrap();
-        assert_eq!(ord, vec![0, 2, 3, 4, 1]);
+        assert_eq!(ord, vec![0, 1, 2, 4, 3]);
     }
 
     #[test]
@@ -1118,10 +1131,10 @@ mod tests {
             [9.0, 10.0, 8.0, 0.0, 3.0],
             [8.0, 9.0, 7.0, 3.0, 0.0],
         ]);
-        let ord = compute_order_splits_tree4(&d)
+        let ord = compute_order_splits_tree4(&d, false)
             .context("computing order for smoke 5_1")
             .unwrap();
-        assert_eq!(ord, vec![0, 5, 4, 3, 2, 1]);
+        assert_eq!(ord, vec![0, 1, 2, 5, 4, 3]);
     }
 
     #[test]
@@ -1141,10 +1154,10 @@ mod tests {
             [4.0, 7.0, 9.0, 0.0, 2.0],
             [5.0, 8.0, 1.0, 2.0, 0.0],
         ]);
-        let ord = compute_order_splits_tree4(&d)
+        let ord = compute_order_splits_tree4(&d, false)
             .context("computing order for smoke 5_2")
             .unwrap();
-        assert_eq!(ord, vec![0, 1, 3, 5, 4, 2]);
+        assert_eq!(ord, vec![0, 1, 2, 4, 5, 3]);
     }
 
     #[test]
@@ -1175,10 +1188,10 @@ mod tests {
             [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
         ]);
 
-        let ord = compute_order_splits_tree4(&d)
+        let ord = compute_order_splits_tree4(&d, false)
             .context("computing order for smoke 10_1")
             .unwrap();
-        assert_eq!(ord, vec![0, 9, 6, 10, 2, 4, 8, 3, 1, 5, 7]);
+        assert_eq!(ord, vec![0, 1, 2, 10, 6, 4, 8, 3, 9, 7, 5]);
     }
 
     #[test]
@@ -1209,10 +1222,10 @@ mod tests {
             [1.0, 8.0, 9.0, 6.0, 5.0, 2.0, 8.0, 7.0, 4.0, 0.0],
         ]);
 
-        let ord = compute_order_splits_tree4(&d)
+        let ord = compute_order_splits_tree4(&d, false)
             .context("computing order for smoke 10_2")
             .unwrap();
-        assert_eq!(ord, vec![0, 9, 5, 6, 10, 1, 2, 4, 8, 3, 7]);
+        assert_eq!(ord, vec![0, 1, 2, 4, 8, 3, 7, 9, 5, 6, 10]);
     }
 
     #[test]
@@ -1283,12 +1296,12 @@ mod tests {
             ],
         ]);
 
-        let ord = compute_order_splits_tree4(&d)
+        let ord = compute_order_splits_tree4(&d, false)
             .context("computing order for smoke 15_1")
             .unwrap();
         assert_eq!(
             ord,
-            vec![0, 9, 12, 10, 11, 15, 4, 1, 6, 14, 2, 3, 7, 8, 13, 5]
+            vec![0, 1, 4, 15, 11, 10, 12, 14, 2, 3, 7, 8, 13, 5, 9, 6]
         );
     }
 
@@ -1307,7 +1320,7 @@ mod tests {
             [4.0, 12.0, 5.0, 6.0, 2.0, 3.0, 2.0, 9.0, 0.0, 5.0],
             [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
         ]);
-        let baseline = compute_order_splits_tree4(&d).unwrap();
+        let baseline = compute_order_splits_tree4(&d, true).unwrap();
 
         // Apply an arbitrary permutation
         let perm = [3, 7, 0, 5, 9, 1, 4, 8, 2, 6];
@@ -1319,7 +1332,7 @@ mod tests {
             }
         }
 
-        let result_perm = compute_order_splits_tree4(&d_perm).unwrap();
+        let result_perm = compute_order_splits_tree4(&d_perm, true).unwrap();
         // Map permuted result back to original indices
         let result_mapped: Vec<usize> = result_perm
             .iter()
