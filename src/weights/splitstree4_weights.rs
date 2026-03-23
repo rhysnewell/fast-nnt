@@ -13,7 +13,7 @@ use crate::splits::asplit::ASplit;
 pub const DEFAULT_CUTOFF: f64 = 1e-6;
 
 #[derive(Debug, Clone, serde::Serialize, Default)]
-pub struct SplitsTree4SolveStats {
+pub struct CGSolveStats {
     pub outer_iterations: usize,
     pub cg_calls: usize,
     pub cg_iters_total: usize,
@@ -115,14 +115,14 @@ enum Regularization {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Splitstree4Options {
+struct CGOptions {
     variance: Variance,
     cutoff: f64,
     regularization: Regularization,
     lambda_fraction: f64,
 }
 
-impl Default for Splitstree4Options {
+impl Default for CGOptions {
     fn default() -> Self {
         Self {
             variance: Variance::Ols,
@@ -138,18 +138,18 @@ impl Default for Splitstree4Options {
 pub fn compute_splits(
     cycle: &[usize],
     distances: &Array2<f64>,
-) -> Result<(Vec<ASplit>, SplitsTree4SolveStats)> {
-    compute_weighted_splits(cycle, distances, Splitstree4Options::default())
+) -> Result<(Vec<ASplit>, CGSolveStats)> {
+    compute_weighted_splits(cycle, distances, CGOptions::default())
 }
 
 fn compute_weighted_splits(
     cycle: &[usize],
     distances: &Array2<f64>,
-    options: Splitstree4Options,
-) -> Result<(Vec<ASplit>, SplitsTree4SolveStats)> {
+    options: CGOptions,
+) -> Result<(Vec<ASplit>, CGSolveStats)> {
     let n = cycle.len().saturating_sub(1);
     if n <= 1 {
-        return Ok((Vec::new(), SplitsTree4SolveStats::default()));
+        return Ok((Vec::new(), CGSolveStats::default()));
     }
     if n == 2 {
         let d_ij = distances[[cycle[1] - 1, cycle[2] - 1]];
@@ -159,10 +159,10 @@ fn compute_weighted_splits(
             a.set(cycle[1], true);
             return Ok((
                 vec![ASplit::from_a_ntax_with_weight(a, n, d_ij)],
-                SplitsTree4SolveStats::default(),
+                CGSolveStats::default(),
             ));
         }
-        return Ok((Vec::new(), SplitsTree4SolveStats::default()));
+        return Ok((Vec::new(), CGSolveStats::default()));
     }
 
     let npairs = n * (n - 1) / 2;
@@ -237,8 +237,8 @@ fn run_active_conjugate(
     d: &[f64],
     w: Option<&[f64]>,
     x: &mut [f64],
-    options: Splitstree4Options,
-) -> SplitsTree4SolveStats {
+    options: CGOptions,
+) -> CGSolveStats {
     let collapse_many_negs = true;
     let npairs = d.len();
     let band = BandIndex::new(n);
@@ -253,7 +253,7 @@ fn run_active_conjugate(
     // Unconstrained LS in row-major (uses row-major recurrence)
     run_unconstrained_ls(n, d, x);
     if x.iter().all(|&val| val >= 0.0) {
-        return SplitsTree4SolveStats {
+        return CGSolveStats {
             elapsed_secs: started.elapsed().as_secs_f64(),
             ..Default::default()
         };
@@ -433,7 +433,7 @@ fn run_active_conjugate(
         if track_kernel_perf && Instant::now() >= progress.next_log {
             let active_count = active.iter().filter(|&&f| f).count();
             info!(
-                "SplitsTree4 inference progress: outer_iter={} elapsed={:.1}s cg_calls={} cg_iters_total={} max_cg_single={} active={} inner_activations={} stagnation_exits={} collapse_events={} collapsed_total={} ab_calls={} atx_calls={} ab_avg_us={:.1} atx_avg_us={:.1}",
+                "CG inference progress: outer_iter={} elapsed={:.1}s cg_calls={} cg_iters_total={} max_cg_single={} active={} inner_activations={} stagnation_exits={} collapse_events={} collapsed_total={} ab_calls={} atx_calls={} ab_avg_us={:.1} atx_avg_us={:.1}",
                 progress.outer_iter,
                 progress.started.elapsed().as_secs_f64(),
                 progress.cg_calls,
@@ -468,7 +468,7 @@ fn run_active_conjugate(
         if min_i.is_none() || min_grad > -0.0001 {
             if track_kernel_perf {
                 info!(
-                    "SplitsTree4 inference complete: outer_iters={} elapsed={:.1}s cg_calls={} cg_iters_total={} max_cg_single={} inner_activations={} stagnation_exits={} collapse_events={} collapsed_total={}",
+                    "CG inference complete: outer_iters={} elapsed={:.1}s cg_calls={} cg_iters_total={} max_cg_single={} inner_activations={} stagnation_exits={} collapse_events={} collapsed_total={}",
                     progress.outer_iter,
                     progress.started.elapsed().as_secs_f64(),
                     progress.cg_calls,
@@ -482,7 +482,7 @@ fn run_active_conjugate(
             }
             // Convert x_band back to row-major
             band_to_row(&x_band, x, &band);
-            return SplitsTree4SolveStats {
+            return CGSolveStats {
                 outer_iterations: progress.outer_iter,
                 cg_calls: progress.cg_calls,
                 cg_iters_total: progress.cg_iters_total,
@@ -1027,7 +1027,7 @@ fn circular_conjugate_grads_chained(
             let now = Instant::now();
             if now >= progress.next_inner_log {
                 info!(
-                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={}/{} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    "CG solver progress: outer_iter={} cg_call={} local_iter={}/{} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
                     progress.outer_iter,
                     cg_call,
                     k,
@@ -1161,7 +1161,7 @@ fn circular_conjugate_grads_band_direct(
             let now = Instant::now();
             if now >= progress.next_inner_log {
                 info!(
-                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={}/{} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    "CG solver progress: outer_iter={} cg_call={} local_iter={}/{} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
                     progress.outer_iter,
                     cg_call,
                     k,
@@ -1308,7 +1308,7 @@ fn circular_conjugate_grads_bandkernel(
             let now = Instant::now();
             if now >= progress.next_inner_log {
                 info!(
-                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    "CG solver progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
                     progress.outer_iter,
                     cg_call,
                     k,
@@ -1431,7 +1431,7 @@ fn circular_conjugate_grads_band(
             let now = Instant::now();
             if now >= progress.next_inner_log {
                 info!(
-                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    "CG solver progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
                     progress.outer_iter,
                     cg_call,
                     k,
@@ -1521,7 +1521,7 @@ fn circular_conjugate_grads(
             let now = Instant::now();
             if now >= progress.next_inner_log {
                 info!(
-                    "SplitsTree4 CG progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
+                    "CG solver progress: outer_iter={} cg_call={} local_iter={} global_cg_iters~{} elapsed={:.1}s r_norm_sq={:.6e} threshold={:.6e}",
                     progress.outer_iter,
                     cg_call,
                     k,

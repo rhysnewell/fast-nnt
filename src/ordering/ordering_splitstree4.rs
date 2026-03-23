@@ -444,7 +444,7 @@ fn join_nodes(
 
         if n_tax >= 1_000 && num_clusters <= next_progress_report {
             info!(
-                "SplitsTree4 ordering progress: {} clusters remaining (active {}, iteration {}, elapsed {:.1}s)",
+                "Multiway ordering progress: {} clusters remaining (active {}, iteration {}, elapsed {:.1}s)",
                 num_clusters,
                 num_active,
                 iters,
@@ -455,7 +455,7 @@ fn join_nodes(
     }
 
     info!(
-        "SplitsTree4 ordering finished in {:.3}s over {} iterations (sx_mode={:?})",
+        "Multiway ordering finished in {:.3}s over {} iterations (sx_mode={:?})",
         ordering_started.elapsed().as_secs_f64(),
         iters,
         sx_mode

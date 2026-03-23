@@ -69,7 +69,7 @@ pub struct NeighbourNetArgs {
         short = 'O',
         long,
         help = "The ordering algorithm to use to get splits cycle",
-        default_value = "splitstree4"
+        default_value = "multiway"
     )]
     pub ordering: OrderingMethod,
     #[arg(
@@ -87,7 +87,7 @@ impl Default for NeighbourNetArgs {
         Self {
             input: String::new(),
             output_prefix: String::from("output"),
-            ordering: OrderingMethod::SplitsTree4,
+            ordering: OrderingMethod::Multiway,
             inference: InferenceMethod::ActiveSet,
             nnls_params: NNLSParams::default(),
         }

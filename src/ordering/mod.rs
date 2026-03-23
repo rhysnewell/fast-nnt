@@ -8,23 +8,26 @@ pub mod ordering_splitstree4;
 #[derive(ValueEnum, Clone, Debug)]
 #[clap(rename_all = "kebab-case")]
 pub enum OrderingMethod {
-    Huson2023,
-    #[clap(alias = "splitstree4")]
-    SplitsTree4,
+    #[clap(alias = "huson2023")]
+    ClosestPair,
+    #[clap(alias = "splitstree4", alias = "splits-tree4")]
+    Multiway,
 }
 
 impl OrderingMethod {
     pub fn as_str(&self) -> &str {
         match self {
-            OrderingMethod::Huson2023 => "Huson2023",
-            OrderingMethod::SplitsTree4 => "SplitsTree4",
+            OrderingMethod::ClosestPair => "closest-pair",
+            OrderingMethod::Multiway => "multiway",
         }
     }
 
     pub fn from_str(s: &str) -> Self {
         match s {
-            "Huson2023" | "huson2023" => OrderingMethod::Huson2023,
-            "SplitsTree4" | "splitstree4" | "splits-tree4" => OrderingMethod::SplitsTree4,
+            "closest-pair" | "closest_pair" | "ClosestPair"
+            | "Huson2023" | "huson2023" => OrderingMethod::ClosestPair,
+            "multiway" | "Multiway"
+            | "SplitsTree4" | "splitstree4" | "splits-tree4" => OrderingMethod::Multiway,
             _ => OrderingMethod::default(),
         }
     }
@@ -36,6 +39,6 @@ impl OrderingMethod {
 
 impl Default for OrderingMethod {
     fn default() -> Self {
-        OrderingMethod::SplitsTree4
+        OrderingMethod::Multiway
     }
 }

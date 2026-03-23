@@ -24,7 +24,7 @@ use crate::utils::compute_least_squares_fit;
 use crate::weights::InferenceMethod;
 use crate::weights::active_set_weights::{NNLSParams, compute_asplits};
 use crate::weights::splitstree4_weights::{
-    DEFAULT_CUTOFF, SplitsTree4SolveStats, compute_splits as compute_splitstree4_splits,
+    DEFAULT_CUTOFF, CGSolveStats, compute_splits as compute_cg_splits,
 };
 
 pub struct NeighbourNet {
@@ -225,8 +225,8 @@ impl NeighbourNet {
 
     pub fn get_ordering(&self) -> Result<Vec<usize>> {
         let mut cycle = match self.args.ordering {
-            OrderingMethod::Huson2023 => compute_order_huson_2023(&self.distance_matrix),
-            OrderingMethod::SplitsTree4 => {
+            OrderingMethod::ClosestPair => compute_order_huson_2023(&self.distance_matrix),
+            OrderingMethod::Multiway => {
                 compute_order_splits_tree4(&self.distance_matrix).context("computing cycle")?
             }
         };
@@ -241,7 +241,7 @@ impl NeighbourNet {
     pub fn compute_asplits(
         &self,
         cycle: &[usize],
-    ) -> Result<(NNLSParams, Vec<ASplit>, Option<SplitsTree4SolveStats>)> {
+    ) -> Result<(NNLSParams, Vec<ASplit>, Option<CGSolveStats>)> {
         match self.args.inference {
             InferenceMethod::ActiveSet => {
                 let mut params = self.args.nnls_params.clone();
@@ -249,10 +249,10 @@ impl NeighbourNet {
                     .context("ASplits solved")?;
                 Ok((params, splits, None))
             }
-            InferenceMethod::SplitsTree4 => {
+            InferenceMethod::CG => {
                 let (splits, solve_stats) =
-                    compute_splitstree4_splits(cycle, &self.distance_matrix)
-                        .context("SplitsTree4 weights solved")?;
+                    compute_cg_splits(cycle, &self.distance_matrix)
+                        .context("CG weights solved")?;
                 let mut params = self.args.nnls_params.clone();
                 params.cutoff = DEFAULT_CUTOFF;
                 Ok((params, splits, Some(solve_stats)))
@@ -263,7 +263,7 @@ impl NeighbourNet {
     fn effective_cutoff(&self) -> f64 {
         match self.args.inference {
             InferenceMethod::ActiveSet => self.args.nnls_params.cutoff,
-            InferenceMethod::SplitsTree4 => DEFAULT_CUTOFF,
+            InferenceMethod::CG => DEFAULT_CUTOFF,
         }
     }
 
@@ -520,7 +520,7 @@ impl NeighbourNet {
         splits: &SplitsBlock,
         nnls: &NNLSParams,
         fit_percent: f32,
-        splitstree4_solve_stats: Option<SplitsTree4SolveStats>,
+        cg_solve_stats: Option<CGSolveStats>,
         timings: RunTimings,
     ) -> RunLog {
         let n = labels.len();
@@ -570,7 +570,7 @@ impl NeighbourNet {
                 sum_weights,
             },
             fit_percent,
-            splitstree4_solve_stats,
+            cg_solve_stats,
             timings,
             system: sys,
             inference: self.args.inference.as_str().to_string(),
@@ -642,7 +642,7 @@ struct RunLog {
     nnls: NNLSMeta,
     inference: String,
     fit_percent: f32,
-    splitstree4_solve_stats: Option<SplitsTree4SolveStats>,
+    cg_solve_stats: Option<CGSolveStats>,
     timings: RunTimings,
     system: SystemStats,
 }
@@ -836,7 +836,7 @@ C,2,3,0
             let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
-                ordering: OrderingMethod::Huson2023,
+                ordering: OrderingMethod::ClosestPair,
                 inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
@@ -866,7 +866,7 @@ C,2,3,0
             let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
-                ordering: OrderingMethod::Huson2023,
+                ordering: OrderingMethod::ClosestPair,
                 inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
@@ -886,7 +886,7 @@ C,2,3,0
             let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
-                ordering: OrderingMethod::Huson2023,
+                ordering: OrderingMethod::ClosestPair,
                 inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
@@ -907,7 +907,7 @@ C,2,3,0
             let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
-                ordering: OrderingMethod::Huson2023,
+                ordering: OrderingMethod::ClosestPair,
                 inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
@@ -927,7 +927,7 @@ C,2,3,0
             let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
-                ordering: OrderingMethod::Huson2023,
+                ordering: OrderingMethod::ClosestPair,
                 inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
@@ -952,7 +952,7 @@ C,2,3,0
             let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
-                ordering: OrderingMethod::Huson2023,
+                ordering: OrderingMethod::ClosestPair,
                 inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
@@ -973,7 +973,7 @@ C,2,3,0
             let args = NeighbourNetArgs {
                 input: p.to_string_lossy().into_owned(),
                 output_prefix: "output".into(),
-                ordering: OrderingMethod::Huson2023,
+                ordering: OrderingMethod::ClosestPair,
                 inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };

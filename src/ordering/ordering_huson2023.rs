@@ -221,7 +221,7 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> Vec<usize> {
 
         if n_tax >= 1_000 && components.len() <= next_progress_report {
             info!(
-                "Huson2023 ordering progress: {} components remaining (iteration {}, elapsed {:.1}s)",
+                "Closest-pair ordering progress: {} components remaining (iteration {}, elapsed {:.1}s)",
                 components.len(),
                 iters,
                 ordering_started.elapsed().as_secs_f64()
@@ -237,7 +237,7 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> Vec<usize> {
     debug!("Final edge: P={} Q={}", p, q);
     debug!("Graph: {:?}", graph);
     info!(
-        "Huson2023 ordering finished in {:.3}s over {} iterations (closest-pair search {:.3}s)",
+        "Closest-pair ordering finished in {:.3}s over {} iterations (closest-pair search {:.3}s)",
         ordering_started.elapsed().as_secs_f64(),
         iters,
         pair_search_sec
