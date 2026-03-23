@@ -1082,8 +1082,7 @@ fn profiled_forward_band_with_norm(
 ) -> f64 {
     if track {
         let t0 = Instant::now();
-        let norm =
-            calculate_forward_band_with_norm_sq(x, y, band, row_sums, row_sq_accum, shifted);
+        let norm = calculate_forward_band_with_norm_sq(x, y, band, row_sums, row_sq_accum, shifted);
         perf.calc_ab_calls += 1;
         perf.calc_ab_time += t0.elapsed();
         norm
@@ -3700,8 +3699,8 @@ mod tests {
     #[test]
     fn fused_kernel_norm_matches_standalone() {
         use crate::weights::band::{
-            calculate_ab_band, calculate_ab_band_with_masked_norm_sq,
-            calculate_forward_band, calculate_forward_band_with_norm_sq,
+            calculate_ab_band, calculate_ab_band_with_masked_norm_sq, calculate_forward_band,
+            calculate_forward_band_with_norm_sq,
         };
 
         for n in [5, 10, 20, 50, 100] {
@@ -3720,7 +3719,12 @@ mod tests {
             // Test forward kernel norm fusion
             let mut d_fused = vec![0.0; npairs];
             let norm_fused = calculate_forward_band_with_norm_sq(
-                &b, &mut d_fused, &band, &mut row_sums, &mut row_sq_accum, &mut shifted,
+                &b,
+                &mut d_fused,
+                &band,
+                &mut row_sums,
+                &mut row_sq_accum,
+                &mut shifted,
             );
 
             let mut d_ref = vec![0.0; npairs];
@@ -3733,15 +3737,26 @@ mod tests {
             // Test adjoint kernel masked norm fusion
             let mut z_fused = vec![0.0; npairs];
             let masked_norm_fused = calculate_ab_band_with_masked_norm_sq(
-                &b, &mut z_fused, &band, &mut row_sums, &mut row_sq_accum, &active_set, &mut shifted,
+                &b,
+                &mut z_fused,
+                &band,
+                &mut row_sums,
+                &mut row_sq_accum,
+                &active_set,
+                &mut shifted,
             );
 
             let mut z_ref = vec![0.0; npairs];
             calculate_ab_band(&b, &mut z_ref, &band, &mut row_sums, &mut shifted);
-            let masked_norm_ref = sum_array_squared_masked_band(&z_ref, &active_set, &band, &tri_idx);
+            let masked_norm_ref =
+                sum_array_squared_masked_band(&z_ref, &active_set, &band, &tri_idx);
 
             assert_eq!(z_fused, z_ref, "adjoint output mismatch for n={}", n);
-            assert_eq!(masked_norm_fused, masked_norm_ref, "adjoint masked norm mismatch for n={}", n);
+            assert_eq!(
+                masked_norm_fused, masked_norm_ref,
+                "adjoint masked norm mismatch for n={}",
+                n
+            );
         }
     }
 }

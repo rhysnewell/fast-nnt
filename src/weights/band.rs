@@ -179,7 +179,13 @@ pub fn calculate_forward_band(b: &[f64], d: &mut [f64], band: &BandIndex, row_su
 
 /// Band-major kernel: compute d = A * b where A is the circular split design matrix.
 /// Both b and d are in band-major layout.
-pub fn calculate_ab_band(b: &[f64], d: &mut [f64], band: &BandIndex, row_sums: &mut [f64], shifted: &mut [f64]) {
+pub fn calculate_ab_band(
+    b: &[f64],
+    d: &mut [f64],
+    band: &BandIndex,
+    row_sums: &mut [f64],
+    shifted: &mut [f64],
+) {
     let n = band.n;
 
     // Pass 1: compute row sums of b (using row-major accumulation order for FP compatibility)
@@ -360,7 +366,13 @@ pub fn calculate_ab_band_with_masked_norm_sq(
 
 /// Band-major kernel: compute p = A^T * d where A is the circular split design matrix.
 /// Both d and p are in band-major layout.
-pub fn calculate_atx_band(d: &[f64], p: &mut [f64], band: &BandIndex, row_sums: &mut [f64], shifted: &mut [f64]) {
+pub fn calculate_atx_band(
+    d: &[f64],
+    p: &mut [f64],
+    band: &BandIndex,
+    row_sums: &mut [f64],
+    shifted: &mut [f64],
+) {
     let n = band.n;
 
     // Pass 1: compute row sums of d (using row-major accumulation order for FP compatibility)

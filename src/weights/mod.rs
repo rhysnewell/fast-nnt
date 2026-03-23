@@ -6,7 +6,7 @@ pub use splitstree4_weights::SplitsTree4SolveStats;
 
 use clap::ValueEnum;
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[clap(rename_all = "kebab-case")]
 pub enum InferenceMethod {
     #[clap(alias = "activeset")]

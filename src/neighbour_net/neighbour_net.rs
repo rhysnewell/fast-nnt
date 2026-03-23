@@ -88,8 +88,7 @@ impl NeighbourNet {
 
         // 3) Split weight inference
         let t_nnls = Instant::now();
-        let (params, splits, st4_stats) =
-            self.compute_asplits(&cycle).context("ASplits solved")?;
+        let (params, splits, st4_stats) = self.compute_asplits(&cycle).context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
             "Estimated {} splits (cutoff = {}) in {:.3}s",
@@ -227,13 +226,11 @@ impl NeighbourNet {
     pub fn get_ordering(&self) -> Result<Vec<usize>> {
         let mut cycle = match self.args.ordering {
             OrderingMethod::Huson2023 => compute_order_huson_2023(&self.distance_matrix),
-            OrderingMethod::SplitsTree4 => {
-                compute_order_splits_tree4(
-                    &self.distance_matrix,
-                    self.args.canonical_presort,
-                )
-                .context("computing cycle")?
-            }
+            OrderingMethod::SplitsTree4 => compute_order_splits_tree4(
+                &self.distance_matrix,
+                self.args.canonical,
+            )
+            .context("computing cycle")?,
         };
         if cycle.first().copied() != Some(0) {
             cycle = std::iter::once(0usize)
@@ -843,7 +840,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
-                canonical_presort: false,
+                canonical: false,
                 nnls_params: NNLSParams::default(),
             };
             // let nn = NeighbourNet::new("/tmp".to_string(), args);
@@ -874,7 +871,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
-                canonical_presort: false,
+                canonical: false,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -895,7 +892,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
-                canonical_presort: false,
+                canonical: false,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -917,7 +914,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
-                canonical_presort: false,
+                canonical: false,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -938,7 +935,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
-                canonical_presort: false,
+                canonical: false,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -964,7 +961,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
-                canonical_presort: false,
+                canonical: false,
                 nnls_params: NNLSParams::default(),
             };
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
@@ -986,7 +983,7 @@ C,2,3,0
                 output_prefix: "output".into(),
                 ordering: OrderingMethod::Huson2023,
                 inference: InferenceMethod::ActiveSet,
-                canonical_presort: false,
+                canonical: false,
                 nnls_params: NNLSParams::default(),
             };
             let err = NeighbourNet::load_distance_matrix(&args.input);
