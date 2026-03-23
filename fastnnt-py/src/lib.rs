@@ -138,7 +138,7 @@ fn set_fastnnt_threads(py: Python<'_>, threads: usize) -> PyResult<()> {
 }
 
 #[pyfunction]
-#[pyo3(signature = (x, max_iterations=5000, ordering_method=None, inference_method=None, labels=None, canonical=false))]
+#[pyo3(signature = (x, max_iterations=5000, ordering_method=None, inference_method=None, labels=None))]
 fn run_neighbour_net<'py>(
     _py: Python<'py>,
     x: Bound<'py, PyAny>,
@@ -146,7 +146,6 @@ fn run_neighbour_net<'py>(
     ordering_method: Option<&str>,
     inference_method: Option<&str>,
     labels: Option<Bound<'py, PyAny>>,
-    canonical: bool,
 ) -> PyResult<PyNexus> {
     let arr = coerce_to_numpy_2d(x.clone())?;
     let view: Array2<f64> = arr.as_array().to_owned();
@@ -167,8 +166,6 @@ fn run_neighbour_net<'py>(
     args.nnls_params.max_iterations = max_iterations;
     args.ordering = OrderingMethod::from_option(ordering_method);
     args.inference = InferenceMethod::from_option(inference_method);
-    args.canonical = canonical;
-
     let nexus = run_fast_nnt_from_memory(view, lbls, args)
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
@@ -176,7 +173,7 @@ fn run_neighbour_net<'py>(
 }
 
 #[pyfunction]
-#[pyo3(signature = (x, max_iterations=5000, ordering_method=None, inference_method=None, labels=None, canonical=false))]
+#[pyo3(signature = (x, max_iterations=5000, ordering_method=None, inference_method=None, labels=None))]
 fn run_neighbor_net<'py>(
     _py: Python<'py>,
     x: Bound<'py, PyAny>,
@@ -184,9 +181,8 @@ fn run_neighbor_net<'py>(
     ordering_method: Option<&str>,
     inference_method: Option<&str>,
     labels: Option<Bound<'py, PyAny>>,
-    canonical: bool,
 ) -> PyResult<PyNexus> {
-    run_neighbour_net(_py, x, max_iterations, ordering_method, inference_method, labels, canonical)
+    run_neighbour_net(_py, x, max_iterations, ordering_method, inference_method, labels)
 }
 
 #[pymodule]

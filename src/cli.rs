@@ -78,12 +78,6 @@ pub struct NeighbourNetArgs {
         default_value = "active-set"
     )]
     pub inference: InferenceMethod,
-    #[arg(
-        long,
-        help = "Enable canonical internal ordering for deterministic results without changing layout (splitstree4 only)",
-        default_value_t = false
-    )]
-    pub canonical: bool,
     #[clap(flatten)]
     pub nnls_params: NNLSParams,
 }
@@ -95,7 +89,6 @@ impl Default for NeighbourNetArgs {
             output_prefix: String::from("output"),
             ordering: OrderingMethod::SplitsTree4,
             inference: InferenceMethod::ActiveSet,
-            canonical: false,
             nnls_params: NNLSParams::default(),
         }
     }

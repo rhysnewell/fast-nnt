@@ -8,13 +8,10 @@ const EPS: f64 = 1e-12;
 /// Compute the NeighborNet circular ordering (Bryant & Huson 2005).
 /// - `dist` is 0-based, shape n×n, symmetric with 0 on the diagonal.
 /// - Returns a 1-based cycle with a leading 0 sentinel: `[0, t1, t2, ..., tn]`.
-pub fn compute_order_splits_tree4(
-    dist: &Array2<f64>,
-    canonical: bool,
-) -> Result<Vec<usize>> {
+pub fn compute_order_splits_tree4(dist: &Array2<f64>) -> Result<Vec<usize>> {
     let n_tax = dist.nrows();
     let sx_mode = default_sx_mode(n_tax);
-    compute_order_splits_tree4_with_sx(dist, sx_mode, canonical)
+    compute_order_splits_tree4_with_sx(dist, sx_mode)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -27,7 +24,6 @@ pub enum SxMode {
 pub fn compute_order_splits_tree4_with_sx(
     dist: &Array2<f64>,
     sx_mode: SxMode,
-    canonical: bool,
 ) -> Result<Vec<usize>> {
     let n_tax = dist.nrows();
     ensure!(dist.ncols() == n_tax, "Distance matrix must be square");
@@ -66,64 +62,14 @@ pub fn compute_order_splits_tree4_with_sx(
         }
     }
 
-    // Initialize canonical keys for deterministic accumulation order
-    if canonical {
-        let ranks = canonical_permutation(dist);
-        let mut canonical_rank = vec![0usize; n_tax];
-        for (sorted_pos, &orig_idx) in ranks.iter().enumerate() {
-            canonical_rank[orig_idx] = sorted_pos;
-        }
-        for id in 1..=n_tax {
-            nodes[id].canonical_key = canonical_rank[id - 1];
-        }
-    }
-
     debug!("Working matrix allocated: {}x{}", stride, stride);
     // 3) Agglomerate
-    let joins = join_nodes(&mut mat, stride, &mut nodes, 0, n_tax, sx_mode, canonical)?;
+    let joins = join_nodes(&mut mat, stride, &mut nodes, 0, n_tax, sx_mode)?;
 
     // 4) Expand joins to a circular ordering of leaves
-    let cycle = expand_nodes(n_tax, &mut nodes, 0, joins, canonical)?;
+    let cycle = expand_nodes(n_tax, &mut nodes, 0, joins)?;
 
     Ok(cycle)
-}
-
-/// Compute a canonical permutation of taxa for deterministic ordering.
-/// Returns `perm` where `perm[i]` is the original 0-based index of the taxon
-/// that should appear at sorted position `i`.
-///
-/// Sort criteria:
-///   1. Row sum (ascending)
-///   2. Sorted row values (lexicographic ascending) — for tiebreaking
-fn canonical_permutation(dist: &Array2<f64>) -> Vec<usize> {
-    let n = dist.nrows();
-
-    // Sort each row's values first — the sorted order is permutation-invariant
-    let sorted_rows: Vec<Vec<f64>> = (0..n)
-        .map(|i| {
-            let mut row: Vec<f64> = dist.row(i).to_vec();
-            row.sort_unstable_by(|a, b| a.total_cmp(b));
-            row
-        })
-        .collect();
-
-    // Derive row sums from sorted rows to avoid float-addition order dependence
-    let row_sums: Vec<f64> = sorted_rows.iter().map(|r| r.iter().sum()).collect();
-
-    let mut perm: Vec<usize> = (0..n).collect();
-    perm.sort_by(|&a, &b| {
-        row_sums[a].total_cmp(&row_sums[b]).then_with(|| {
-            sorted_rows[a]
-                .iter()
-                .zip(sorted_rows[b].iter())
-                .find_map(|(va, vb)| {
-                    let ord = va.total_cmp(vb);
-                    if ord.is_eq() { None } else { Some(ord) }
-                })
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-    });
-    perm
 }
 
 fn default_sx_mode(n_tax: usize) -> SxMode {
@@ -150,8 +96,6 @@ struct NetNode {
     // work accumulators
     sx: f64,
     rx: f64,
-    // deterministic identity invariant to input ordering (defaults to id)
-    canonical_key: usize,
 }
 impl Default for NetNode {
     fn default() -> Self {
@@ -164,7 +108,6 @@ impl Default for NetNode {
             ch2: None,
             sx: 0.0,
             rx: 0.0,
-            canonical_key: 0,
         }
     }
 }
@@ -172,7 +115,6 @@ impl NetNode {
     fn new(id: usize) -> Self {
         Self {
             id,
-            canonical_key: id,
             ..Default::default()
         }
     }
@@ -187,7 +129,6 @@ fn join_nodes(
     head: usize,
     n_tax: usize,
     sx_mode: SxMode,
-    canonical: bool,
 ) -> Result<Vec<usize>> {
     let mut joins: Vec<usize> = Vec::new();
 
@@ -199,16 +140,9 @@ fn join_nodes(
     let mut next_progress_report = n_tax.saturating_sub(250);
 
     // Compute Sx once, then maintain it incrementally as clusters are agglomerated.
-    if canonical {
-        match sx_mode {
-            SxMode::Serial => compute_sx_serial_canonical(d, stride, nodes, head),
-            SxMode::Parallel => compute_sx_parallel_canonical(d, stride, nodes, head),
-        }
-    } else {
-        match sx_mode {
-            SxMode::Serial => compute_sx_serial(d, stride, nodes, head),
-            SxMode::Parallel => compute_sx_parallel(d, stride, nodes, head),
-        }
+    match sx_mode {
+        SxMode::Serial => compute_sx_serial(d, stride, nodes, head),
+        SxMode::Parallel => compute_sx_parallel(d, stride, nodes, head),
     }
 
     // Reusable buffers across loop iterations
@@ -219,10 +153,7 @@ fn join_nodes(
         iters += 1;
         // Special case: 4 active and 2 clusters
         if num_active == 4 && num_clusters == 2 {
-            let mut actives = snapshot_active(nodes, head);
-            if canonical {
-                actives.sort_by_key(|&a| nodes[a].canonical_key);
-            }
+            let actives = snapshot_active(nodes, head);
             let p = actives[0];
             let q = if Some(actives[1]) != nodes[p].nbr {
                 actives[1]
@@ -246,7 +177,6 @@ fn join_nodes(
                     nodes,
                     head,
                     &mut num_nodes,
-                    canonical,
                 )?;
             } else {
                 join3way(
@@ -259,7 +189,6 @@ fn join_nodes(
                     nodes,
                     head,
                     &mut num_nodes,
-                    canonical,
                 )?;
             }
             break;
@@ -309,28 +238,14 @@ fn join_nodes(
                         c_y = Some(q);
                         best = qpq;
                         best_leafs = leaf_count_pair(p, q, nodes, n_tax);
-                    } else if fuzzy_eq(qpq, best) {
-                        if canonical {
-                            // Canonical: order-independent tie-breaking
-                            // 1. Higher leaf count wins
-                            // 2. Equal leaf count → smaller pair_key wins
-                            let leafs = leaf_count_pair(p, q, nodes, n_tax);
-                            if leafs > best_leafs
-                                || (leafs == best_leafs
-                                    && better_tie_pair(p, q, c_x.unwrap(), c_y.unwrap(), nodes))
-                            {
-                                c_x = Some(p);
-                                c_y = Some(q);
-                                best = qpq;
-                                best_leafs = leafs;
-                            }
-                        } else if better_tie_pair(p, q, c_x.unwrap(), c_y.unwrap(), nodes) {
-                            let leafs = leaf_count_pair(p, q, nodes, n_tax);
-                            if leafs > best_leafs {
-                                c_x = Some(p);
-                                c_y = Some(q);
-                                best_leafs = leafs;
-                            }
+                    } else if fuzzy_eq(qpq, best)
+                        && better_tie_pair(p, q, c_x.unwrap(), c_y.unwrap(), nodes)
+                    {
+                        let leafs = leaf_count_pair(p, q, nodes, n_tax);
+                        if leafs > best_leafs {
+                            c_x = Some(p);
+                            c_y = Some(q);
+                            best_leafs = leafs;
                         }
                     }
                 }
@@ -347,7 +262,7 @@ fn join_nodes(
 
         // --- Rx for candidates (if needed) ---
         if nodes[cx].nbr.is_some() || nodes[cy].nbr.is_some() {
-            compute_rx_candidates(cx, cy, d, stride, nodes, head, canonical);
+            compute_rx_candidates(cx, cy, d, stride, nodes, head);
         } else {
             nodes[cx].rx = 0.0;
             nodes[cy].rx = 0.0;
@@ -399,16 +314,6 @@ fn join_nodes(
             }
         }
 
-        // Canonical orientation: ensure x's cluster has the lower canonical key
-        // so that join3way/join4way asymmetric (2/3, 1/3) weights are deterministic.
-        if canonical {
-            let xk = cluster_canonical_key(nodes, x);
-            let yk = cluster_canonical_key(nodes, y);
-            if xk > yk {
-                std::mem::swap(&mut x, &mut y);
-            }
-        }
-
         // --- Agglomeration ---
         match (nodes[x].nbr, nodes[y].nbr, num_active) {
             (None, None, _) => {
@@ -425,7 +330,6 @@ fn join_nodes(
                     y,
                     new_rep,
                     &mut updates_buf,
-                    canonical,
                 );
                 num_clusters -= 1;
             }
@@ -447,7 +351,6 @@ fn join_nodes(
                     nodes,
                     head,
                     &mut num_nodes,
-                    canonical,
                 )?;
                 update_sx_after_merge(
                     d,
@@ -458,7 +361,6 @@ fn join_nodes(
                     rem_b,
                     new_rep,
                     &mut updates_buf,
-                    canonical,
                 );
                 num_nodes += 2;
                 num_active -= 1;
@@ -487,7 +389,6 @@ fn join_nodes(
                     nodes,
                     head,
                     &mut num_nodes,
-                    canonical,
                 )?;
                 update_sx_after_merge(
                     d,
@@ -498,7 +399,6 @@ fn join_nodes(
                     rem_b,
                     new_rep,
                     &mut updates_buf,
-                    canonical,
                 );
                 num_nodes += 2;
                 num_active -= 1;
@@ -526,7 +426,6 @@ fn join_nodes(
                     nodes,
                     head,
                     &mut num_nodes,
-                    canonical,
                 )?;
                 update_sx_after_merge(
                     d,
@@ -537,7 +436,6 @@ fn join_nodes(
                     rem_b,
                     new_rep,
                     &mut updates_buf,
-                    canonical,
                 );
                 num_active -= 2;
                 num_clusters -= 1;
@@ -589,7 +487,7 @@ fn better_tie_pair(p: usize, q: usize, cx: usize, cy: usize, nodes: &[NetNode]) 
 
 #[inline]
 fn pair_key(a: usize, b: usize, nodes: &[NetNode]) -> (usize, usize) {
-    let (ka, kb) = (nodes[a].canonical_key, nodes[b].canonical_key);
+    let (ka, kb) = (nodes[a].id, nodes[b].id);
     if ka <= kb { (ka, kb) } else { (kb, ka) }
 }
 
@@ -638,14 +536,6 @@ fn avg_cluster_dist_to_singleton(
     }
 }
 
-#[inline]
-fn cluster_canonical_key(nodes: &[NetNode], p: usize) -> usize {
-    match nodes[p].nbr {
-        None => nodes[p].canonical_key,
-        Some(nb) => nodes[p].canonical_key.min(nodes[nb].canonical_key),
-    }
-}
-
 fn update_sx_after_join2(
     mat: &[f64],
     stride: usize,
@@ -655,11 +545,9 @@ fn update_sx_after_join2(
     y: usize,
     new_rep: usize,
     updates: &mut Vec<(usize, f64)>,
-    canonical: bool,
 ) {
     updates.clear();
     let mut new_sx = 0.0;
-    let mut new_sx_contribs: Vec<(usize, f64)> = Vec::new();
 
     for &k in reps_before {
         if k == x || k == y {
@@ -670,19 +558,11 @@ fn update_sx_after_join2(
         let d_ky = avg_cluster_dist_to_singleton(mat, stride, nodes, k, y);
         let d_knew = 0.5 * (d_kx + d_ky);
         updates.push((k, old - d_kx - d_ky + d_knew));
-        if canonical {
-            new_sx_contribs.push((cluster_canonical_key(nodes, k), d_knew));
-        } else {
-            new_sx += d_knew;
-        }
+        new_sx += d_knew;
     }
 
     for &(k, sx) in updates.iter() {
         set_cluster_sx(nodes, k, sx);
-    }
-    if canonical {
-        new_sx_contribs.sort_unstable_by_key(|&(k, _)| k);
-        new_sx = new_sx_contribs.iter().map(|(_, d)| *d).sum();
     }
     set_cluster_sx(nodes, new_rep, new_sx);
 }
@@ -696,11 +576,9 @@ fn update_sx_after_merge(
     rem_b: usize,
     new_rep: usize,
     updates: &mut Vec<(usize, f64)>,
-    canonical: bool,
 ) {
     updates.clear();
     let mut new_sx = 0.0;
-    let mut new_sx_contribs: Vec<(usize, f64)> = Vec::new();
 
     for &k in reps_before {
         if k == rem_a || k == rem_b {
@@ -711,19 +589,11 @@ fn update_sx_after_merge(
         let d_kb = avg_cluster_dist(mat, stride, nodes, k, rem_b);
         let d_knew = avg_cluster_dist(mat, stride, nodes, k, new_rep);
         updates.push((k, old - d_ka - d_kb + d_knew));
-        if canonical {
-            new_sx_contribs.push((cluster_canonical_key(nodes, k), d_knew));
-        } else {
-            new_sx += d_knew;
-        }
+        new_sx += d_knew;
     }
 
     for &(k, sx) in updates.iter() {
         set_cluster_sx(nodes, k, sx);
-    }
-    if canonical {
-        new_sx_contribs.sort_unstable_by_key(|&(k, _)| k);
-        new_sx = new_sx_contribs.iter().map(|(_, d)| *d).sum();
     }
     set_cluster_sx(nodes, new_rep, new_sx);
 }
@@ -746,28 +616,14 @@ fn join3way(
     nodes: &mut [NetNode],
     head: usize,
     num_nodes: &mut usize, // current max id; this function *does not* increment it (call-site does)
-    canonical: bool,
 ) -> Result<usize> {
     let u = *num_nodes + 1;
     let v = *num_nodes + 2;
 
     ensure!(u < nodes.len() && v < nodes.len(), "node capacity exceeded");
 
-    nodes[u] = NetNode {
-        id: u,
-        canonical_key: u,
-        ..Default::default()
-    };
-    nodes[v] = NetNode {
-        id: v,
-        canonical_key: v,
-        ..Default::default()
-    };
-
-    if canonical {
-        nodes[u].canonical_key = nodes[x].canonical_key.min(nodes[y].canonical_key);
-        nodes[v].canonical_key = nodes[y].canonical_key.min(nodes[z].canonical_key);
-    }
+    nodes[u] = NetNode::new(u);
+    nodes[v] = NetNode::new(v);
 
     nodes[u].ch1 = Some(x);
     nodes[u].ch2 = Some(y);
@@ -843,12 +699,9 @@ fn join4way(
     nodes: &mut [NetNode],
     head: usize,
     num_nodes: &mut usize,
-    canonical: bool,
 ) -> Result<usize> {
     // First 3-way
-    let u = join3way(
-        x2, x, y, joins, mat, stride, nodes, head, num_nodes, canonical,
-    )?;
+    let u = join3way(x2, x, y, joins, mat, stride, nodes, head, num_nodes)?;
     *num_nodes += 2;
     // Second 3-way
     let final_u = join3way(
@@ -861,7 +714,6 @@ fn join4way(
         nodes,
         head,
         num_nodes,
-        canonical,
     )?;
     *num_nodes += 2;
     Ok(final_u)
@@ -994,121 +846,6 @@ fn compute_sx_parallel(d: &[f64], stride: usize, nodes: &mut [NetNode], head: us
     }
 }
 
-fn compute_sx_serial_canonical(d: &[f64], stride: usize, nodes: &mut [NetNode], head: usize) {
-    // Zero Sx for all actives
-    let mut p_opt = nodes[head].next;
-    while let Some(p) = p_opt {
-        nodes[p].sx = 0.0;
-        p_opt = nodes[p].next;
-    }
-
-    // Collect cluster reps
-    let mut reps = Vec::new();
-    let mut p_opt = nodes[head].next;
-    while let Some(p) = p_opt {
-        if nodes[p].nbr.map_or(true, |nb| nodes[nb].id > nodes[p].id) {
-            reps.push(p);
-        }
-        p_opt = nodes[p].next;
-    }
-
-    // Per-cluster contributions keyed by partner's canonical key
-    let mut contribs: Vec<Vec<(usize, f64)>> = vec![Vec::new(); nodes.len()];
-
-    for i in 0..reps.len() {
-        let p = reps[i];
-        let p_ckey = cluster_canonical_key(nodes, p);
-        for j in (i + 1)..reps.len() {
-            let q = reps[j];
-            if nodes[q].nbr == Some(p) {
-                continue;
-            }
-            let q_ckey = cluster_canonical_key(nodes, q);
-            let dpq = avg_cluster_dist(d, stride, nodes, p, q);
-            contribs[p].push((q_ckey, dpq));
-            contribs[q].push((p_ckey, dpq));
-        }
-    }
-
-    // Sort by canonical key then sum — deterministic regardless of iteration order
-    for &rep in &reps {
-        contribs[rep].sort_unstable_by_key(|&(k, _)| k);
-        let sx: f64 = contribs[rep].iter().map(|(_, d)| *d).sum();
-        nodes[rep].sx = sx;
-        if let Some(nb) = nodes[rep].nbr {
-            nodes[nb].sx = sx;
-        }
-    }
-}
-
-fn compute_sx_parallel_canonical(d: &[f64], stride: usize, nodes: &mut [NetNode], head: usize) {
-    let mut actives = Vec::new();
-    let mut p_opt = nodes[head].next;
-    while let Some(p) = p_opt {
-        nodes[p].sx = 0.0;
-        actives.push(p);
-        p_opt = nodes[p].next;
-    }
-
-    let nodes_ro = &*nodes;
-    let eligible: Vec<bool> = actives
-        .iter()
-        .map(|&p| {
-            nodes_ro[p]
-                .nbr
-                .map_or(true, |nb| nodes_ro[nb].id > nodes_ro[p].id)
-        })
-        .collect();
-
-    let mut contribs = (0..actives.len())
-        .into_par_iter()
-        .fold(
-            || vec![Vec::<(usize, f64)>::new(); nodes_ro.len()],
-            |mut acc, p_idx| {
-                if !eligible[p_idx] {
-                    return acc;
-                }
-                let p = actives[p_idx];
-                let p_ckey = cluster_canonical_key(nodes_ro, p);
-                for q_idx in (p_idx + 1)..actives.len() {
-                    let q = actives[q_idx];
-                    let eval_q = match nodes_ro[q].nbr {
-                        None => true,
-                        Some(nb) => nodes_ro[nb].id > nodes_ro[q].id && nodes_ro[q].nbr != Some(p),
-                    };
-                    if !eval_q {
-                        continue;
-                    }
-                    let q_ckey = cluster_canonical_key(nodes_ro, q);
-                    let dpq = avg_cluster_dist(d, stride, nodes_ro, p, q);
-                    acc[p].push((q_ckey, dpq));
-                    acc[q].push((p_ckey, dpq));
-                }
-                acc
-            },
-        )
-        .reduce(
-            || vec![Vec::<(usize, f64)>::new(); nodes_ro.len()],
-            |mut a, b| {
-                for i in 0..a.len() {
-                    a[i].extend_from_slice(&b[i]);
-                }
-                a
-            },
-        );
-
-    // Sort and sum per cluster rep
-    for (idx, &p) in actives.iter().enumerate() {
-        if eligible[idx] {
-            contribs[p].sort_unstable_by_key(|&(k, _)| k);
-            let sx: f64 = contribs[p].iter().map(|(_, d)| *d).sum();
-            nodes[p].sx = sx;
-            if let Some(nb) = nodes[p].nbr {
-                nodes[nb].sx = sx;
-            }
-        }
-    }
-}
 
 fn compute_rx_candidates(
     cx: usize,
@@ -1117,7 +854,6 @@ fn compute_rx_candidates(
     stride: usize,
     nodes: &mut [NetNode],
     head: usize,
-    canonical: bool,
 ) {
     let mut targets = Vec::with_capacity(4);
     targets.push(cx);
@@ -1135,47 +871,22 @@ fn compute_rx_candidates(
         }
     }
 
-    if canonical {
-        // Use (cluster_canonical_key, canonical_key) for a fully unique sort key
-        // per active node — prevents non-determinism from sort_unstable ties
-        let mut contribs: Vec<Vec<((usize, usize), f64)>> = vec![Vec::new(); targets.len()];
-        let mut p_opt = nodes[head].next;
-        while let Some(p) = p_opt {
-            let cond = p == cx
-                || nodes[cx].nbr == Some(p)
-                || p == cy
-                || nodes[cy].nbr == Some(p)
-                || nodes[p].nbr.is_none();
-            let p_sort_key = (cluster_canonical_key(nodes, p), nodes[p].canonical_key);
-            for (i, &z) in targets.iter().enumerate() {
-                let term = mat[nodes[z].id * stride + nodes[p].id];
-                let val = if cond { term } else { term / 2.0 };
-                contribs[i].push((p_sort_key, val));
-            }
-            p_opt = nodes[p].next;
-        }
+    let mut sums = vec![0.0f64; targets.len()];
+    let mut p_opt = nodes[head].next;
+    while let Some(p) = p_opt {
+        let cond = p == cx
+            || nodes[cx].nbr == Some(p)
+            || p == cy
+            || nodes[cy].nbr == Some(p)
+            || nodes[p].nbr.is_none();
         for (i, &z) in targets.iter().enumerate() {
-            contribs[i].sort_unstable_by_key(|&(k, _)| k);
-            nodes[z].rx = contribs[i].iter().map(|(_, d)| *d).sum();
+            let term = mat[nodes[z].id * stride + nodes[p].id];
+            sums[i] += if cond { term } else { term / 2.0 };
         }
-    } else {
-        let mut sums = vec![0.0f64; targets.len()];
-        let mut p_opt = nodes[head].next;
-        while let Some(p) = p_opt {
-            let cond = p == cx
-                || nodes[cx].nbr == Some(p)
-                || p == cy
-                || nodes[cy].nbr == Some(p)
-                || nodes[p].nbr.is_none();
-            for (i, &z) in targets.iter().enumerate() {
-                let term = mat[nodes[z].id * stride + nodes[p].id];
-                sums[i] += if cond { term } else { term / 2.0 };
-            }
-            p_opt = nodes[p].next;
-        }
-        for (i, &z) in targets.iter().enumerate() {
-            nodes[z].rx = sums[i];
-        }
+        p_opt = nodes[p].next;
+    }
+    for (i, &z) in targets.iter().enumerate() {
+        nodes[z].rx = sums[i];
     }
 }
 
@@ -1212,37 +923,11 @@ fn next_leaf_in_dir(nodes: &[NetNode], start: usize, forward: bool, n_tax: usize
     }
 }
 
-fn next_leaf_canonical_key_in_dir(
-    nodes: &[NetNode],
-    start: usize,
-    forward: bool,
-    n_tax: usize,
-) -> Result<usize> {
-    let mut a = start;
-    loop {
-        a = if forward {
-            nodes[a]
-                .next
-                .context("ring broken while seeking next leaf (forward)")?
-        } else {
-            nodes[a]
-                .prev
-                .context("ring broken while seeking next leaf (backward)")?
-        };
-        let id = nodes[a].id;
-        if (1..=n_tax).contains(&id) {
-            return Ok(nodes[a].canonical_key);
-        }
-        ensure!(a != start, "looped around without finding a leaf");
-    }
-}
-
 fn expand_nodes(
     n_tax: usize,
     nodes: &mut [NetNode],
     head: usize,
     mut joins: Vec<usize>,
-    canonical: bool,
 ) -> Result<Vec<usize>> {
     ensure!(head == 0, "head must be 0");
     ensure!(n_tax >= 3, "need at least 3 taxa");
@@ -1297,20 +982,8 @@ fn expand_nodes(
         nodes[vnext].prev = Some(z1);
     }
 
-    // Find start leaf: canonical_key 0 in canonical mode, node ID 1 otherwise
-    let start = if canonical {
-        let head_next = nodes[head].next.context("no active nodes")?;
-        let mut cur = head_next;
-        loop {
-            if (1..=n_tax).contains(&nodes[cur].id) && nodes[cur].canonical_key == 0 {
-                break cur;
-            }
-            cur = nodes[cur]
-                .next
-                .context("broken ring while seeking canonical first leaf")?;
-            ensure!(cur != head_next, "canonical first leaf not found in ring");
-        }
-    } else {
+    // Find start leaf: node ID 1
+    let start = {
         let head_next = nodes[head].next.context("no active nodes")?;
         let mut cur = head_next;
         loop {
@@ -1325,11 +998,7 @@ fn expand_nodes(
     };
 
     // Canonicalize orientation: pick the direction whose next leaf is smaller
-    let forward = if canonical {
-        let fwd_key = next_leaf_canonical_key_in_dir(nodes, start, true, n_tax)?;
-        let bwd_key = next_leaf_canonical_key_in_dir(nodes, start, false, n_tax)?;
-        fwd_key <= bwd_key
-    } else {
+    let forward = {
         let next_leaf_fwd = next_leaf_in_dir(nodes, start, true, n_tax)?;
         let next_leaf_bwd = next_leaf_in_dir(nodes, start, false, n_tax)?;
         next_leaf_fwd <= next_leaf_bwd
@@ -1383,7 +1052,7 @@ mod tests {
     fn small_triangle() {
         // 3 taxa — returns [0,1,2,3]
         let d = arr2(&[[0.0, 1.0, 2.0], [1.0, 0.0, 1.5], [2.0, 1.5, 0.0]]);
-        let ord = compute_order_splits_tree4(&d, false)
+        let ord = compute_order_splits_tree4(&d)
             .context("computing order for small triangle")
             .unwrap();
         assert_eq!(ord, vec![0, 1, 2, 3]);
@@ -1403,7 +1072,7 @@ mod tests {
             [2.0, 1.5, 0.0, 1.5],
             [3.0, 2.5, 1.5, 0.0],
         ]);
-        let ord = compute_order_splits_tree4(&d, false)
+        let ord = compute_order_splits_tree4(&d)
             .context("computing order for small square")
             .unwrap();
         assert_eq!(ord, vec![0, 1, 2, 4, 3]);
@@ -1426,7 +1095,7 @@ mod tests {
             [9.0, 10.0, 8.0, 0.0, 3.0],
             [8.0, 9.0, 7.0, 3.0, 0.0],
         ]);
-        let ord = compute_order_splits_tree4(&d, false)
+        let ord = compute_order_splits_tree4(&d)
             .context("computing order for smoke 5_1")
             .unwrap();
         assert_eq!(ord, vec![0, 1, 2, 5, 4, 3]);
@@ -1449,7 +1118,7 @@ mod tests {
             [4.0, 7.0, 9.0, 0.0, 2.0],
             [5.0, 8.0, 1.0, 2.0, 0.0],
         ]);
-        let ord = compute_order_splits_tree4(&d, false)
+        let ord = compute_order_splits_tree4(&d)
             .context("computing order for smoke 5_2")
             .unwrap();
         assert_eq!(ord, vec![0, 1, 2, 4, 5, 3]);
@@ -1483,7 +1152,7 @@ mod tests {
             [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
         ]);
 
-        let ord = compute_order_splits_tree4(&d, false)
+        let ord = compute_order_splits_tree4(&d)
             .context("computing order for smoke 10_1")
             .unwrap();
         assert_eq!(ord, vec![0, 1, 2, 10, 6, 4, 8, 3, 9, 7, 5]);
@@ -1517,7 +1186,7 @@ mod tests {
             [1.0, 8.0, 9.0, 6.0, 5.0, 2.0, 8.0, 7.0, 4.0, 0.0],
         ]);
 
-        let ord = compute_order_splits_tree4(&d, false)
+        let ord = compute_order_splits_tree4(&d)
             .context("computing order for smoke 10_2")
             .unwrap();
         assert_eq!(ord, vec![0, 1, 2, 4, 8, 3, 7, 9, 5, 6, 10]);
@@ -1591,7 +1260,7 @@ mod tests {
             ],
         ]);
 
-        let ord = compute_order_splits_tree4(&d, false)
+        let ord = compute_order_splits_tree4(&d)
             .context("computing order for smoke 15_1")
             .unwrap();
         assert_eq!(
@@ -1600,211 +1269,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn permutation_invariance() {
-        // The smoke_10_1 matrix
-        let d = arr2(&[
-            [0.0, 5.0, 12.0, 7.0, 3.0, 9.0, 11.0, 6.0, 4.0, 10.0],
-            [5.0, 0.0, 8.0, 2.0, 14.0, 5.0, 13.0, 7.0, 12.0, 1.0],
-            [12.0, 8.0, 0.0, 4.0, 9.0, 3.0, 8.0, 2.0, 5.0, 6.0],
-            [7.0, 2.0, 4.0, 0.0, 11.0, 7.0, 10.0, 4.0, 6.0, 9.0],
-            [3.0, 14.0, 9.0, 11.0, 0.0, 8.0, 1.0, 13.0, 2.0, 7.0],
-            [9.0, 5.0, 3.0, 7.0, 8.0, 0.0, 12.0, 5.0, 3.0, 4.0],
-            [11.0, 13.0, 8.0, 10.0, 1.0, 12.0, 0.0, 6.0, 2.0, 8.0],
-            [6.0, 7.0, 2.0, 4.0, 13.0, 5.0, 6.0, 0.0, 9.0, 7.0],
-            [4.0, 12.0, 5.0, 6.0, 2.0, 3.0, 2.0, 9.0, 0.0, 5.0],
-            [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
-        ]);
-        let baseline = compute_order_splits_tree4(&d, true).unwrap();
-
-        // Apply an arbitrary permutation
-        let perm = [3, 7, 0, 5, 9, 1, 4, 8, 2, 6];
-        let n = d.nrows();
-        let mut d_perm = Array2::<f64>::zeros((n, n));
-        for i in 0..n {
-            for j in 0..n {
-                d_perm[(i, j)] = d[(perm[i], perm[j])];
-            }
-        }
-
-        let result_perm = compute_order_splits_tree4(&d_perm, true).unwrap();
-        // Map permuted result back to original indices
-        let result_mapped: Vec<usize> = result_perm
-            .iter()
-            .map(|&idx| if idx == 0 { 0 } else { perm[idx - 1] + 1 })
-            .collect();
-
-        assert_eq!(baseline, result_mapped);
-    }
-
-    #[test]
-    fn canonical_permutation_is_invariant() {
-        use rand::rngs::StdRng;
-        use rand::{Rng, SeedableRng};
-
-        let n = 20;
-        let mut rng = StdRng::seed_from_u64(42);
-        let mut d = Array2::<f64>::zeros((n, n));
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let v: f64 = rng.gen_range(0.0..100.0);
-                d[(i, j)] = v;
-                d[(j, i)] = v;
-            }
-        }
-
-        let perm_orig = canonical_permutation(&d);
-
-        // Apply a random permutation
-        let mut perm: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            let j = rng.gen_range(0..=i);
-            perm.swap(i, j);
-        }
-
-        let mut d_perm = Array2::<f64>::zeros((n, n));
-        for i in 0..n {
-            for j in 0..n {
-                d_perm[(i, j)] = d[(perm[i], perm[j])];
-            }
-        }
-
-        let perm_of_perm = canonical_permutation(&d_perm);
-
-        // Map canonical permutation of permuted matrix back through input perm
-        // perm_of_perm[i] is the row in d_perm at sorted position i
-        // perm[perm_of_perm[i]] is the row in d at sorted position i
-        let mapped: Vec<usize> = perm_of_perm.iter().map(|&idx| perm[idx]).collect();
-        assert_eq!(
-            perm_orig, mapped,
-            "canonical_permutation is not permutation-invariant"
-        );
-    }
-
-    #[test]
-    fn permutation_invariance_float_n20() {
-        use rand::rngs::StdRng;
-        use rand::{Rng, SeedableRng};
-
-        let n = 20;
-        let mut rng = StdRng::seed_from_u64(42);
-        let mut d = Array2::<f64>::zeros((n, n));
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let v: f64 = rng.gen_range(0.0..100.0);
-                d[(i, j)] = v;
-                d[(j, i)] = v;
-            }
-        }
-
-        let baseline =
-            compute_order_splits_tree4_with_sx(&d, SxMode::Serial, true).unwrap();
-
-        // Apply a random permutation
-        let mut perm: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            let j = rng.gen_range(0..=i);
-            perm.swap(i, j);
-        }
-
-        let mut d_perm = Array2::<f64>::zeros((n, n));
-        for i in 0..n {
-            for j in 0..n {
-                d_perm[(i, j)] = d[(perm[i], perm[j])];
-            }
-        }
-
-        let result_perm =
-            compute_order_splits_tree4_with_sx(&d_perm, SxMode::Serial, true).unwrap();
-        let result_mapped: Vec<usize> = result_perm
-            .iter()
-            .map(|&idx| if idx == 0 { 0 } else { perm[idx - 1] + 1 })
-            .collect();
-
-        assert_eq!(baseline, result_mapped);
-    }
-
-    #[test]
-    fn permutation_invariance_int_n20() {
-        use rand::rngs::StdRng;
-        use rand::{Rng, SeedableRng};
-
-        let n = 20;
-        let mut rng = StdRng::seed_from_u64(99);
-        let mut d = Array2::<f64>::zeros((n, n));
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let v = rng.gen_range(1..100) as f64;
-                d[(i, j)] = v;
-                d[(j, i)] = v;
-            }
-        }
-
-        let baseline =
-            compute_order_splits_tree4_with_sx(&d, SxMode::Serial, true).unwrap();
-
-        let mut perm: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            let j = rng.gen_range(0..=i);
-            perm.swap(i, j);
-        }
-
-        let mut d_perm = Array2::<f64>::zeros((n, n));
-        for i in 0..n {
-            for j in 0..n {
-                d_perm[(i, j)] = d[(perm[i], perm[j])];
-            }
-        }
-
-        let result_perm =
-            compute_order_splits_tree4_with_sx(&d_perm, SxMode::Serial, true).unwrap();
-        let result_mapped: Vec<usize> = result_perm
-            .iter()
-            .map(|&idx| if idx == 0 { 0 } else { perm[idx - 1] + 1 })
-            .collect();
-
-        assert_eq!(baseline, result_mapped);
-    }
-
-    #[test]
-    fn permutation_invariance_n200() {
-        use rand::rngs::StdRng;
-        use rand::{Rng, SeedableRng};
-
-        let n = 200;
-        let mut rng = StdRng::seed_from_u64(77);
-        let mut d = Array2::<f64>::zeros((n, n));
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let v: f64 = rng.gen_range(0.0..100.0);
-                d[(i, j)] = v;
-                d[(j, i)] = v;
-            }
-        }
-
-        let baseline =
-            compute_order_splits_tree4_with_sx(&d, SxMode::Serial, true).unwrap();
-
-        let mut perm: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            let j = rng.gen_range(0..=i);
-            perm.swap(i, j);
-        }
-
-        let mut d_perm = Array2::<f64>::zeros((n, n));
-        for i in 0..n {
-            for j in 0..n {
-                d_perm[(i, j)] = d[(perm[i], perm[j])];
-            }
-        }
-
-        let result_perm =
-            compute_order_splits_tree4_with_sx(&d_perm, SxMode::Serial, true).unwrap();
-        let result_mapped: Vec<usize> = result_perm
-            .iter()
-            .map(|&idx| if idx == 0 { 0 } else { perm[idx - 1] + 1 })
-            .collect();
-
-        assert_eq!(baseline, result_mapped);
-    }
 }

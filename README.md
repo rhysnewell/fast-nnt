@@ -69,6 +69,8 @@ Fast-NNT exposes two knobs that match the algorithmic choices in SplitsTree:
 - For SplitsTree6-style defaults, use `ordering_method="splitstree4"` with `inference_method="active-set"` (or `-O splitstree4 --inference active-set` in the CLI).
 - For SplitsTree4-style defaults, use `ordering_method="splitstree4"` with `inference_method="splitstree4"` (or `-O splitstree4 --inference splitstree4` in the CLI).
 
+**Note:** When using `splitstree4` inference on large matrices (N > 2000), we recommend using `huson2023` ordering (`-O huson2023`). The SplitsTree4 ordering can produce cycles that cause highly variable convergence times in the SplitsTree4 weight solver depending on input row/column order, while Huson2023 ordering produces more consistently performant cycles.
+
 #### Python
 Set the thread count once per session:
 ```
