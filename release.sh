@@ -198,6 +198,18 @@ for rel_path in "${VERSION_FILES[@]}"; do
   fi
 done
 
+# ── Step 2b: Bump fast-nnt dependency in FFI binding crates ─────────────────
+info "Bumping fast-nnt dependency to >=${VERSION}..."
+
+for rel_path in "${DEP_FILES[@]}"; do
+  file="${REPO_ROOT}/${rel_path}"
+  # Replace fast-nnt = ">=X.Y.Z" with fast-nnt = ">=VERSION"
+  if grep -q 'fast-nnt = ">=' "$file"; then
+    sed -i '' "s/fast-nnt = \">=[^\"]*\"/fast-nnt = \">=${VERSION}\"/" "$file"
+    echo "  $rel_path: fast-nnt dependency -> >=${VERSION}"
+  fi
+done
+
 # ── Step 3: Validate version consistency ────────────────────────────────────
 info "Validating version consistency..."
 
