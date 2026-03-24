@@ -10,6 +10,7 @@ repository = "https://github.com/rhysnewell/fast-nnt"
 license = "GPL-3.0"
 keywords = ["phylogenetics", "neighbor-net", "splits-tree", "trees", "networks"]
 default-run = "fastnnt"
+exclude = ["test/plots/", "test/r/", "test/python/", "test/data/large/*.nex", "test/data/large/*.stree6", "fastnnt-py/", "fastnntr/"]
 
 # [workspace]
 # members = ["fastnnt-py", "fastnntr"]
