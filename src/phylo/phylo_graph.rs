@@ -126,22 +126,13 @@ impl PhyloGraph {
     /* ---------------- edge attributes: weight / confidence / prob ---------------- */
 
     fn weights_mut(&mut self) -> &mut HashMap<EdgeIndex, f64> {
-        if self.edge_weights.is_none() {
-            self.edge_weights = Some(HashMap::new());
-        }
-        self.edge_weights.as_mut().unwrap()
+        self.edge_weights.get_or_insert_with(HashMap::new)
     }
     fn confidences_mut(&mut self) -> &mut HashMap<EdgeIndex, f64> {
-        if self.edge_confidences.is_none() {
-            self.edge_confidences = Some(HashMap::new());
-        }
-        self.edge_confidences.as_mut().unwrap()
+        self.edge_confidences.get_or_insert_with(HashMap::new)
     }
     fn probabilities_mut(&mut self) -> &mut HashMap<EdgeIndex, f64> {
-        if self.edge_probabilities.is_none() {
-            self.edge_probabilities = Some(HashMap::new());
-        }
-        self.edge_probabilities.as_mut().unwrap()
+        self.edge_probabilities.get_or_insert_with(HashMap::new)
     }
 
     pub fn has_edge_weights(&self) -> bool {
@@ -190,16 +181,10 @@ impl PhyloGraph {
     /* ---------------- taxa mapping ---------------- */
 
     fn taxon2node_mut(&mut self) -> &mut HashMap<usize, NodeIndex> {
-        if self.taxon2node.is_none() {
-            self.taxon2node = Some(HashMap::new());
-        }
-        self.taxon2node.as_mut().unwrap()
+        self.taxon2node.get_or_insert_with(HashMap::new)
     }
     fn node2taxa_mut(&mut self) -> &mut HashMap<NodeIndex, Vec<usize>> {
-        if self.node2taxa.is_none() {
-            self.node2taxa = Some(HashMap::new());
-        }
-        self.node2taxa.as_mut().unwrap()
+        self.node2taxa.get_or_insert_with(HashMap::new)
     }
 
     pub fn taxon2node(&self) -> Option<&HashMap<usize, NodeIndex>> {

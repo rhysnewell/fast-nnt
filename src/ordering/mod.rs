@@ -8,9 +8,9 @@ pub mod ordering_splitstree4;
 #[derive(ValueEnum, Clone, Debug)]
 #[clap(rename_all = "kebab-case")]
 pub enum OrderingMethod {
-    #[clap(alias = "huson2023")]
+    #[clap(alias = "huson2023", alias = "closest_pair")]
     ClosestPair,
-    #[clap(alias = "splitstree4", alias = "splits-tree4")]
+    #[clap(alias = "splitstree4", alias = "splits-tree4", alias = "splits_tree4")]
     Multiway,
 }
 
@@ -23,11 +23,10 @@ impl OrderingMethod {
     }
 
     pub fn from_str(s: &str) -> Self {
-        match s {
-            "closest-pair" | "closest_pair" | "ClosestPair"
-            | "Huson2023" | "huson2023" => OrderingMethod::ClosestPair,
-            "multiway" | "Multiway"
-            | "SplitsTree4" | "splitstree4" | "splits-tree4" => OrderingMethod::Multiway,
+        let normalized: String = s.to_lowercase().replace(['-', '_'], "");
+        match normalized.as_str() {
+            "closestpair" | "huson2023" => OrderingMethod::ClosestPair,
+            "multiway" | "splitstree4" => OrderingMethod::Multiway,
             _ => OrderingMethod::default(),
         }
     }

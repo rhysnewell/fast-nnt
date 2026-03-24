@@ -52,12 +52,12 @@ impl NeighbourNet {
         dist: Array2<f64>,
         labels: Vec<String>,
         args: NeighbourNetArgs,
-    ) -> Self {
+    ) -> Result<Self> {
         let n = dist.nrows();
         if n != dist.ncols() {
-            panic!("Distance matrix must be square ({}x{})", n, dist.ncols());
+            anyhow::bail!("Distance matrix must be square ({}x{})", n, dist.ncols());
         }
-        NeighbourNet {
+        Ok(NeighbourNet {
             out_dir: "output".to_string(),
             args,
             distance_matrix: dist,
@@ -69,7 +69,7 @@ impl NeighbourNet {
                 symmetry_pairs_fixed: 0,
                 load_sec: 0.0,
             },
-        }
+        })
     }
 
     pub fn run(&self) -> Result<()> {
@@ -225,7 +225,8 @@ impl NeighbourNet {
 
     pub fn get_ordering(&self) -> Result<Vec<usize>> {
         let mut cycle = match self.args.ordering {
-            OrderingMethod::ClosestPair => compute_order_huson_2023(&self.distance_matrix),
+            OrderingMethod::ClosestPair => compute_order_huson_2023(&self.distance_matrix)
+                .context("computing cycle")?,
             OrderingMethod::Multiway => {
                 compute_order_splits_tree4(&self.distance_matrix).context("computing cycle")?
             }

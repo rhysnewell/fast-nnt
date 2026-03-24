@@ -29,25 +29,29 @@ impl PyNexus {
             .get_splits_records()
     }
 
-    fn get_node_translations(&self) -> Vec<(usize, String)> {
-        // need to reindex by -1
-        self.inner.get_node_translations().expect("Failed to get node translations").into_iter()
+    fn get_node_translations(&self) -> PyResult<Vec<(usize, String)>> {
+        Ok(self.inner.get_node_translations()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+            .into_iter()
             .map(|(id, label)| (id - 1, label)) // Convert to 0-based indexing
-            .collect()
+            .collect())
     }
 
-    fn get_node_positions(&self) -> Vec<(usize, f64, f64)> {
-        self.inner.get_node_positions().expect("Failed to get node positions").into_iter()
+    fn get_node_positions(&self) -> PyResult<Vec<(usize, f64, f64)>> {
+        Ok(self.inner.get_node_positions()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+            .into_iter()
             .map(|(id, x, y)| (id - 1, x, y)) // Convert to 0-based indexing
-            .collect()
+            .collect())
     }
 
     /// Example: graph as list[(edge_id, u, v, split_id, weight)]
-    fn get_graph_edges(&self) -> Vec<(usize, usize, usize, i32, f64)> {
-        self.inner
-            .get_graph_edges().expect("Failed to get graph edges").into_iter()
+    fn get_graph_edges(&self) -> PyResult<Vec<(usize, usize, usize, i32, f64)>> {
+        Ok(self.inner.get_graph_edges()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+            .into_iter()
             .map(|(edge_id, u, v, split_id, weight)| (edge_id - 1, u - 1, v - 1, split_id, weight))
-            .collect()
+            .collect())
     }
 }
 
@@ -74,12 +78,6 @@ fn coerce_to_numpy_2d<'py>(obj: Bound<'py, PyAny>) -> PyResult<PyReadonlyArray2<
 
 fn labels_from<'py>(obj: Bound<'py, PyAny>, n: usize) -> PyResult<Vec<String>> {
     if let Ok(v) = obj.extract::<Vec<String>>() {
-        if v.len() == n {
-            return Ok(v);
-        }
-    }
-    if let Ok(v) = obj.extract::<Vec<String>>() {
-        let v: Vec<String> = v.into_iter().map(|s| s.to_string()).collect();
         if v.len() == n {
             return Ok(v);
         }

@@ -49,15 +49,9 @@ impl PackedTriIndex {
         }
     }
 
-    #[inline]
-    #[allow(dead_code)]
-    fn pair_idx(&self, i: usize, j: usize) -> usize {
-        debug_assert!(1 <= i && i < j && j <= self.n);
-        self.row_offsets[i] + (j - i - 1)
-    }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 #[derive(Default, Debug)]
 struct KernelPerf {
     calc_ax_calls: usize,
@@ -541,12 +535,13 @@ fn cmp_vals_indices(vals: &[f64], a: usize, b: usize) -> Ordering {
 
 /* ===================== Linear ops A and Aᵀ (vector form) ===================== */
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn calc_ax(x: &[f64], y: &mut [f64], n: usize) {
     let tri_idx = PackedTriIndex::new(n);
     calc_ax_indexed(x, y, &tri_idx);
 }
 
+#[cfg(test)]
 fn calc_ax_indexed(x: &[f64], y: &mut [f64], tri_idx: &PackedTriIndex) {
     let n = tri_idx.n;
     let offsets = &tri_idx.row_offsets;
@@ -595,7 +590,7 @@ fn calc_ax_indexed(x: &[f64], y: &mut [f64], tri_idx: &PackedTriIndex) {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn calc_atx(x: &[f64], y: &mut [f64], n: usize) {
     let tri_idx = PackedTriIndex::new(n);
     calc_atx_indexed(x, y, &tri_idx);
@@ -696,7 +691,7 @@ pub fn calc_ainv_y(y: &[f64], x: &mut [f64], n: usize) {
 
 /* ===================== Gradient & CGNR (rayon-accelerated) ===================== */
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn eval_gradient(
     x: &[f64],
     d: &[f64],
@@ -904,49 +899,6 @@ fn cgnr(
     Ok(k)
 }
 
-/// Compute the inner product for CGNR convergence. When unpreconditioned, uses
-/// the original row-wise accumulation (sum_array_squared_masked_indexed) for
-/// bit-exact parity. When preconditioned, uses z^T s over free indices.
-#[allow(dead_code)]
-#[inline]
-fn precond_inner_product(
-    z_full: &[f64],
-    active_set: &[bool],
-    z_free: &[f64],
-    s_free: &[f64],
-    precond: Option<&[f64]>,
-    tri_idx: &PackedTriIndex,
-) -> f64 {
-    match precond {
-        None => sum_array_squared_masked_indexed(z_full, active_set, tri_idx),
-        Some(_) => z_free
-            .iter()
-            .zip(s_free.iter())
-            .map(|(&zi, &si)| zi * si)
-            .sum(),
-    }
-}
-
-#[allow(dead_code)]
-#[inline]
-fn apply_precond(
-    z_free: &[f64],
-    s_free: &mut [f64],
-    precond: Option<&[f64]>,
-    free_indices: &[usize],
-) {
-    match precond {
-        Some(m) => {
-            for i in 0..z_free.len() {
-                s_free[i] = z_free[i] / m[free_indices[i]];
-            }
-        }
-        None => {
-            s_free.copy_from_slice(z_free);
-        }
-    }
-}
-
 /// Band-major eval_gradient: compute gradient = A^T(Ax - d) using band kernels.
 /// All inputs/outputs are in band-major layout.
 ///
@@ -1002,7 +954,7 @@ fn sum_array_squared_band(x: &[f64], band: &BandIndex, tri_idx: &PackedTriIndex)
 
 /// Masked sum of squares preserving row-wise FP accumulation order.
 /// Both x and active_set are in band-major layout.
-#[allow(dead_code)]
+#[cfg(test)]
 fn sum_array_squared_masked_band(
     x: &[f64],
     active_set: &[bool],
@@ -1156,39 +1108,7 @@ fn scatter_by_index(src: &[f64], indices: &[usize], dst: &mut [f64]) {
     }
 }
 
-#[inline]
-#[allow(dead_code)]
-fn sum_array_squared_masked(x: &[f64], active_set: &[bool], n: usize) -> f64 {
-    let tri_idx = PackedTriIndex::new(n);
-    sum_array_squared_masked_indexed(x, active_set, &tri_idx)
-}
-
-fn sum_array_squared_masked_indexed(
-    x: &[f64],
-    active_set: &[bool],
-    tri_idx: &PackedTriIndex,
-) -> f64 {
-    let expected = tri_idx.npairs;
-    debug_assert_eq!(x.len(), expected);
-    debug_assert_eq!(active_set.len(), expected);
-
-    let mut total = 0.0f64;
-    for i in 1..=tri_idx.n {
-        let start = tri_idx.row_offsets[i];
-        let len = tri_idx.n - i;
-        let mut s_i = 0.0f64;
-        for index in start..start + len {
-            if !active_set[index] {
-                let v = x[index];
-                s_i += v * v;
-            }
-        }
-        total += s_i;
-    }
-    total
-}
-
-#[allow(dead_code)]
+#[cfg(test)]
 #[inline]
 fn profiled_calc_ax(
     x: &[f64],
@@ -1207,7 +1127,7 @@ fn profiled_calc_ax(
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 #[inline]
 fn profiled_calc_atx(
     x: &[f64],
@@ -1226,16 +1146,6 @@ fn profiled_calc_atx(
     }
 }
 
-#[allow(dead_code)]
-#[inline]
-fn avg_time_us(total: Duration, calls: usize) -> f64 {
-    if calls == 0 {
-        0.0
-    } else {
-        total.as_secs_f64() * 1e6 / calls as f64
-    }
-}
-
 /* ===================== Indexing ===================== */
 pub fn mask_elements_branchless(r: &mut [f64], a: &[bool]) {
     assert_eq!(r.len(), a.len());
@@ -1244,8 +1154,8 @@ pub fn mask_elements_branchless(r: &mut [f64], a: &[bool]) {
     }
 }
 
+#[cfg(test)]
 #[inline]
-#[allow(dead_code)]
 fn pair_idx(i: usize, j: usize, n: usize) -> usize {
     // blocks: (1,2..n), (2,3..n), ...
     debug_assert!(1 <= i && i < j && j <= n);
@@ -1968,7 +1878,7 @@ mod tests {
                 0.935940, 0.599593, 0.729686, 0.000000,
             ],
         ]);
-        let ord = compute_order_huson_2023(&d);
+        let ord = compute_order_huson_2023(&d).unwrap();
         let mut params = NNLSParams::default();
         let progress = None; // No progress tracking in this test
 
@@ -2269,7 +2179,7 @@ mod tests {
             0.0,
             0.0,
         ];
-        let ord = compute_order_huson_2023(&d);
+        let ord = compute_order_huson_2023(&d).unwrap();
         let mut params = NNLSParams::default();
         let n = d.shape()[0];
         params.cgnr_iterations = max(50, n * (n - 1) / 2);
@@ -2738,7 +2648,7 @@ mod tests {
             ],
         ]);
 
-        let ord = compute_order_huson_2023(&d);
+        let ord = compute_order_huson_2023(&d).unwrap();
         let mut params = NNLSParams::default();
         let progress = None; // No progress tracking in this test
 

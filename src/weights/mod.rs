@@ -9,9 +9,9 @@ use clap::ValueEnum;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[clap(rename_all = "kebab-case")]
 pub enum InferenceMethod {
-    #[clap(alias = "activeset")]
+    #[clap(alias = "activeset", alias = "active_set")]
     ActiveSet,
-    #[clap(alias = "splitstree4", alias = "splits-tree4", alias = "conjugate-gradient")]
+    #[clap(alias = "splitstree4", alias = "splits-tree4", alias = "splits_tree4", alias = "conjugate-gradient", alias = "conjugate_gradient")]
     CG,
 }
 
@@ -24,10 +24,10 @@ impl InferenceMethod {
     }
 
     pub fn from_str(s: &str) -> Self {
-        match s {
-            "active-set" | "active_set" | "activeset" | "ActiveSet" => InferenceMethod::ActiveSet,
-            "cg" | "CG" | "conjugate-gradient" | "conjugate_gradient"
-            | "splitstree4" | "splits-tree4" | "SplitsTree4" => InferenceMethod::CG,
+        let normalized: String = s.to_lowercase().replace(['-', '_'], "");
+        match normalized.as_str() {
+            "activeset" => InferenceMethod::ActiveSet,
+            "cg" | "conjugategradient" | "splitstree4" => InferenceMethod::CG,
             _ => InferenceMethod::default(),
         }
     }

@@ -735,7 +735,7 @@ mod tests {
             [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
         ]);
 
-        let cycle = compute_order_huson_2023(&d);
+        let cycle = compute_order_huson_2023(&d).unwrap();
         let mut params = NNLSParams::default();
         let progress = None; // No progress tracking in this test
         let labels = vec![

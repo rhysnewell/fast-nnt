@@ -42,9 +42,7 @@ pub fn set_log_level(matches: &ProgramArgs, is_last: bool, program_name: &str, v
         if let Ok(rust_log) = env::var("RUST_LOG") {
             builder.parse_filters(&rust_log);
         }
-        if builder.try_init().is_err() {
-            panic!("Failed to set log level - has it been specified multiple times?")
-        }
+        let _ = builder.try_init();
     }
     if is_last {
         info!("{} version {}", program_name, version);
@@ -64,7 +62,8 @@ pub fn run_fast_nnt_from_memory(
     let t0 = Instant::now();
 
     // Validate
-    let neighbour_net = NeighbourNet::from_distance_matrix(dist, labels, args);
+    let neighbour_net = NeighbourNet::from_distance_matrix(dist, labels, args)
+        .context("Validating distance matrix")?;
     let nexus = neighbour_net
         .generate_nexus()
         .context("Performing neighbour net analysis")?;

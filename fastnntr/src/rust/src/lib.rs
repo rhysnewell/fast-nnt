@@ -55,7 +55,7 @@ fn num_mat_vertices(max_id: usize, xy_by_id: &HashMap<usize, (f64, f64)>, flip_y
     data.extend_from_slice(&xs);
     data.extend_from_slice(&ys);
     let mut robj = r!(data);
-    robj.set_attrib("dim", r!( [ n as i32, 2i32 ] )).unwrap();
+    let _ = robj.set_attrib("dim", r!( [ n as i32, 2i32 ] ));
     robj
 }
 

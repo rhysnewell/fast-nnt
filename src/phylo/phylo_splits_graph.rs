@@ -68,16 +68,10 @@ impl PhyloSplitsGraph {
     /* ---------------- edge split-id / angle maps ---------------- */
 
     fn splits_mut(&mut self) -> &mut HashMap<EdgeIndex, i32> {
-        if self.edge_split_map.is_none() {
-            self.edge_split_map = Some(HashMap::new());
-        }
-        self.edge_split_map.as_mut().unwrap()
+        self.edge_split_map.get_or_insert_with(HashMap::new)
     }
     fn angles_mut(&mut self) -> &mut HashMap<EdgeIndex, f64> {
-        if self.edge_angle_map.is_none() {
-            self.edge_angle_map = Some(HashMap::new());
-        }
-        self.edge_angle_map.as_mut().unwrap()
+        self.edge_angle_map.get_or_insert_with(HashMap::new)
     }
 
     pub fn set_split(&mut self, e: EdgeIndex, id: i32) {
