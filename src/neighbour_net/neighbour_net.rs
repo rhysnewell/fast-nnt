@@ -315,6 +315,7 @@ impl NeighbourNet {
 
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(false)
+            .flexible(true)
             .delimiter(delim as u8)
             .from_reader(text.as_bytes());
 
@@ -330,11 +331,23 @@ impl NeighbourNet {
             return Err(anyhow!("empty table"));
         }
 
-        let (has_header, has_index) = sniff_header_index(&rows)?;
+        // Common format: header row has N column labels, data rows have
+        // row_label + N values. Detect by field-count difference.
+        let misaligned_header = rows.len() >= 2 && rows[0].len() + 1 == rows[1].len();
+
+        let (has_header, has_index) = if misaligned_header {
+            (true, true)
+        } else {
+            sniff_header_index(&rows)?
+        };
         info!("Header: {}, Index column: {}", has_header, has_index);
 
         // Derive labels + numeric region
-        let (labels, start_row, start_col) = if has_header && has_index {
+        let (labels, start_row, start_col) = if misaligned_header {
+            // Header has N column labels; data rows have row_label + N values
+            let labels = rows[0].iter().map(|s| s.to_string()).collect();
+            (labels, 1usize, 1usize)
+        } else if has_header && has_index {
             let header = &rows[0];
             let labels = header[1..].iter().map(|s| s.to_string()).collect();
             (labels, 1usize, 1usize)
