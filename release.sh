@@ -293,7 +293,7 @@ done
 
 info "Committing and tagging..."
 git add -A
-git commit -m "release: v${VERSION}"
+git diff --cached --quiet || git commit -m "release: v${VERSION}"
 git tag "v${VERSION}"
 
 info "Pushing to origin..."
