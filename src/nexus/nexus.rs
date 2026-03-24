@@ -62,9 +62,9 @@ impl Nexus {
             .iter()
             .map(|s| {
                 (
-                    s.get_label().unwrap_or("").to_string(),
-                    s.get_weight(),
-                    s.get_confidence(),
+                    s.label().unwrap_or("").to_string(),
+                    s.weight,
+                    s.confidence,
                     bitset_to_vec(s.get_a()),
                     bitset_to_vec(s.get_b()),
                 )

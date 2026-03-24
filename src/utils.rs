@@ -17,7 +17,7 @@ pub fn compute_least_squares_fit(distances: &Array2<f64>, splits: &[ASplit]) -> 
     let tri_len = n * (n - 1) / 2;
     let mut split_dist = vec![0.0_f64; tri_len];
     for s in splits {
-        let w = s.get_weight();
+        let w = s.weight;
         let a: &FixedBitSet = s.get_a();
         let b: &FixedBitSet = s.get_b();
 
@@ -93,7 +93,7 @@ mod lsq_tests {
     fn distances_from_splits(n: usize, splits: &[ASplit]) -> Array2<f64> {
         let mut d = Array2::<f64>::zeros((n, n));
         for s in splits {
-            let w = s.get_weight();
+            let w = s.weight;
             let a = s.get_a();
             let b = s.get_b();
             for i1 in a.ones() {

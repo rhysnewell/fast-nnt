@@ -65,7 +65,9 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> anyhow::Result<Vec<usize>
     let n_tax = dist.nrows();
     anyhow::ensure!(
         n_tax == dist.ncols(),
-        "Distance matrix must be square ({}x{})", n_tax, dist.ncols()
+        "Distance matrix must be square ({}x{})",
+        n_tax,
+        dist.ncols()
     );
     if n_tax <= 3 {
         return Ok(create_array_upward_count(n_tax));

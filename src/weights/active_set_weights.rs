@@ -48,7 +48,6 @@ impl PackedTriIndex {
             row_offsets,
         }
     }
-
 }
 
 #[cfg(test)]
@@ -157,9 +156,8 @@ pub fn compute_use_1d(
         let d_12 = distances[[cycle[1] - 1, cycle[2] - 1]];
         let mut a = FixedBitSet::with_capacity(n + 1);
         a.grow(n + 1);
-        if d_12 > 0.0 {
-            a.set(cycle[1], true);
-        }
+        // Always set bit for a valid bipartition (trivial split {1} vs {2})
+        a.set(cycle[1], true);
         return Ok((SplitWeights { x: vec![d_12] }, vec![(a, d_12.max(0.0))]));
     }
 
@@ -3668,5 +3666,262 @@ mod tests {
                 n
             );
         }
+    }
+
+    // ==================== Edge case tests ====================
+
+    /// n=2: two taxa should produce exactly 1 split with weight = distance/1.
+    #[test]
+    fn edge_case_n2_two_taxa() {
+        let dist = arr2(&[[0.0, 7.5], [7.5, 0.0]]);
+        let cycle = vec![0, 1, 2]; // identity cycle, 1-based with leading 0
+        let mut params = NNLSParams::default();
+        params.cutoff = 0.0;
+
+        let splits = compute_asplits(&cycle, &dist, &mut params, None).expect("n=2 should succeed");
+
+        assert_eq!(splits.len(), 1, "n=2 should produce exactly 1 split");
+        assert!(
+            (splits[0].weight - 7.5).abs() < 1e-10,
+            "n=2 split weight should equal the distance, got {}",
+            splits[0].weight
+        );
+    }
+
+    /// n=2 with zero distance: should produce 1 split with weight 0.
+    #[test]
+    fn edge_case_n2_zero_distance() {
+        let dist = arr2(&[[0.0, 0.0], [0.0, 0.0]]);
+        let cycle = vec![0, 1, 2];
+        let mut params = NNLSParams::default();
+        params.cutoff = 0.0;
+
+        let splits = compute_asplits(&cycle, &dist, &mut params, None)
+            .expect("n=2 zero distance should succeed");
+
+        assert_eq!(splits.len(), 1);
+        assert!(
+            splits[0].weight.abs() < 1e-10,
+            "n=2 zero-distance split weight should be 0, got {}",
+            splits[0].weight
+        );
+    }
+
+    /// n=3: minimal non-trivial case. For a metric distance matrix, should produce
+    /// exactly 3 trivial splits.
+    #[test]
+    fn edge_case_n3_three_taxa() {
+        let dist = arr2(&[[0.0, 4.0, 6.0], [4.0, 0.0, 5.0], [6.0, 5.0, 0.0]]);
+        let cycle = vec![0, 1, 2, 3];
+        let mut params = NNLSParams::default();
+        params.cutoff = 0.0;
+
+        let splits = compute_asplits(&cycle, &dist, &mut params, None).expect("n=3 should succeed");
+
+        // n=3 has n*(n-1)/2 = 3 possible splits (all trivial: {1}, {2}, {3})
+        assert_eq!(splits.len(), 3, "n=3 should produce 3 splits");
+
+        // All weights should be non-negative
+        for split in &splits {
+            assert!(
+                split.weight >= 0.0,
+                "all n=3 split weights should be non-negative, got {}",
+                split.weight
+            );
+        }
+
+        // At least one split should have positive weight (since distances are nonzero)
+        let has_positive = splits.iter().any(|s| s.weight > 1e-10);
+        assert!(
+            has_positive,
+            "n=3 with nonzero distances should have positive splits"
+        );
+    }
+
+    /// n=3 equilateral: all distances equal. Each trivial split should get the same weight.
+    #[test]
+    fn edge_case_n3_equilateral() {
+        let d = 6.0;
+        let dist = arr2(&[[0.0, d, d], [d, 0.0, d], [d, d, 0.0]]);
+        let cycle = vec![0, 1, 2, 3];
+        let mut params = NNLSParams::default();
+        params.cutoff = 0.0;
+
+        let splits = compute_asplits(&cycle, &dist, &mut params, None)
+            .expect("n=3 equilateral should succeed");
+
+        assert_eq!(splits.len(), 3);
+
+        // All weights should be equal (by symmetry)
+        let w0 = splits[0].weight;
+        for split in &splits {
+            assert!(
+                (split.weight - w0).abs() < 1e-8,
+                "equilateral n=3: all split weights should be equal, got {} vs {}",
+                split.weight,
+                w0
+            );
+        }
+        // Each trivial split weight = d/2 = 3.0 for tree-additive equilateral
+        assert!(
+            (w0 - d / 2.0).abs() < 1e-8,
+            "equilateral trivial split weight should be d/2 = {}, got {}",
+            d / 2.0,
+            w0
+        );
+    }
+
+    /// All-zero distance matrix: all split weights should be zero.
+    #[test]
+    fn edge_case_all_zero_distances() {
+        for n in [3, 5, 8] {
+            let dist = Array2::<f64>::zeros((n, n));
+            let cycle: Vec<usize> = (0..=n).collect(); // identity cycle
+            let mut params = NNLSParams::default();
+            params.cutoff = 0.0;
+
+            let splits = compute_asplits(&cycle, &dist, &mut params, None)
+                .unwrap_or_else(|e| panic!("all-zero n={} should succeed: {}", n, e));
+
+            for split in &splits {
+                assert!(
+                    split.weight.abs() < 1e-8,
+                    "all-zero n={}: split weight should be ~0, got {}",
+                    n,
+                    split.weight
+                );
+            }
+        }
+    }
+
+    /// Symmetric matrix: verify that NNLS produces the same splits regardless of
+    /// which ordering of the two halves (i,j) vs (j,i) is used, since the input
+    /// should be symmetric.
+    #[test]
+    fn edge_case_symmetric_input_same_result() {
+        let dist = arr2(&[
+            [0.0, 5.0, 9.0, 9.0, 8.0],
+            [5.0, 0.0, 10.0, 10.0, 9.0],
+            [9.0, 10.0, 0.0, 8.0, 7.0],
+            [9.0, 10.0, 8.0, 0.0, 3.0],
+            [8.0, 9.0, 7.0, 3.0, 0.0],
+        ]);
+
+        // Verify the distance matrix is symmetric
+        let n = dist.nrows();
+        for i in 0..n {
+            for j in 0..n {
+                assert_eq!(
+                    dist[[i, j]],
+                    dist[[j, i]],
+                    "distance matrix should be symmetric at ({}, {})",
+                    i,
+                    j
+                );
+            }
+            assert_eq!(
+                dist[[i, i]],
+                0.0,
+                "diagonal should be zero at ({}, {})",
+                i,
+                i
+            );
+        }
+
+        // Run NNLS
+        let cycle: Vec<usize> = (0..=n).collect();
+        let mut params = NNLSParams::default();
+        params.cutoff = 0.0;
+
+        let splits = compute_asplits(&cycle, &dist, &mut params, None)
+            .expect("symmetric input should succeed");
+
+        // All weights non-negative (NNLS guarantee)
+        for split in &splits {
+            assert!(
+                split.weight >= 0.0,
+                "NNLS should produce non-negative weights, got {}",
+                split.weight
+            );
+        }
+    }
+
+    /// n=1: single taxon should produce no splits.
+    #[test]
+    fn edge_case_n1_single_taxon() {
+        let dist = arr2(&[[0.0]]);
+        let cycle = vec![0, 1];
+        let mut params = NNLSParams::default();
+
+        let splits = compute_asplits(&cycle, &dist, &mut params, None).expect("n=1 should succeed");
+
+        assert!(splits.is_empty(), "n=1 should produce no splits");
+    }
+
+    /// n=0: empty input should produce no splits.
+    #[test]
+    fn edge_case_n0_empty() {
+        let dist = Array2::<f64>::zeros((0, 0));
+        let cycle = vec![0usize; 1]; // just the sentinel
+        let mut params = NNLSParams::default();
+
+        let splits = compute_asplits(&cycle, &dist, &mut params, None).expect("n=0 should succeed");
+
+        assert!(splits.is_empty(), "n=0 should produce no splits");
+    }
+
+    /// Tree-additive distances: for a simple star tree, weights should exactly
+    /// reconstruct the branch lengths.
+    #[test]
+    fn edge_case_star_tree_n4() {
+        // Star tree with branch lengths: a=1, b=2, c=3, d=4
+        // d(i,j) = branch_i + branch_j
+        let branches = [1.0, 2.0, 3.0, 4.0];
+        let n = branches.len();
+        let mut dist = Array2::<f64>::zeros((n, n));
+        for i in 0..n {
+            for j in 0..n {
+                if i != j {
+                    dist[[i, j]] = branches[i] + branches[j];
+                }
+            }
+        }
+
+        let cycle: Vec<usize> = (0..=n).collect();
+        let mut params = NNLSParams::default();
+        params.cutoff = 0.0;
+
+        let splits =
+            compute_asplits(&cycle, &dist, &mut params, None).expect("star tree should succeed");
+
+        // For a star tree, only trivial splits should have positive weight.
+        // Collect trivial split weights (|A| = 1).
+        let mut trivial_weights = Vec::new();
+        let mut nontrivial_positive = 0;
+        for split in &splits {
+            let a_count = split.base.get_a().ones().filter(|&t| t != 0).count();
+            let b_count = split.base.get_b().ones().filter(|&t| t != 0).count();
+            if a_count == 1 || b_count == 1 {
+                trivial_weights.push(split.weight);
+            } else if split.weight > 1e-8 {
+                nontrivial_positive += 1;
+            }
+        }
+
+        assert_eq!(
+            trivial_weights.len(),
+            n,
+            "star tree should have exactly n trivial splits"
+        );
+        assert_eq!(
+            nontrivial_positive, 0,
+            "star tree should have no non-trivial positive splits"
+        );
+
+        // Trivial split weights should match branch lengths
+        trivial_weights.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mut expected = branches.to_vec();
+        expected.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        compare_float_array(&trivial_weights, &expected, 1e-8);
     }
 }

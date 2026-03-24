@@ -108,6 +108,8 @@ pub fn batch_rowsums_band_sequential(b: &[f64], sums: &mut [f64], band: &BandInd
         let (start, end) = band.band_range(k);
         let band_slice = &b[start..end];
         for (i, &val) in band_slice.iter().enumerate() {
+            // SAFETY: band k has (n-k) elements so i < n-k; thus i < n and i+k < n,
+            // both within the sums[..n] range.
             unsafe {
                 *sums.get_unchecked_mut(i) += val;
                 *sums.get_unchecked_mut(i + k) += val;
@@ -135,6 +137,13 @@ pub fn batch_rowsums_band_forward(b: &[f64], sums: &mut [f64], band: &BandIndex)
         }
     }
 }
+
+// NOTE: The four kernel functions below (calculate_forward_band, calculate_ab_band,
+// and their _with_norm_sq variants) share the same recurrence but are intentionally
+// kept as separate functions. The _with_norm variants fuse norm-squared accumulation
+// into the band iteration to avoid a second pass over the output. Unifying them via
+// closures/generics risks changing FP accumulation order (the code is tuned for
+// FP-identical results across kernel variants) and cache behavior in these hot paths.
 
 /// Band-major kernel for the active_set forward operator (A*x).
 /// Mathematically equivalent to calc_ax_indexed but operates on band-major data.
@@ -426,6 +435,9 @@ pub fn vectorized_add4(out: &mut [f64], a: &[f64], b_arr: &[f64], c: &[f64], d_a
     {
         use std::arch::aarch64::*;
         let chunks = len / 2;
+        // SAFETY: All pointers derived from slices of equal length `len` (checked by
+        // debug_assert above). Vectorized loop reads/writes at offsets 0..chunks*2 ≤ len.
+        // The scalar tail handles the final element when len is odd.
         unsafe {
             let two = vdupq_n_f64(2.0);
             let out_ptr = out.as_mut_ptr();
@@ -453,6 +465,9 @@ pub fn vectorized_add4(out: &mut [f64], a: &[f64], b_arr: &[f64], c: &[f64], d_a
     #[cfg(target_arch = "x86_64")]
     {
         use std::arch::x86_64::*;
+        // SAFETY: All pointers derived from slices of equal length `len` (checked by
+        // debug_assert above). AVX reads 4 f64s per iteration, SSE2 reads 2. Scalar
+        // tails handle remaining elements. Unaligned loads/stores are used throughout.
         unsafe {
             // AVX path: 4×f64 (256-bit)
             #[cfg(target_feature = "avx")]
@@ -532,6 +547,9 @@ pub fn vectorized_add3(out: &mut [f64], a: &[f64], b_arr: &[f64], c: &[f64]) {
     {
         use std::arch::aarch64::*;
         let chunks = len / 2;
+        // SAFETY: All pointers derived from slices of equal length `len` (checked by
+        // debug_assert above). Vectorized loop reads/writes at offsets 0..chunks*2 ≤ len.
+        // The scalar tail handles the final element when len is odd.
         unsafe {
             let two = vdupq_n_f64(2.0);
             let out_ptr = out.as_mut_ptr();
@@ -556,6 +574,9 @@ pub fn vectorized_add3(out: &mut [f64], a: &[f64], b_arr: &[f64], c: &[f64]) {
     #[cfg(target_arch = "x86_64")]
     {
         use std::arch::x86_64::*;
+        // SAFETY: All pointers derived from slices of equal length `len` (checked by
+        // debug_assert above). AVX reads 4 f64s per iteration, SSE2 reads 2. Scalar
+        // tails handle remaining elements. Unaligned loads/stores are used throughout.
         unsafe {
             #[cfg(target_feature = "avx")]
             {

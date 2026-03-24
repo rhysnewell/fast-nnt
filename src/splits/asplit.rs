@@ -22,21 +22,6 @@ impl ASplit {
         Self::new_full(a, b, 1.0, -1.0, None)
     }
 
-    /// ASplit(A,B, weight)
-    pub fn new_with_weight(a: FixedBitSet, b: FixedBitSet, weight: f64) -> Self {
-        Self::new_full(a, b, weight, -1.0, None)
-    }
-
-    /// ASplit(A,B, weight, confidence)
-    pub fn new_with_weight_conf(
-        a: FixedBitSet,
-        b: FixedBitSet,
-        weight: f64,
-        confidence: f64,
-    ) -> Self {
-        Self::new_full(a, b, weight, confidence, None)
-    }
-
     /// ASplit(A,B, weight, confidence, label)
     pub fn new_full(
         a: FixedBitSet,
@@ -84,37 +69,10 @@ impl ASplit {
         Self::new_full(a, b, weight, confidence, label)
     }
 
-    /// Copy constructor (like Java).
-    pub fn from_other(src: &ASplit) -> Self {
-        Self {
-            base: src.base.clone(),
-            weight: src.weight,
-            confidence: src.confidence,
-            label: src.label.clone(),
-        }
-    }
+    /* -------- accessors -------- */
 
-    /* -------- getters / setters -------- */
-
-    pub fn get_weight(&self) -> f64 {
-        self.weight
-    }
-    pub fn set_weight(&mut self, w: f64) {
-        self.weight = w;
-    }
-
-    pub fn get_confidence(&self) -> f64 {
-        self.confidence
-    }
-    pub fn set_confidence(&mut self, c: f64) {
-        self.confidence = c;
-    }
-
-    pub fn get_label(&self) -> Option<&str> {
+    pub fn label(&self) -> Option<&str> {
         self.label.as_deref()
-    }
-    pub fn set_label<S: Into<String>>(&mut self, s: S) {
-        self.label = Some(s.into());
     }
 
     /* -------- BiPartition delegation -------- */
@@ -302,9 +260,9 @@ mod tests {
     #[test]
     fn display_shape() {
         let mut s = ASplit::from_a_ntax(bs_from(&[2, 4], 5), 5);
-        s.set_weight(3.14);
-        s.set_confidence(0.9);
-        s.set_label("my-split");
+        s.weight = 3.14;
+        s.confidence = 0.9;
+        s.label = Some("my-split".into());
         let s = s.to_string();
         assert!(s.contains("weight=") && s.contains("confidence=") && s.contains("label="));
     }

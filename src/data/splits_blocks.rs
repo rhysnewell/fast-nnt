@@ -217,7 +217,7 @@ impl SplitsBlock {
     }
 
     pub fn has_confidence_values(&self) -> bool {
-        self.splits.iter().any(|s| s.get_confidence() != -1.0)
+        self.splits.iter().any(|s| s.confidence != -1.0)
     }
 
     /// Find a split equal to `split` (by A/B equality); returns 1-based id if found.
@@ -233,11 +233,6 @@ impl Default for SplitsBlock {
 }
 
 /* ---------- FixedBitSet helpers ---------- */
-
-// fn fb_grow_to(mut bs: FixedBitSet, len: usize) -> FixedBitSet {
-//     if bs.len() < len { bs.grow(len); }
-//     bs
-// }
 
 fn fb_and(a: &FixedBitSet, b: &FixedBitSet) -> FixedBitSet {
     let len = a.len().max(b.len());

@@ -11,7 +11,13 @@ use clap::ValueEnum;
 pub enum InferenceMethod {
     #[clap(alias = "activeset", alias = "active_set")]
     ActiveSet,
-    #[clap(alias = "splitstree4", alias = "splits-tree4", alias = "splits_tree4", alias = "conjugate-gradient", alias = "conjugate_gradient")]
+    #[clap(
+        alias = "splitstree4",
+        alias = "splits-tree4",
+        alias = "splits_tree4",
+        alias = "conjugate-gradient",
+        alias = "conjugate_gradient"
+    )]
     CG,
 }
 

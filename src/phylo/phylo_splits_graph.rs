@@ -936,4 +936,1041 @@ mod phylo_splits_graph_tests {
         // cycle mapping preserved
         assert_eq!(g.get_cycle(), cloned.get_cycle());
     }
+
+    // ============================================================
+    //  Additional comprehensive tests
+    // ============================================================
+
+    // ---- Helper: build a diamond graph A—B—C—D—A with an extra center node E ----
+    //
+    //       A
+    //      / \
+    //     B   D
+    //      \ /
+    //       C
+    //
+    //  Edges: A-B (split=1), B-C (split=2), C-D (split=3), A-D (split=4)
+    //  Taxa: 1->A, 2->B, 3->C, 4->D
+    fn make_diamond() -> (
+        PhyloSplitsGraph,
+        NodeIndex,
+        NodeIndex,
+        NodeIndex,
+        NodeIndex,
+        EdgeIndex,
+        EdgeIndex,
+        EdgeIndex,
+        EdgeIndex,
+    ) {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node_with_label("A");
+        let b = g.base.new_node_with_label("B");
+        let c = g.base.new_node_with_label("C");
+        let d = g.base.new_node_with_label("D");
+
+        g.base.add_taxon(a, 1);
+        g.base.add_taxon(b, 2);
+        g.base.add_taxon(c, 3);
+        g.base.add_taxon(d, 4);
+
+        let e_ab = g.new_edge(a, b).unwrap();
+        g.set_split(e_ab, 1);
+        g.base.set_weight(e_ab, 1.0);
+
+        let e_bc = g.new_edge(b, c).unwrap();
+        g.set_split(e_bc, 2);
+        g.base.set_weight(e_bc, 2.0);
+
+        let e_cd = g.new_edge(c, d).unwrap();
+        g.set_split(e_cd, 3);
+        g.base.set_weight(e_cd, 3.0);
+
+        let e_ad = g.new_edge(a, d).unwrap();
+        g.set_split(e_ad, 4);
+        g.base.set_weight(e_ad, 4.0);
+
+        (g, a, b, c, d, e_ab, e_bc, e_cd, e_ad)
+    }
+
+    // ---- copy_from: returns correct node/edge maps ----
+
+    #[test]
+    fn copy_from_returns_valid_maps() {
+        let (src, a, _b, _c, e_ab, e_bc) = make_abc();
+        let mut dst = PhyloSplitsGraph::new();
+        let (node_map, edge_map) = dst.copy_from(&src);
+
+        // every source node should appear in the map
+        assert!(node_map.contains_key(&a));
+        assert_eq!(node_map.len(), 3);
+
+        // every source edge should appear in the map
+        assert!(edge_map.contains_key(&e_ab));
+        assert!(edge_map.contains_key(&e_bc));
+        assert_eq!(edge_map.len(), 2);
+
+        // mapped edges should have the same split ids
+        let new_ab = edge_map[&e_ab];
+        let new_bc = edge_map[&e_bc];
+        assert_eq!(dst.get_split(new_ab), 99);
+        assert_eq!(dst.get_split(new_bc), 5);
+
+        // mapped edges should have the same weights
+        assert!((dst.base.weight(new_ab) - 2.0).abs() < 1e-12);
+        assert!((dst.base.weight(new_bc) - 3.0).abs() < 1e-12);
+
+        // mapped edges should have the same angles
+        assert!((dst.get_angle(new_ab) - 0.1).abs() < 1e-12);
+        assert!((dst.get_angle(new_bc) - 0.2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn copy_from_preserves_taxa_mapping() {
+        let (src, _a, _b, _c, _e_ab, _e_bc) = make_abc();
+        let mut dst = PhyloSplitsGraph::new();
+        let (node_map, _edge_map) = dst.copy_from(&src);
+
+        // taxon 1 should map to the new node corresponding to A
+        for tax in 1..=3 {
+            let src_node = src.base.get_taxon_node(tax).unwrap();
+            let dst_node = dst.base.get_taxon_node(tax).unwrap();
+            assert_eq!(dst_node, node_map[&src_node]);
+        }
+    }
+
+    #[test]
+    fn copy_from_preserves_name() {
+        let (mut src, _, _, _, _, _) = make_abc();
+        src.set_name("test_graph");
+        let mut dst = PhyloSplitsGraph::new();
+        dst.copy_from(&src);
+        assert_eq!(dst.name(), Some("test_graph"));
+    }
+
+    // ---- clone_graph independence ----
+
+    #[test]
+    fn clone_graph_is_independent() {
+        let (mut src, _a, _b, _c, e_ab, _e_bc) = make_abc();
+        src.set_name("original");
+        let cloned = src.clone_graph();
+
+        // mutate original
+        src.set_split(e_ab, 999);
+        src.set_name("mutated");
+
+        // clone should be unaffected
+        assert_eq!(cloned.name(), Some("original"));
+        // The clone's edges have different indices, so check by iterating
+        let clone_splits = cloned.get_split_ids();
+        assert!(clone_splits.contains(&99)); // original value
+        assert!(!clone_splits.contains(&999)); // mutation should not propagate
+    }
+
+    // ---- remove_split: contract on diamond ----
+
+    #[test]
+    fn remove_split_on_diamond() {
+        let (mut g, _a, _b, _c, _d, _e_ab, _e_bc, _e_cd, _e_ad) = make_diamond();
+
+        let nodes_before = g.base.graph.node_count();
+        let edges_before = g.base.graph.edge_count();
+        assert_eq!(nodes_before, 4);
+        assert_eq!(edges_before, 4);
+
+        // Remove split 1 (edge A-B). This contracts that edge, merging its endpoints.
+        g.remove_split(1);
+
+        // After contracting one split (which may appear on one edge), we lose
+        // one node and at least one edge.
+        let nodes_after = g.base.graph.node_count();
+        let edges_after = g.base.graph.edge_count();
+        assert!(
+            nodes_after < nodes_before,
+            "should have fewer nodes after split removal"
+        );
+        assert!(
+            edges_after < edges_before,
+            "should have fewer edges after split removal"
+        );
+
+        // Taxon 2 (originally on B) should still be mapped somewhere
+        assert!(g.base.get_taxon_node(2).is_some());
+
+        // Split 1 should no longer be in the graph
+        let remaining_splits = g.get_split_ids();
+        assert!(!remaining_splits.contains(&1), "split 1 should be removed");
+    }
+
+    #[test]
+    fn remove_split_no_op_when_split_absent() {
+        let (mut g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
+        let node_count_before = g.base.graph.node_count();
+        let edge_count_before = g.base.graph.edge_count();
+
+        // Remove a split id that doesn't exist
+        g.remove_split(777);
+
+        assert_eq!(g.base.graph.node_count(), node_count_before);
+        assert_eq!(g.base.graph.edge_count(), edge_count_before);
+    }
+
+    // ---- get_separator ----
+
+    #[test]
+    fn get_separator_finds_edge_with_target_split() {
+        let (g, a, _b, _c, _e_ab, _e_bc) = make_abc();
+        let mut seen = FixedBitSet::with_capacity(g.base.graph.node_bound());
+
+        let result = g.get_separator(5, a, None, &mut seen);
+        assert!(result.is_some());
+        let (node, edge) = result.unwrap();
+        assert_eq!(g.get_split(edge), 5);
+        // The node is on the side we approached from
+        let (u, v) = g.base.graph.edge_endpoints(edge).unwrap();
+        assert!(u == node || v == node);
+    }
+
+    #[test]
+    fn get_separator_returns_none_for_absent_split() {
+        let (g, a, _b, _c, _e_ab, _e_bc) = make_abc();
+        let mut seen = FixedBitSet::with_capacity(g.base.graph.node_bound());
+
+        let result = g.get_separator(777, a, None, &mut seen);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn get_separator_respects_seen_set() {
+        let (g, a, b, _c, _e_ab, _e_bc) = make_abc();
+        let mut seen = FixedBitSet::with_capacity(g.base.graph.node_bound());
+        // Mark B as already seen, so DFS from A should not cross to C
+        seen.insert(b.index());
+
+        // Split 5 is on edge B-C, but we can't reach it because B is already seen
+        let result = g.get_separator(5, a, None, &mut seen);
+        assert!(result.is_none());
+    }
+
+    // ---- label_nodes_by_sequences ----
+
+    #[test]
+    fn label_nodes_by_sequences_flip_logic() {
+        // Build a simple path: A -- B -- C
+        // Split 1 on edge A-B flips character 1
+        // Split 2 on edge B-C flips character 2
+        // Baseline: all '0'
+        // A sees no flips: "00"
+        // B sees split 1 flip: char 1 flips -> "10"
+        // C sees splits 1 and 2: chars 1 and 2 flip -> "11"
+        let (g, a, b, c, _e_ab, _e_bc) = make_abc();
+
+        let mut split2chars: HashMap<i32, FixedBitSet> = HashMap::new();
+        let mut bits99 = FixedBitSet::with_capacity(3);
+        bits99.insert(1); // split 99 flips char 1
+        split2chars.insert(99, bits99);
+
+        let mut bits5 = FixedBitSet::with_capacity(3);
+        bits5.insert(2); // split 5 flips char 2
+        split2chars.insert(5, bits5);
+
+        // first_chars: 1-based, indices 1..2 are '0'
+        let first = vec![0u8, b'0', b'0'];
+        let labels = g.label_nodes_by_sequences(&split2chars, &first);
+
+        // A: start node (taxon 1), no splits traversed => "00" (no flips)
+        assert_eq!(labels[&a], "00");
+        // B: traversed split 99, flips char 1 => "10"
+        assert_eq!(labels[&b], "10");
+        // C: traversed splits 99 and 5, flips chars 1 and 2 => "11"
+        assert_eq!(labels[&c], "11");
+    }
+
+    #[test]
+    fn label_nodes_by_sequences_returns_empty_without_taxon1() {
+        // Build a graph without taxon 1
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node_with_label("A");
+        g.base.add_taxon(a, 2); // taxon 2, not 1
+
+        let split2chars: HashMap<i32, FixedBitSet> = HashMap::new();
+        let first = vec![0u8, b'0'];
+        let labels = g.label_nodes_by_sequences(&split2chars, &first);
+        assert!(labels.is_empty());
+    }
+
+    // ---- new_edge_with_label / new_edge_after ----
+
+    #[test]
+    fn new_edge_with_label_stores_label_and_updates_rotation() {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node_with_label("A");
+        let b = g.base.new_node_with_label("B");
+
+        let e = g.new_edge_with_label(a, b, "my_edge".to_string()).unwrap();
+        assert_eq!(g.base.edge_label(e), Some("my_edge"));
+
+        // rotation should contain the edge on both sides
+        assert!(g.rot(a).contains(&e));
+        assert!(g.rot(b).contains(&e));
+    }
+
+    #[test]
+    fn new_edge_self_loop_rejected() {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node_with_label("A");
+
+        let result = g.new_edge(a, a);
+        assert!(result.is_err());
+
+        let result2 = g.new_edge_with_label(a, a, "loop".to_string());
+        assert!(result2.is_err());
+    }
+
+    #[test]
+    fn new_edge_after_inserts_in_correct_rotation_position() {
+        // new_edge_after(u, v, f0_at_v) inserts the new edge AFTER f0_at_v
+        // in v's rotation, while u gets a plain append.
+        let mut g = PhyloSplitsGraph::new();
+        let center = g.base.new_node_with_label("center");
+        let a = g.base.new_node_with_label("A");
+        let b = g.base.new_node_with_label("B");
+        let c = g.base.new_node_with_label("C");
+
+        let e_ca = g.new_edge(center, a).unwrap(); // center rot: [e_ca]
+        let e_cb = g.new_edge(center, b).unwrap(); // center rot: [e_ca, e_cb]
+
+        // new_edge_after(c, center, e_ca) means:
+        //   u=c, v=center => rot_append(c, e) and rot_insert_after(center, e_ca, e)
+        let e_cc = g.new_edge_after(c, center, e_ca).unwrap();
+
+        // center rotation: e_ca was at index 0, so e_cc inserted at index 1 => [e_ca, e_cc, e_cb]
+        let rot = g.rot(center);
+        assert_eq!(rot.len(), 3);
+        assert_eq!(rot[0], e_ca);
+        assert_eq!(rot[1], e_cc);
+        assert_eq!(rot[2], e_cb);
+
+        // c gets a plain append
+        let rot_c = g.rot(c);
+        assert_eq!(rot_c.len(), 1);
+        assert_eq!(rot_c[0], e_cc);
+    }
+
+    #[test]
+    fn new_edge_after_falls_back_to_append_when_ref_not_found() {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node_with_label("A");
+        let b = g.base.new_node_with_label("B");
+        let c = g.base.new_node_with_label("C");
+
+        let e_ab = g.new_edge(a, b).unwrap();
+        // Use a bogus reference edge index
+        let bogus = EdgeIndex::new(999);
+        let e_ac = g.new_edge_after(a, c, bogus).unwrap();
+
+        // Since the bogus edge isn't in A's rotation, e_ac should just be appended
+        let rot = g.rot(a);
+        assert_eq!(rot.len(), 2);
+        assert_eq!(rot[0], e_ab);
+        assert_eq!(rot[1], e_ac);
+    }
+
+    // ---- remove_edge ----
+
+    #[test]
+    fn remove_edge_cleans_up_rotation() {
+        let (g, a, _b, _c, _d) = make_diamond_via_new_edge();
+
+        // Verify edges exist and rotation is populated
+        assert!(!g.rot(a).is_empty());
+
+        let mut g = g;
+        let edges_at_a: Vec<EdgeIndex> = g.rot(a).to_vec();
+        let e = edges_at_a[0];
+
+        let removed = g.remove_edge(e);
+        assert!(removed);
+
+        // Edge should not be in rotation of either endpoint anymore
+        assert!(!g.rot(a).contains(&e));
+        // Just verify the edge is gone from the graph
+        assert!(g.base.graph.edge_endpoints(e).is_none());
+    }
+
+    // Helper that builds edges through PhyloSplitsGraph::new_edge (updating rotation)
+    fn make_diamond_via_new_edge() -> (PhyloSplitsGraph, NodeIndex, NodeIndex, NodeIndex, NodeIndex)
+    {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node_with_label("A");
+        let b = g.base.new_node_with_label("B");
+        let c = g.base.new_node_with_label("C");
+        let d = g.base.new_node_with_label("D");
+
+        g.base.add_taxon(a, 1);
+        g.base.add_taxon(b, 2);
+        g.base.add_taxon(c, 3);
+        g.base.add_taxon(d, 4);
+
+        g.new_edge(a, b).unwrap();
+        g.new_edge(b, c).unwrap();
+        g.new_edge(c, d).unwrap();
+        g.new_edge(a, d).unwrap();
+
+        (g, a, b, c, d)
+    }
+
+    #[test]
+    fn remove_edge_returns_false_for_nonexistent() {
+        let mut g = PhyloSplitsGraph::new();
+        let bogus = EdgeIndex::new(42);
+        assert!(!g.remove_edge(bogus));
+    }
+
+    // ---- remove_node_and_cleanup ----
+
+    #[test]
+    fn remove_node_and_cleanup_removes_incident_edges_and_rotation() {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node_with_label("A");
+        let b = g.base.new_node_with_label("B");
+        let c = g.base.new_node_with_label("C");
+        g.base.add_taxon(b, 1);
+
+        let e_ab = g.new_edge(a, b).unwrap();
+        let e_bc = g.new_edge(b, c).unwrap();
+
+        assert_eq!(g.base.graph.node_count(), 3);
+        assert_eq!(g.base.graph.edge_count(), 2);
+
+        g.remove_node_and_cleanup(b);
+
+        // B is gone
+        assert!(g.base.graph.node_weight(b).is_none());
+        // Both incident edges are gone
+        assert!(g.base.graph.edge_endpoints(e_ab).is_none());
+        assert!(g.base.graph.edge_endpoints(e_bc).is_none());
+        // Rotation for B is gone
+        assert!(g.rot(b).is_empty());
+        // Rotations for A and C no longer reference the removed edges
+        assert!(!g.rot(a).contains(&e_ab));
+        assert!(!g.rot(c).contains(&e_bc));
+        // Taxon 1 should no longer map to anything (node was removed)
+        assert!(g.base.get_taxon_node(1).is_none());
+    }
+
+    // ---- rotation system ----
+
+    #[test]
+    fn rot_append_builds_order() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let c = g.base.new_node();
+
+        let e1 = g.base.new_edge(v, a).unwrap();
+        let e2 = g.base.new_edge(v, b).unwrap();
+        let e3 = g.base.new_edge(v, c).unwrap();
+
+        g.rot_append(v, e1);
+        g.rot_append(v, e2);
+        g.rot_append(v, e3);
+
+        let r = g.rot(v);
+        assert_eq!(r, &[e1, e2, e3]);
+    }
+
+    #[test]
+    fn rot_insert_after_middle() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let c = g.base.new_node();
+
+        let e1 = g.base.new_edge(v, a).unwrap();
+        let e2 = g.base.new_edge(v, b).unwrap();
+        let e3 = g.base.new_edge(v, c).unwrap();
+
+        g.rot_append(v, e1);
+        g.rot_append(v, e3);
+
+        // Insert e2 after e1
+        g.rot_insert_after(v, e1, e2);
+
+        let r = g.rot(v);
+        assert_eq!(r, &[e1, e2, e3]);
+    }
+
+    #[test]
+    fn rot_insert_after_at_end() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+
+        let e1 = g.base.new_edge(v, a).unwrap();
+        let e2 = g.base.new_edge(v, b).unwrap();
+
+        g.rot_append(v, e1);
+        // Insert e2 after e1 (at the end)
+        g.rot_insert_after(v, e1, e2);
+
+        let r = g.rot(v);
+        assert_eq!(r, &[e1, e2]);
+    }
+
+    #[test]
+    fn rot_insert_after_nonexistent_ref_falls_back_to_push() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+
+        let e1 = g.base.new_edge(v, a).unwrap();
+        let e2 = g.base.new_edge(v, b).unwrap();
+
+        g.rot_append(v, e1);
+        let bogus = EdgeIndex::new(999);
+        g.rot_insert_after(v, bogus, e2);
+
+        // e2 should be pushed to the end
+        let r = g.rot(v);
+        assert_eq!(r, &[e1, e2]);
+    }
+
+    #[test]
+    fn rot_remove_cleans_up_empty_entry() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+
+        let e = g.base.new_edge(v, a).unwrap();
+        g.rot_append(v, e);
+
+        assert_eq!(g.rot(v).len(), 1);
+
+        g.rot_remove(v, e);
+
+        // After removing the only edge, the rotation entry should be removed entirely
+        assert!(g.rot(v).is_empty());
+        assert!(!g.rotation.contains_key(&v));
+    }
+
+    #[test]
+    fn rot_remove_partial() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+
+        let e1 = g.base.new_edge(v, a).unwrap();
+        let e2 = g.base.new_edge(v, b).unwrap();
+        g.rot_append(v, e1);
+        g.rot_append(v, e2);
+
+        g.rot_remove(v, e1);
+
+        let r = g.rot(v);
+        assert_eq!(r, &[e2]);
+        assert!(g.rotation.contains_key(&v)); // still has an entry
+    }
+
+    #[test]
+    fn rot_remove_nonexistent_edge_is_no_op() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+
+        let e = g.base.new_edge(v, a).unwrap();
+        g.rot_append(v, e);
+
+        let bogus = EdgeIndex::new(999);
+        g.rot_remove(v, bogus); // should not panic
+
+        assert_eq!(g.rot(v), &[e]);
+    }
+
+    // ---- taxon2cycle / get_cycle ----
+
+    #[test]
+    fn get_taxon2_cycle_returns_neg1_for_absent() {
+        let g = PhyloSplitsGraph::new();
+        assert_eq!(g.get_taxon2_cycle(1), -1);
+        assert_eq!(g.get_taxon2_cycle(0), -1);
+        assert_eq!(g.get_taxon2_cycle(100), -1);
+    }
+
+    #[test]
+    fn set_taxon2_cycle_grows_vector() {
+        let mut g = PhyloSplitsGraph::new();
+        // Set taxon 5 to cycle position 3 (should grow the internal vec to size 5)
+        g.set_taxon2_cycle(5, 3);
+        assert_eq!(g.get_taxon2_cycle(5), 3);
+        // Intermediate taxa should be 0 (which get_taxon2_cycle returns as 0)
+        assert_eq!(g.get_taxon2_cycle(1), 0);
+        assert_eq!(g.get_taxon2_cycle(4), 0);
+    }
+
+    #[test]
+    fn set_taxon2_cycle_overwrites() {
+        let mut g = PhyloSplitsGraph::new();
+        g.set_taxon2_cycle(2, 10);
+        assert_eq!(g.get_taxon2_cycle(2), 10);
+        g.set_taxon2_cycle(2, 20);
+        assert_eq!(g.get_taxon2_cycle(2), 20);
+    }
+
+    #[test]
+    fn get_cycle_builds_correct_1based_array() {
+        let (mut g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
+        // cycle: taxon 1 at pos 3, taxon 2 at pos 1, taxon 3 at pos 2
+        g.set_taxon2_cycle(1, 3);
+        g.set_taxon2_cycle(2, 1);
+        g.set_taxon2_cycle(3, 2);
+
+        let cycle = g.get_cycle();
+        assert_eq!(cycle.len(), 4); // [0, t_at_pos1, t_at_pos2, t_at_pos3]
+        assert_eq!(cycle[0], 0); // index 0 unused
+        assert_eq!(cycle[1], 2); // position 1 -> taxon 2
+        assert_eq!(cycle[2], 3); // position 2 -> taxon 3
+        assert_eq!(cycle[3], 1); // position 3 -> taxon 1
+    }
+
+    #[test]
+    fn get_cycle_empty_graph() {
+        let g = PhyloSplitsGraph::new();
+        let cycle = g.get_cycle();
+        // no taxa => cycle is [0]
+        assert_eq!(cycle, vec![0]);
+    }
+
+    // ---- count_splits / max_split_id ----
+
+    #[test]
+    fn count_splits_skips_zero_ids() {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let c = g.base.new_node();
+
+        let _e1 = g.new_edge(a, b).unwrap();
+        let e2 = g.new_edge(b, c).unwrap();
+
+        // _e1 has split 0 (default), e2 has split 7
+        g.set_split(e2, 7);
+
+        assert_eq!(g.count_splits(), 1); // only split 7 counted
+        assert_eq!(g.max_split_id(), 7);
+    }
+
+    #[test]
+    fn count_splits_deduplicates() {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let c = g.base.new_node();
+        let d = g.base.new_node();
+
+        let e1 = g.new_edge(a, b).unwrap();
+        let e2 = g.new_edge(b, c).unwrap();
+        let e3 = g.new_edge(c, d).unwrap();
+
+        // Two edges share the same split id
+        g.set_split(e1, 3);
+        g.set_split(e2, 3);
+        g.set_split(e3, 5);
+
+        assert_eq!(g.count_splits(), 2); // split 3 and split 5
+        assert_eq!(g.max_split_id(), 5);
+    }
+
+    #[test]
+    fn max_split_id_empty_graph() {
+        let g = PhyloSplitsGraph::new();
+        assert_eq!(g.max_split_id(), 0);
+        assert_eq!(g.count_splits(), 0);
+    }
+
+    // ---- opposite / is_leaf_edge ----
+
+    #[test]
+    fn opposite_returns_correct_endpoint() {
+        let (g, a, b, _c, e_ab, _e_bc) = make_abc();
+        assert_eq!(g.opposite(a, e_ab).unwrap(), b);
+        assert_eq!(g.opposite(b, e_ab).unwrap(), a);
+    }
+
+    #[test]
+    fn opposite_errors_on_invalid_edge() {
+        let g = PhyloSplitsGraph::new();
+        let bogus_node = NodeIndex::new(0);
+        let bogus_edge = EdgeIndex::new(999);
+        let result = g.opposite(bogus_node, bogus_edge);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn is_leaf_edge_detects_leaf() {
+        // In make_abc, A—B—C: A has degree 1, C has degree 1, B has degree 2
+        // e_ab is a leaf edge (A has degree 1)
+        // e_bc is a leaf edge (C has degree 1)
+        let (g, _a, _b, _c, e_ab, e_bc) = make_abc();
+        assert!(g.is_leaf_edge(e_ab));
+        assert!(g.is_leaf_edge(e_bc));
+    }
+
+    #[test]
+    fn is_leaf_edge_internal_edge() {
+        // In a path A-B-C-D, edge B-C is internal (both endpoints have degree 2)
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let c = g.base.new_node();
+        let d = g.base.new_node();
+
+        g.new_edge(a, b).unwrap();
+        let e_bc = g.new_edge(b, c).unwrap();
+        g.new_edge(c, d).unwrap();
+
+        assert!(!g.is_leaf_edge(e_bc));
+    }
+
+    #[test]
+    fn is_leaf_edge_invalid_returns_false() {
+        let g = PhyloSplitsGraph::new();
+        assert!(!g.is_leaf_edge(EdgeIndex::new(999)));
+    }
+
+    // ---- get_node_translations / get_graph_edges ----
+
+    #[test]
+    fn get_node_translations_returns_leaf_nodes() {
+        // Build A—B—C: A and C are leaves (degree 1), B is internal
+        let (mut g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
+        g.create_node_ids();
+
+        // taxa_labels_1based: index 0 = taxon 1 label, index 1 = taxon 2 label, etc.
+        let labels = vec![
+            "Alpha".to_string(), // taxon 1
+            "Beta".to_string(),  // taxon 2
+            "Gamma".to_string(), // taxon 3
+        ];
+
+        let translations = g.get_node_translations(&labels).unwrap();
+
+        // Should have 2 leaf nodes (A=taxon 1, C=taxon 3)
+        // B has degree 2, so it is NOT a leaf in the petgraph sense
+        assert_eq!(translations.len(), 2);
+
+        // Check that translations contain the correct labels
+        let labels_found: Vec<String> = translations.iter().map(|(_, l)| l.clone()).collect();
+        assert!(labels_found.contains(&"Alpha".to_string()));
+        assert!(labels_found.contains(&"Gamma".to_string()));
+    }
+
+    #[test]
+    fn get_graph_edges_returns_all_edges_with_metadata() {
+        let (mut g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
+        g.create_node_ids();
+
+        let edges = g.get_graph_edges().unwrap();
+        assert_eq!(edges.len(), 2);
+
+        // edges are (eid, src_node_id, dst_node_id, split_id, weight)
+        // Check that split IDs are correct (unordered since edge iteration order varies)
+        let split_ids: Vec<i32> = edges.iter().map(|e| e.3).collect();
+        assert!(split_ids.contains(&99));
+        assert!(split_ids.contains(&5));
+
+        // Check that weights are correct
+        let weights: Vec<f64> = edges.iter().map(|e| e.4).collect();
+        assert!(weights.contains(&2.0));
+        assert!(weights.contains(&3.0));
+
+        // Edge IDs should be sequential starting from 1
+        let eids: Vec<usize> = edges.iter().map(|e| e.0).collect();
+        assert!(eids.contains(&1));
+        assert!(eids.contains(&2));
+    }
+
+    // ---- create_node_ids ----
+
+    #[test]
+    fn create_node_ids_assigns_sequential_ids() {
+        let (mut g, a, b, c, _e_ab, _e_bc) = make_abc();
+        g.create_node_ids();
+
+        // All nodes should have IDs
+        assert!(g.node_ids.contains_key(&a));
+        assert!(g.node_ids.contains_key(&b));
+        assert!(g.node_ids.contains_key(&c));
+
+        // IDs should be sequential starting from 1
+        let ids: Vec<usize> = g.node_ids.values().copied().collect();
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+        assert!(ids.contains(&3));
+        assert_eq!(ids.len(), 3);
+    }
+
+    // ---- cyclic adjacency traversal ----
+
+    #[test]
+    fn first_last_adjacent_edge() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+
+        let e1 = g.new_edge(v, a).unwrap();
+        let e2 = g.new_edge(v, b).unwrap();
+
+        assert_eq!(g.first_adjacent_edge(v), Some(e1));
+        assert_eq!(g.last_adjacent_edge(v), Some(e2));
+    }
+
+    #[test]
+    fn first_last_adjacent_edge_empty() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+
+        assert_eq!(g.first_adjacent_edge(v), None);
+        assert_eq!(g.last_adjacent_edge(v), None);
+    }
+
+    #[test]
+    fn next_adjacent_edge_cyclic_wraps_around() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let c = g.base.new_node();
+
+        let e1 = g.new_edge(v, a).unwrap();
+        let e2 = g.new_edge(v, b).unwrap();
+        let e3 = g.new_edge(v, c).unwrap();
+
+        // Next after e1 is e2
+        assert_eq!(g.next_adjacent_edge_cyclic(v, e1), Some(e2));
+        // Next after e2 is e3
+        assert_eq!(g.next_adjacent_edge_cyclic(v, e2), Some(e3));
+        // Next after e3 wraps to e1
+        assert_eq!(g.next_adjacent_edge_cyclic(v, e3), Some(e1));
+    }
+
+    #[test]
+    fn prev_adjacent_edge_cyclic_wraps_around() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let c = g.base.new_node();
+
+        let e1 = g.new_edge(v, a).unwrap();
+        let e2 = g.new_edge(v, b).unwrap();
+        let e3 = g.new_edge(v, c).unwrap();
+
+        // Prev of e1 wraps to e3
+        assert_eq!(g.prev_adjacent_edge_cyclic(v, e1), Some(e3));
+        // Prev of e3 is e2
+        assert_eq!(g.prev_adjacent_edge_cyclic(v, e3), Some(e2));
+        // Prev of e2 is e1
+        assert_eq!(g.prev_adjacent_edge_cyclic(v, e2), Some(e1));
+    }
+
+    #[test]
+    fn next_prev_adjacent_edge_empty_rotation() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let bogus = EdgeIndex::new(0);
+
+        assert_eq!(g.next_adjacent_edge_cyclic(v, bogus), None);
+        assert_eq!(g.prev_adjacent_edge_cyclic(v, bogus), None);
+    }
+
+    #[test]
+    fn next_adjacent_edge_cyclic_unknown_edge_returns_first() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+        let e1 = g.new_edge(v, a).unwrap();
+
+        let bogus = EdgeIndex::new(999);
+        // When edge is not found in rotation, falls back to first
+        assert_eq!(g.next_adjacent_edge_cyclic(v, bogus), Some(e1));
+    }
+
+    #[test]
+    fn prev_adjacent_edge_cyclic_unknown_edge_returns_last() {
+        let mut g = PhyloSplitsGraph::new();
+        let v = g.base.new_node();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let _e1 = g.new_edge(v, a).unwrap();
+        let e2 = g.new_edge(v, b).unwrap();
+
+        let bogus = EdgeIndex::new(999);
+        // When edge is not found in rotation, falls back to last
+        assert_eq!(g.prev_adjacent_edge_cyclic(v, bogus), Some(e2));
+    }
+
+    // ---- clear ----
+
+    #[test]
+    fn clear_resets_everything() {
+        let (mut g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
+        g.set_name("myname");
+        g.set_taxon2_cycle(1, 1);
+
+        g.clear();
+
+        assert_eq!(g.base.graph.node_count(), 0);
+        assert_eq!(g.base.graph.edge_count(), 0);
+        assert_eq!(g.count_splits(), 0);
+        assert_eq!(g.max_split_id(), 0);
+        assert_eq!(g.get_taxon2_cycle(1), -1);
+        assert!(g.rotation.is_empty());
+    }
+
+    // ---- count_nodes / count_edges / network_type ----
+
+    #[test]
+    fn count_nodes_and_edges() {
+        let (g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
+        assert_eq!(g.count_nodes(), 3);
+        assert_eq!(g.count_edges(), 2);
+    }
+
+    #[test]
+    fn network_type_returns_expected() {
+        let g = PhyloSplitsGraph::new();
+        assert_eq!(g.network_type(), "phylo-splits");
+    }
+
+    // ---- get_split_ids ----
+
+    #[test]
+    fn get_split_ids_sorted_and_deduped() {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let c = g.base.new_node();
+        let d = g.base.new_node();
+        let e = g.base.new_node();
+
+        let e1 = g.new_edge(a, b).unwrap();
+        let e2 = g.new_edge(b, c).unwrap();
+        let e3 = g.new_edge(c, d).unwrap();
+        let e4 = g.new_edge(d, e).unwrap();
+
+        g.set_split(e1, 10);
+        g.set_split(e2, 3);
+        g.set_split(e3, 10); // duplicate
+        g.set_split(e4, 7);
+
+        let ids = g.get_split_ids();
+        assert_eq!(ids, vec![3, 7, 10]);
+    }
+
+    // ---- edge split/angle defaults ----
+
+    #[test]
+    fn default_split_and_angle() {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let e = g.new_edge(a, b).unwrap();
+
+        // Default split is 0, default angle is 0.0
+        assert_eq!(g.get_split(e), 0);
+        assert_eq!(g.get_angle(e), 0.0);
+    }
+
+    // ---- copy_from clears destination ----
+
+    #[test]
+    fn copy_from_clears_destination_first() {
+        let (src, _, _, _, _, _) = make_abc();
+
+        // Build a destination with some existing state
+        let mut dst = PhyloSplitsGraph::new();
+        let x = dst.base.new_node_with_label("X");
+        let y = dst.base.new_node_with_label("Y");
+        dst.new_edge(x, y).unwrap();
+        dst.set_name("old_name");
+
+        // Copy from src (which has 3 nodes)
+        dst.copy_from(&src);
+
+        // Destination should now have exactly 3 nodes and 2 edges (not 5 nodes, 3 edges)
+        assert_eq!(dst.base.graph.node_count(), 3);
+        assert_eq!(dst.base.graph.edge_count(), 2);
+    }
+
+    // ---- rotation consistency with new_edge ----
+
+    #[test]
+    fn new_edge_populates_both_endpoint_rotations() {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+
+        let e = g.new_edge(a, b).unwrap();
+
+        assert_eq!(g.rot(a), &[e]);
+        assert_eq!(g.rot(b), &[e]);
+    }
+
+    #[test]
+    fn multiple_edges_accumulate_in_rotation() {
+        let mut g = PhyloSplitsGraph::new();
+        let center = g.base.new_node();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        let c = g.base.new_node();
+
+        let e1 = g.new_edge(center, a).unwrap();
+        let e2 = g.new_edge(center, b).unwrap();
+        let e3 = g.new_edge(center, c).unwrap();
+
+        let rot = g.rot(center);
+        assert_eq!(rot.len(), 3);
+        assert_eq!(rot, &[e1, e2, e3]);
+    }
+
+    // ---- remove_split on empty / single-node graphs ----
+
+    #[test]
+    fn remove_split_on_empty_graph_does_not_panic() {
+        let mut g = PhyloSplitsGraph::new();
+        g.remove_split(1); // should be a no-op without panicking
+    }
+
+    #[test]
+    fn remove_split_when_no_taxon1_does_nothing() {
+        let mut g = PhyloSplitsGraph::new();
+        let a = g.base.new_node();
+        let b = g.base.new_node();
+        g.base.add_taxon(a, 2); // taxon 2 only, no taxon 1
+        let e = g.new_edge(a, b).unwrap();
+        g.set_split(e, 1);
+
+        let nodes_before = g.base.graph.node_count();
+        g.remove_split(1);
+        // Without taxon 1, remove_split early-returns
+        assert_eq!(g.base.graph.node_count(), nodes_before);
+    }
+
+    // ---- opposite_of (internal helper, tested via opposite public API) ----
+
+    #[test]
+    fn opposite_works_from_either_side() {
+        let (g, a, b, c, e_ab, e_bc) = make_abc();
+        assert_eq!(g.opposite(a, e_ab).unwrap(), b);
+        assert_eq!(g.opposite(b, e_ab).unwrap(), a);
+        assert_eq!(g.opposite(b, e_bc).unwrap(), c);
+        assert_eq!(g.opposite(c, e_bc).unwrap(), b);
+    }
 }

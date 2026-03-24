@@ -24,7 +24,7 @@ use crate::utils::compute_least_squares_fit;
 use crate::weights::InferenceMethod;
 use crate::weights::active_set_weights::{NNLSParams, compute_asplits};
 use crate::weights::splitstree4_weights::{
-    DEFAULT_CUTOFF, CGSolveStats, compute_splits as compute_cg_splits,
+    CGSolveStats, DEFAULT_CUTOFF, compute_splits as compute_cg_splits,
 };
 
 pub struct NeighbourNet {
@@ -225,8 +225,9 @@ impl NeighbourNet {
 
     pub fn get_ordering(&self) -> Result<Vec<usize>> {
         let mut cycle = match self.args.ordering {
-            OrderingMethod::ClosestPair => compute_order_huson_2023(&self.distance_matrix)
-                .context("computing cycle")?,
+            OrderingMethod::ClosestPair => {
+                compute_order_huson_2023(&self.distance_matrix).context("computing cycle")?
+            }
             OrderingMethod::Multiway => {
                 compute_order_splits_tree4(&self.distance_matrix).context("computing cycle")?
             }
@@ -252,8 +253,7 @@ impl NeighbourNet {
             }
             InferenceMethod::CG => {
                 let (splits, solve_stats) =
-                    compute_cg_splits(cycle, &self.distance_matrix)
-                        .context("CG weights solved")?;
+                    compute_cg_splits(cycle, &self.distance_matrix).context("CG weights solved")?;
                 let mut params = self.args.nnls_params.clone();
                 params.cutoff = DEFAULT_CUTOFF;
                 Ok((params, splits, Some(solve_stats)))
@@ -488,17 +488,6 @@ impl NeighbourNet {
         info!("Outputs:");
         info!("  {}", meta_path.display());
         info!("  {}", nexus_path.display());
-        // info!("R quickstart:");
-        // info!("  library(igraph)");
-        // info!("  nodes <- read.csv('{}/nodes.csv')", out_dir);
-        // info!("  edges <- read.csv('{}/edges_cycle.csv')", out_dir);
-        // info!("  g <- graph_from_data_frame(edges, directed=FALSE, vertices=nodes)");
-        // info!("  plot(g, layout=layout_in_circle(g))");
-        // info!("Python/NetworkX quickstart:");
-        // info!("  import pandas as pd, networkx as nx");
-        // info!("  edges = pd.read_csv('{}/edges_cycle.csv')", out_dir);
-        // info!("  G = nx.from_pandas_edgelist(edges, 'source', 'target')");
-        // info!("  nx.draw_circular(G)");
 
         Ok(())
     }
@@ -552,7 +541,7 @@ impl NeighbourNet {
                     } else {
                         acc.1 += 1;
                     }
-                    acc.2 += s.get_weight();
+                    acc.2 += s.weight;
                     acc
                 },
             )
@@ -731,15 +720,6 @@ fn peak_rss_bytes() -> Option<u64> {
 
 /* ───────────── misc helpers ───────────── */
 
-// fn default_out_dir(input: &str) -> String {
-//     let p = Path::new(input);
-//     if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-//         format!("{}_nn", stem)
-//     } else {
-//         "nn_out".to_string()
-//     }
-// }
-
 /// Pick the delimiter with the most hits among common choices.
 fn detect_delim(line: &str) -> char {
     let cands = [',', '\t', ';', '|', ' '];
@@ -805,14 +785,6 @@ fn sniff_header_index(rows: &[Vec<String>]) -> anyhow::Result<(bool, bool)> {
     Ok((has_header, has_index))
 }
 
-// fn ones_to_string(bs: &fixedbitset::FixedBitSet) -> String {
-//     let mut v: Vec<usize> = bs.ones().filter(|&t| t != 0).collect();
-//     v.sort_unstable();
-//     v.iter()
-//         .map(|i| i.to_string())
-//         .collect::<Vec<_>>()
-//         .join(";")
-// }
 /* ───────────── tests ───────────── */
 
 #[cfg(test)]
@@ -994,5 +966,341 @@ C,2,3,0
             let err = NeighbourNet::load_distance_matrix(&args.input);
             assert!(err.is_err());
         });
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::cli::NeighbourNetArgs;
+    use crate::ordering::OrderingMethod;
+    use crate::weights::InferenceMethod;
+    use crate::weights::active_set_weights::NNLSParams;
+    use ndarray::{Array2, arr2};
+    use std::collections::HashSet;
+
+    fn default_args() -> NeighbourNetArgs {
+        NeighbourNetArgs {
+            input: String::new(),
+            output_prefix: "output".into(),
+            ordering: OrderingMethod::Multiway,
+            inference: InferenceMethod::ActiveSet,
+            nnls_params: NNLSParams::default(),
+        }
+    }
+
+    /// Helper: run full pipeline via generate_nexus and return the Nexus result.
+    fn run_pipeline(dist: Array2<f64>, labels: Vec<String>) -> Nexus {
+        let args = default_args();
+        let nn = NeighbourNet::from_distance_matrix(dist, labels, args)
+            .expect("from_distance_matrix should succeed");
+        nn.generate_nexus().expect("generate_nexus should succeed")
+    }
+
+    /// Helper: extract cycle from splits block (more reliable than graph.get_cycle).
+    fn get_cycle_from_nexus(nexus: &Nexus) -> Vec<usize> {
+        nexus
+            .splits()
+            .cycle()
+            .expect("splits block should have a cycle")
+            .to_vec()
+    }
+
+    /// Helper: validate that a cycle is a valid permutation of 1..=n with leading 0.
+    fn assert_valid_cycle(cycle: &[usize], n: usize) {
+        assert_eq!(
+            cycle.len(),
+            n + 1,
+            "cycle should have n+1 elements (leading 0), got {}",
+            cycle.len()
+        );
+        assert_eq!(cycle[0], 0, "cycle[0] should be 0 sentinel");
+        let mut taxa: Vec<usize> = cycle[1..].to_vec();
+        taxa.sort();
+        assert_eq!(
+            taxa,
+            (1..=n).collect::<Vec<_>>(),
+            "cycle should be a permutation of 1..={}",
+            n
+        );
+    }
+
+    /// End-to-end: 5-taxon distance matrix (the small_5_1 test data).
+    /// Verifies cycle is a permutation, splits have non-negative weights,
+    /// and graph has expected structure.
+    #[test]
+    fn e2e_5_taxa_multiway() {
+        let dist = arr2(&[
+            [0.0, 5.0, 9.0, 9.0, 8.0],
+            [5.0, 0.0, 10.0, 10.0, 9.0],
+            [9.0, 10.0, 0.0, 8.0, 7.0],
+            [9.0, 10.0, 8.0, 0.0, 3.0],
+            [8.0, 9.0, 7.0, 3.0, 0.0],
+        ]);
+        let labels: Vec<String> = vec!["a", "b", "c", "d", "e"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let nexus = run_pipeline(dist.clone(), labels.clone());
+
+        // Labels preserved
+        assert_eq!(nexus.get_labels(), &labels);
+        assert_eq!(nexus.num_labels(), 5);
+
+        // Cycle is a valid permutation of 1..=5 (with leading 0)
+        let cycle = get_cycle_from_nexus(&nexus);
+        assert_valid_cycle(&cycle, 5);
+
+        // Splits: all weights >= 0, at least n trivial splits
+        let splits = nexus.splits();
+        assert!(
+            splits.nsplits() >= 5,
+            "should have at least n trivial splits"
+        );
+        for split in splits.get_splits() {
+            assert!(
+                split.weight >= 0.0,
+                "split weight should be non-negative, got {}",
+                split.weight
+            );
+        }
+
+        // Graph should have nodes and edges
+        let graph = nexus.graph();
+        assert!(
+            graph.count_nodes() >= 5,
+            "graph should have at least n nodes (one per taxon)"
+        );
+        assert!(
+            graph.count_edges() >= 5,
+            "graph should have at least n edges"
+        );
+
+        // Distance matrix preserved
+        assert_eq!(nexus.distance_matrix(), &dist);
+    }
+
+    /// End-to-end with closest-pair ordering method.
+    #[test]
+    fn e2e_5_taxa_closest_pair() {
+        let dist = arr2(&[
+            [0.0, 5.0, 9.0, 9.0, 8.0],
+            [5.0, 0.0, 10.0, 10.0, 9.0],
+            [9.0, 10.0, 0.0, 8.0, 7.0],
+            [9.0, 10.0, 8.0, 0.0, 3.0],
+            [8.0, 9.0, 7.0, 3.0, 0.0],
+        ]);
+        let labels: Vec<String> = vec!["a", "b", "c", "d", "e"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let args = NeighbourNetArgs {
+            ordering: OrderingMethod::ClosestPair,
+            ..default_args()
+        };
+        let nn = NeighbourNet::from_distance_matrix(dist, labels.clone(), args)
+            .expect("from_distance_matrix should succeed");
+        let nexus = nn.generate_nexus().expect("generate_nexus should succeed");
+
+        let cycle = get_cycle_from_nexus(&nexus);
+        assert_valid_cycle(&cycle, 5);
+
+        assert!(nexus.splits().nsplits() >= 5);
+        assert!(nexus.graph().count_nodes() >= 5);
+    }
+
+    /// End-to-end: 10-taxon distance matrix.
+    /// Tests a slightly larger case to verify scalability of the pipeline.
+    #[test]
+    fn e2e_10_taxa() {
+        let dist = arr2(&[
+            [0.0, 5.0, 12.0, 7.0, 3.0, 9.0, 11.0, 6.0, 4.0, 10.0],
+            [5.0, 0.0, 8.0, 2.0, 14.0, 5.0, 13.0, 7.0, 12.0, 1.0],
+            [12.0, 8.0, 0.0, 4.0, 9.0, 3.0, 8.0, 2.0, 5.0, 6.0],
+            [7.0, 2.0, 4.0, 0.0, 11.0, 7.0, 10.0, 4.0, 6.0, 9.0],
+            [3.0, 14.0, 9.0, 11.0, 0.0, 8.0, 1.0, 13.0, 2.0, 7.0],
+            [9.0, 5.0, 3.0, 7.0, 8.0, 0.0, 12.0, 5.0, 3.0, 4.0],
+            [11.0, 13.0, 8.0, 10.0, 1.0, 12.0, 0.0, 6.0, 2.0, 8.0],
+            [6.0, 7.0, 2.0, 4.0, 13.0, 5.0, 6.0, 0.0, 9.0, 7.0],
+            [4.0, 12.0, 5.0, 6.0, 2.0, 3.0, 2.0, 9.0, 0.0, 5.0],
+            [10.0, 1.0, 6.0, 9.0, 7.0, 4.0, 8.0, 7.0, 5.0, 0.0],
+        ]);
+        let labels: Vec<String> = (1..=10).map(|i| format!("t{}", i)).collect();
+
+        let nexus = run_pipeline(dist, labels.clone());
+
+        // Cycle
+        let cycle = get_cycle_from_nexus(&nexus);
+        assert_valid_cycle(&cycle, 10);
+
+        // Splits
+        let splits = nexus.splits();
+        assert!(
+            splits.nsplits() >= 10,
+            "should have at least 10 trivial splits"
+        );
+        for split in splits.get_splits() {
+            assert!(split.weight >= 0.0);
+        }
+
+        // Graph
+        let graph = nexus.graph();
+        assert!(graph.count_nodes() >= 10);
+        assert!(graph.count_edges() >= 10);
+
+        // Split records should be consistent
+        let records = nexus.get_splits_records();
+        assert_eq!(records.len(), splits.nsplits());
+        for (_, weight, _, a_side, b_side) in &records {
+            assert!(*weight >= 0.0);
+            // Both sides should be non-empty
+            assert!(!a_side.is_empty(), "A-side of split should not be empty");
+            assert!(!b_side.is_empty(), "B-side of split should not be empty");
+            // Union should cover all taxa
+            let mut all: HashSet<usize> = a_side.iter().copied().collect();
+            all.extend(b_side.iter());
+            // The splits use 1-based indices; all taxa 1..=10 should appear
+            for t in 1..=10 {
+                assert!(
+                    all.contains(&t),
+                    "taxon {} missing from split bipartition",
+                    t
+                );
+            }
+        }
+    }
+
+    /// End-to-end: via the top-level run_fast_nnt_from_memory entry point
+    /// (the same function Python/R bindings call).
+    #[test]
+    fn e2e_via_run_fast_nnt_from_memory() {
+        let dist = arr2(&[
+            [0.0, 5.0, 9.0, 9.0, 8.0],
+            [5.0, 0.0, 10.0, 10.0, 9.0],
+            [9.0, 10.0, 0.0, 8.0, 7.0],
+            [9.0, 10.0, 8.0, 0.0, 3.0],
+            [8.0, 9.0, 7.0, 3.0, 0.0],
+        ]);
+        let labels: Vec<String> = vec!["a", "b", "c", "d", "e"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let args = default_args();
+
+        let nexus = crate::run_fast_nnt_from_memory(dist, labels.clone(), args)
+            .expect("run_fast_nnt_from_memory should succeed");
+
+        assert_eq!(nexus.num_labels(), 5);
+        assert!(nexus.num_splits() >= 5);
+        let cycle = get_cycle_from_nexus(&nexus);
+        assert_valid_cycle(&cycle, 5);
+    }
+
+    /// End-to-end: non-square matrix should be rejected.
+    #[test]
+    fn e2e_non_square_rejected() {
+        let dist = Array2::<f64>::zeros((3, 4));
+        let labels = vec!["a".into(), "b".into(), "c".into()];
+        let result = NeighbourNet::from_distance_matrix(dist, labels, default_args());
+        assert!(result.is_err());
+    }
+
+    /// End-to-end: 2-taxon (minimal) case produces valid output.
+    #[test]
+    fn e2e_2_taxa() {
+        let dist = arr2(&[[0.0, 3.5], [3.5, 0.0]]);
+        let labels = vec!["X".into(), "Y".into()];
+        let nexus = run_pipeline(dist, labels);
+
+        assert_eq!(nexus.num_labels(), 2);
+        let cycle = get_cycle_from_nexus(&nexus);
+        assert_valid_cycle(&cycle, 2);
+
+        // Should have at least 1 split (the trivial one for each taxon)
+        assert!(nexus.num_splits() >= 1);
+
+        // All split weights non-negative
+        for split in nexus.splits().get_splits() {
+            assert!(split.weight >= 0.0);
+        }
+    }
+
+    /// End-to-end: 3-taxon (minimal non-trivial) case.
+    #[test]
+    fn e2e_3_taxa() {
+        let dist = arr2(&[[0.0, 4.0, 6.0], [4.0, 0.0, 5.0], [6.0, 5.0, 0.0]]);
+        let labels = vec!["A".into(), "B".into(), "C".into()];
+        let nexus = run_pipeline(dist, labels);
+
+        assert_eq!(nexus.num_labels(), 3);
+        let cycle = get_cycle_from_nexus(&nexus);
+        assert_valid_cycle(&cycle, 3);
+
+        // Should have exactly 3 trivial splits for a 3-taxon tree
+        assert!(nexus.num_splits() >= 3);
+
+        // Graph structure
+        let graph = nexus.graph();
+        assert!(graph.count_nodes() >= 3);
+        assert!(graph.count_edges() >= 3);
+    }
+
+    /// End-to-end: all-zero distance matrix.
+    /// All taxa are identical, so no non-trivial splits should have positive weight.
+    #[test]
+    fn e2e_all_zero_distances() {
+        let n = 5;
+        let dist = Array2::<f64>::zeros((n, n));
+        let labels: Vec<String> = (1..=n).map(|i| format!("t{}", i)).collect();
+        let nexus = run_pipeline(dist, labels);
+
+        assert_eq!(nexus.num_labels(), n);
+
+        // All split weights should be zero or very close to zero
+        for split in nexus.splits().get_splits() {
+            assert!(
+                split.weight.abs() < 1e-8,
+                "split weight should be ~0 for zero-distance matrix, got {}",
+                split.weight
+            );
+        }
+    }
+
+    /// End-to-end: verify both ordering methods produce valid (but possibly different) results.
+    #[test]
+    fn e2e_ordering_methods_both_valid() {
+        let dist = arr2(&[
+            [0.0, 5.0, 9.0, 9.0, 8.0],
+            [5.0, 0.0, 10.0, 10.0, 9.0],
+            [9.0, 10.0, 0.0, 8.0, 7.0],
+            [9.0, 10.0, 8.0, 0.0, 3.0],
+            [8.0, 9.0, 7.0, 3.0, 0.0],
+        ]);
+        let labels: Vec<String> = vec!["a", "b", "c", "d", "e"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        for ordering in [OrderingMethod::Multiway, OrderingMethod::ClosestPair] {
+            let ordering_name = format!("{:?}", ordering);
+            let args = NeighbourNetArgs {
+                ordering,
+                ..default_args()
+            };
+            let nn = NeighbourNet::from_distance_matrix(dist.clone(), labels.clone(), args)
+                .expect("from_distance_matrix should succeed");
+            let nexus = nn
+                .generate_nexus()
+                .unwrap_or_else(|e| panic!("generate_nexus failed for {}: {}", ordering_name, e));
+
+            let cycle = get_cycle_from_nexus(&nexus);
+            assert_valid_cycle(&cycle, 5);
+            assert!(
+                nexus.num_splits() >= 5,
+                "too few splits for {ordering_name}"
+            );
+        }
     }
 }

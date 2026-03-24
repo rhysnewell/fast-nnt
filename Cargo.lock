@@ -331,7 +331,6 @@ dependencies = [
  "csv",
  "env_logger",
  "fixedbitset",
- "libc",
  "log",
  "ndarray",
  "num_cpus",

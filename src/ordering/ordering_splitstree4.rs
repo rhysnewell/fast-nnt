@@ -167,29 +167,9 @@ fn join_nodes(
             let rhs =
                 d[nodes[p].id * stride + nodes[qn].id] + d[nodes[pn].id * stride + nodes[q].id];
             if lhs < rhs {
-                join3way(
-                    p,
-                    q,
-                    qn,
-                    &mut joins,
-                    d,
-                    stride,
-                    nodes,
-                    head,
-                    &mut num_nodes,
-                )?;
+                join3way(p, q, qn, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
             } else {
-                join3way(
-                    p,
-                    qn,
-                    q,
-                    &mut joins,
-                    d,
-                    stride,
-                    nodes,
-                    head,
-                    &mut num_nodes,
-                )?;
+                join3way(p, qn, q, &mut joins, d, stride, nodes, head, &mut num_nodes)?;
             }
             break;
         }
@@ -321,16 +301,7 @@ fn join_nodes(
                 debug!("Join 2 way: x {} y {} num_active {}", x, y, num_active);
                 join2way(nodes, x, y);
                 let new_rep = cluster_rep(x, nodes);
-                update_sx_after_join2(
-                    d,
-                    stride,
-                    nodes,
-                    &reps_buf,
-                    x,
-                    y,
-                    new_rep,
-                    &mut updates_buf,
-                );
+                update_sx_after_join2(d, stride, nodes, &reps_buf, x, y, new_rep, &mut updates_buf);
                 num_clusters -= 1;
             }
             (None, Some(_), _) => {
@@ -846,7 +817,6 @@ fn compute_sx_parallel(d: &[f64], stride: usize, nodes: &mut [NetNode], head: us
     }
 }
 
-
 fn compute_rx_candidates(
     cx: usize,
     cy: usize,
@@ -1268,5 +1238,4 @@ mod tests {
             vec![0, 1, 4, 15, 11, 10, 12, 14, 2, 3, 7, 8, 13, 5, 9, 6]
         );
     }
-
 }

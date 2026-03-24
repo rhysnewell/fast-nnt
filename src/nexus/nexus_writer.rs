@@ -281,7 +281,7 @@ pub fn write_splits_block<W: FmtWrite>(
 
             // optional label
             if format.labels {
-                let lab = split.get_label().unwrap_or("");
+                let lab = split.label().unwrap_or("");
                 write!(w, " '{}' \t", escape_label(lab))?;
             }
 
@@ -292,7 +292,7 @@ pub fn write_splits_block<W: FmtWrite>(
 
             // optional confidence (only if write_confidences)
             if write_confidences {
-                write!(w, " {} \t", trim_float(split.get_confidence(), 8))?;
+                write!(w, " {} \t", trim_float(split.confidence, 8))?;
             }
 
             // A side
