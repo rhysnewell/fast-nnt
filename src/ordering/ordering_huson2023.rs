@@ -35,17 +35,8 @@ impl Component {
         [Some(self.first), self.second]
     }
 
-    fn other(&self, p: usize) -> usize {
-        match self.second {
-            Some(b) => {
-                if p == self.first {
-                    b
-                } else {
-                    self.first
-                }
-            }
-            None => panic!("other() called on singleton"),
-        }
+    fn other(&self, p: usize) -> Option<usize> {
+        self.second.map(|b| if p == self.first { b } else { self.first })
     }
 
     fn first(&self) -> usize {
@@ -135,7 +126,7 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> anyhow::Result<Vec<usize>
             // --- Case 2: 1 vs 2 ---
             let p = p_comp.first();
             let q = select_closest_1_vs_2(ip, iq, &d, &components);
-            let qb = q_comp.other(q);
+            let qb = q_comp.other(q).expect("case 2: Q must be a pair");
 
             // Update distances
             // D[p][qb] = D[qb][p] = (D[p][qb] + D[q][qb] + D[p][q]) / 3.0;
@@ -173,8 +164,8 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> anyhow::Result<Vec<usize>
         } else if p_comp.size() == 2 && q_comp.size() == 2 {
             // --- Case 3: 2 vs 2 ---
             let (p, q) = select_closest_2_vs_2(ip, iq, &d, &components);
-            let pb = p_comp.other(p);
-            let qb = q_comp.other(q);
+            let pb = p_comp.other(p).expect("case 3: P must be a pair");
+            let qb = q_comp.other(q).expect("case 3: Q must be a pair");
 
             // D[pb][qb] = D[qb][pb] = (D[pb][p] + D[pb][q] + D[pb][qb] + D[p][q] + D[p][qb] + D[q][qb]) / 6.0;
             d[[pb, qb]] =
@@ -212,8 +203,8 @@ pub fn compute_order_huson_2023(dist: &Array2<f64>) -> anyhow::Result<Vec<usize>
             components[ip] = new_component;
             components.remove(iq);
         } else {
-            panic!(
-                "Internal error: |P|={} and |Q|={}",
+            unreachable!(
+                "Components can only be size 1 or 2, got |P|={} and |Q|={}",
                 p_comp.size(),
                 q_comp.size()
             );

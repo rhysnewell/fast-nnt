@@ -289,12 +289,10 @@ fn convex_hull_path(
 
 /// Find the (unique) edge incident to `v` carrying split id `split_id` (use rotation for determinism).
 fn find_edge_with_split(g: &PhyloSplitsGraph, v: NodeIndex, split_id: usize) -> Option<EdgeIndex> {
-    for &e in g.rotation(v) {
-        if g.get_split(e) == split_id as i32 {
-            return Some(e);
-        }
-    }
-    None
+    g.rotation(v)
+        .iter()
+        .find(|&&e| g.get_split(e) == split_id as i32)
+        .copied()
 }
 
 /// Order splits by increasing size then id, skipping already-used ones.
@@ -326,16 +324,14 @@ fn intersect2_cardinality(a: &ASplit, side_a: bool, b: &ASplit, side_b: bool) ->
 fn add_leaf_labels_from_taxa(g: &mut PhyloSplitsGraph, taxa_labels: &[String]) {
     let base: &mut PhyloGraph = &mut g.base;
     for v in base.graph.node_indices().collect::<Vec<_>>() {
-        if base.graph.neighbors(v).count() == 1 {
-            if let Some(n2t) = base.node2taxa() {
-                if let Some(list) = n2t.get(&v) {
-                    if list.len() == 1 {
-                        let t = list[0];
-                        if (1..=taxa_labels.len()).contains(&t) {
-                            base.set_node_label(v, &taxa_labels[t - 1]);
-                        }
-                    }
-                }
+        if base.graph.neighbors(v).count() == 1
+            && let Some(n2t) = base.node2taxa()
+            && let Some(list) = n2t.get(&v)
+            && list.len() == 1
+        {
+            let t = list[0];
+            if (1..=taxa_labels.len()).contains(&t) {
+                base.set_node_label(v, &taxa_labels[t - 1]);
             }
         }
     }

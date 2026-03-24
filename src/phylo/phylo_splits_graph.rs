@@ -149,13 +149,18 @@ impl PhyloSplitsGraph {
 
         let mut old2new_edge = HashMap::default();
         for e in src.base.graph.edge_indices() {
-            let (u_old, v_old) = src.base.graph.edge_endpoints(e).unwrap();
+            let (u_old, v_old) = src
+                .base
+                .graph
+                .edge_endpoints(e)
+                .expect("edge must have endpoints");
             let u = old2new_node[&u_old];
             let v = old2new_node[&v_old];
             let f = if let Some(l) = src.base.edge_label(e) {
-                self.new_edge_with_label(u, v, l.to_string()).unwrap()
+                self.new_edge_with_label(u, v, l.to_string())
+                    .expect("copied nodes are distinct")
             } else {
-                self.new_edge(u, v).unwrap()
+                self.new_edge(u, v).expect("copied nodes are distinct")
             };
             self.base.set_weight(f, src.base.weight(e));
             if let Some(conf) = src
@@ -203,11 +208,10 @@ impl PhyloSplitsGraph {
     /// Remove an entire split by contracting all edges tagged with that split id.
     /// This follows the Java implementation closely.
     pub fn remove_split(&mut self, split_id: i32) {
-        let one = self.base.get_taxon_node(1);
-        if one.is_none() {
-            return;
-        }
-        let start = one.unwrap();
+        let start = match self.base.get_taxon_node(1) {
+            Some(v) => v,
+            None => return,
+        };
 
         // 1) gather separators (v, e) along any path from 'start' where edge has split_id
         let mut separators: Vec<(NodeIndex, EdgeIndex)> = Vec::new();
@@ -240,11 +244,10 @@ impl PhyloSplitsGraph {
                 if f == e {
                     continue;
                 }
-                let maybe_u = self.opposite_of(w, f);
-                if maybe_u.is_none() {
-                    continue;
-                }
-                let u = maybe_u.unwrap();
+                let u = match self.opposite_of(w, f) {
+                    Some(u) => u,
+                    None => continue,
+                };
 
                 if u == v {
                     continue;
@@ -567,7 +570,10 @@ impl PhyloSplitsGraph {
         if self.taxon_cycle_map.is_none() {
             self.taxon_cycle_map = Some(Vec::new());
         }
-        let v = self.taxon_cycle_map.as_mut().unwrap();
+        let v = self
+            .taxon_cycle_map
+            .as_mut()
+            .expect("taxon_cycle_map just initialized above");
         if tax_id > v.len() {
             v.resize(tax_id, 0);
         }

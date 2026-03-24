@@ -22,6 +22,9 @@ pub mod splits;
 pub mod utils;
 pub mod weights;
 
+#[cfg(test)]
+pub(crate) mod test_helpers;
+
 #[macro_use]
 extern crate log;
 
@@ -65,7 +68,7 @@ pub fn run_fast_nnt_from_memory(
     let neighbour_net = NeighbourNet::from_distance_matrix(dist, labels, args)
         .context("Validating distance matrix")?;
     let nexus = neighbour_net
-        .generate_nexus()
+        .into_nexus()
         .context("Performing neighbour net analysis")?;
     info!("Finished NeighbourNet in {:?}", t0.elapsed());
     Ok(nexus)

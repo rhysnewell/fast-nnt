@@ -631,6 +631,279 @@ pub fn vectorized_add3(out: &mut [f64], a: &[f64], b_arr: &[f64], c: &[f64]) {
     }
 }
 
+/* -------- tests -------- */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn band_index_n4_offsets_and_npairs() {
+        let b = BandIndex::new(4);
+        assert_eq!(b.n, 4);
+        assert_eq!(b.npairs, 6); // 4*3/2
+        // band 1: pairs (0,1),(1,2),(2,3) → 3 elements starting at 0
+        assert_eq!(b.band_range(1), (0, 3));
+        // band 2: pairs (0,2),(1,3) → 2 elements
+        assert_eq!(b.band_range(2), (3, 5));
+        // band 3: pair (0,3) → 1 element
+        assert_eq!(b.band_range(3), (5, 6));
+    }
+
+    #[test]
+    fn row_to_band_roundtrip() {
+        for n in [3, 5, 8, 10] {
+            let b = BandIndex::new(n);
+            let src: Vec<f64> = (0..b.npairs).map(|i| i as f64).collect();
+            let mut band_buf = vec![0.0; b.npairs];
+            let mut row_buf = vec![0.0; b.npairs];
+
+            row_to_band(&src, &mut band_buf, &b);
+            band_to_row(&band_buf, &mut row_buf, &b);
+
+            assert_eq!(src, row_buf, "roundtrip failed for n={n}");
+        }
+    }
+
+    #[test]
+    fn band_to_row_identity_mapping() {
+        let b = BandIndex::new(4);
+        // Place 1.0 in each band position and verify it maps to the correct row-major slot
+        for band_idx in 0..b.npairs {
+            let mut band_buf = vec![0.0; b.npairs];
+            band_buf[band_idx] = 1.0;
+            let mut row_buf = vec![0.0; b.npairs];
+            band_to_row(&band_buf, &mut row_buf, &b);
+            // Exactly one element should be 1.0
+            assert_eq!(
+                row_buf.iter().filter(|&&v| v == 1.0).count(),
+                1,
+                "band_idx={band_idx}"
+            );
+        }
+    }
+
+    #[test]
+    fn batch_rowsums_band_matches_naive() {
+        let n = 5;
+        let b = BandIndex::new(n);
+        // Row-major data: pair(i,j) = (i+1)*(j+1)
+        let mut row_data = vec![0.0; b.npairs];
+        let mut idx = 0;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                row_data[idx] = ((i + 1) * (j + 1)) as f64;
+                idx += 1;
+            }
+        }
+
+        // Naive row sums from row-major
+        let mut expected = vec![0.0; n];
+        idx = 0;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                expected[i] += row_data[idx];
+                expected[j] += row_data[idx];
+                idx += 1;
+            }
+        }
+
+        // Convert to band and compute
+        let mut band_data = vec![0.0; b.npairs];
+        row_to_band(&row_data, &mut band_data, &b);
+        let mut sums = vec![0.0; n];
+        batch_rowsums_band(&band_data, &mut sums, &b);
+
+        for i in 0..n {
+            assert!(
+                (sums[i] - expected[i]).abs() < 1e-12,
+                "rowsum mismatch at i={i}: got={} expected={}",
+                sums[i],
+                expected[i]
+            );
+        }
+    }
+
+    #[test]
+    fn batch_rowsums_sequential_matches_standard() {
+        let n = 6;
+        let b = BandIndex::new(n);
+        let band_data: Vec<f64> = (0..b.npairs).map(|i| (i as f64) * 0.1 + 1.0).collect();
+
+        let mut sums_std = vec![0.0; n];
+        let mut sums_seq = vec![0.0; n];
+        batch_rowsums_band(&band_data, &mut sums_std, &b);
+        batch_rowsums_band_sequential(&band_data, &mut sums_seq, &b);
+
+        for i in 0..n {
+            assert!(
+                (sums_std[i] - sums_seq[i]).abs() < 1e-10,
+                "sequential vs standard mismatch at i={i}: std={} seq={}",
+                sums_std[i],
+                sums_seq[i]
+            );
+        }
+    }
+
+    #[test]
+    fn batch_rowsums_band_forward_total_matches() {
+        // Forward sums should have the same total as standard sums
+        let n = 7;
+        let b = BandIndex::new(n);
+        let band_data: Vec<f64> = (0..b.npairs).map(|i| (i as f64) * 0.3 + 0.5).collect();
+
+        let mut sums_std = vec![0.0; n];
+        let mut sums_fwd = vec![0.0; n];
+        batch_rowsums_band(&band_data, &mut sums_std, &b);
+        batch_rowsums_band_forward(&band_data, &mut sums_fwd, &b);
+
+        let total_std: f64 = sums_std.iter().sum();
+        let total_fwd: f64 = sums_fwd.iter().sum();
+        assert!(
+            (total_std - total_fwd).abs() < 1e-10,
+            "forward sum total mismatch: std={total_std} fwd={total_fwd}"
+        );
+    }
+
+    #[test]
+    fn vectorized_add4_matches_scalar() {
+        let len = 17; // odd, tests scalar tail
+        let a: Vec<f64> = (0..len).map(|i| i as f64).collect();
+        let b: Vec<f64> = (0..len).map(|i| (i * 2) as f64).collect();
+        let c: Vec<f64> = (0..len).map(|i| (i * 3) as f64).collect();
+        let d: Vec<f64> = (0..len).map(|i| (i + 1) as f64).collect();
+
+        let mut out = vec![0.0; len];
+        vectorized_add4(&mut out, &a, &b, &c, &d);
+
+        for i in 0..len {
+            let expected = a[i] + b[i] - c[i] - 2.0 * d[i];
+            assert!(
+                (out[i] - expected).abs() < 1e-12,
+                "add4 mismatch at i={i}: got={} expected={expected}",
+                out[i]
+            );
+        }
+    }
+
+    #[test]
+    fn vectorized_add3_matches_scalar() {
+        let len = 13;
+        let a: Vec<f64> = (0..len).map(|i| (i * 5) as f64).collect();
+        let b: Vec<f64> = (0..len).map(|i| (i * 3) as f64).collect();
+        let c: Vec<f64> = (0..len).map(|i| (i + 2) as f64).collect();
+
+        let mut out = vec![0.0; len];
+        vectorized_add3(&mut out, &a, &b, &c);
+
+        for i in 0..len {
+            let expected = a[i] + b[i] - 2.0 * c[i];
+            assert!(
+                (out[i] - expected).abs() < 1e-12,
+                "add3 mismatch at i={i}: got={} expected={expected}",
+                out[i]
+            );
+        }
+    }
+
+    #[test]
+    fn vectorized_empty_slices() {
+        let mut out: Vec<f64> = vec![];
+        vectorized_add3(&mut out, &[], &[], &[]);
+        vectorized_add4(&mut out, &[], &[], &[], &[]);
+        // Should not panic
+    }
+
+    #[test]
+    fn calculate_ab_band_is_linear_operator() {
+        // A*(alpha*x) should equal alpha*A*x for any scalar alpha
+        let n = 5;
+        let b = BandIndex::new(n);
+        let alpha = 3.7;
+        let x: Vec<f64> = (0..b.npairs).map(|i| (i as f64) * 0.1 + 1.0).collect();
+        let x_scaled: Vec<f64> = x.iter().map(|&v| v * alpha).collect();
+
+        let mut d1 = vec![0.0; b.npairs];
+        let mut d2 = vec![0.0; b.npairs];
+        let mut rs = vec![0.0; n];
+        let mut shifted = vec![0.0; n];
+
+        calculate_ab_band(&x, &mut d1, &b, &mut rs, &mut shifted);
+        calculate_ab_band(&x_scaled, &mut d2, &b, &mut rs, &mut shifted);
+
+        for i in 0..b.npairs {
+            assert!(
+                (d2[i] - alpha * d1[i]).abs() < 1e-9,
+                "linearity failed at i={i}: A*(alpha*x)={} vs alpha*A*x={}",
+                d2[i],
+                alpha * d1[i]
+            );
+        }
+    }
+
+    #[test]
+    fn calculate_atx_band_transpose_dot_product_identity() {
+        // For any x,y: <Ax, y> should equal <x, A^T y>
+        let n = 5;
+        let b = BandIndex::new(n);
+        let x: Vec<f64> = (0..b.npairs).map(|i| (i as f64) * 0.2 + 0.5).collect();
+        let y: Vec<f64> = (0..b.npairs).map(|i| (i as f64) * 0.3 + 1.0).collect();
+
+        let mut ax = vec![0.0; b.npairs];
+        let mut aty = vec![0.0; b.npairs];
+        let mut rs = vec![0.0; n];
+        let mut shifted = vec![0.0; n];
+
+        calculate_ab_band(&x, &mut ax, &b, &mut rs, &mut shifted);
+        calculate_atx_band(&y, &mut aty, &b, &mut rs, &mut shifted);
+
+        let dot_ax_y: f64 = ax.iter().zip(y.iter()).map(|(a, b)| a * b).sum();
+        let dot_x_aty: f64 = x.iter().zip(aty.iter()).map(|(a, b)| a * b).sum();
+
+        assert!(
+            (dot_ax_y - dot_x_aty).abs() < 1e-8,
+            "<Ax,y>={dot_ax_y} != <x,A^Ty>={dot_x_aty}"
+        );
+    }
+
+    #[test]
+    fn fused_norm_matches_separate_computation() {
+        let n = 6;
+        let b = BandIndex::new(n);
+        let x: Vec<f64> = (0..b.npairs).map(|i| (i as f64) * 0.1 + 0.5).collect();
+
+        let mut d1 = vec![0.0; b.npairs];
+        let mut d2 = vec![0.0; b.npairs];
+        let mut rs = vec![0.0; n];
+        let mut row_sq = vec![0.0; n];
+        let mut shifted = vec![0.0; n];
+
+        // Fused version
+        let fused_norm = calculate_forward_band_with_norm_sq(
+            &x, &mut d1, &b, &mut rs, &mut row_sq, &mut shifted,
+        );
+
+        // Separate: compute forward then sum squares
+        calculate_forward_band(&x, &mut d2, &b, &mut rs);
+        let separate_norm: f64 = d2.iter().map(|v| v * v).sum();
+
+        assert!(
+            (fused_norm - separate_norm).abs() < 1e-10,
+            "fused={fused_norm} vs separate={separate_norm}"
+        );
+
+        // Outputs should also match
+        for i in 0..b.npairs {
+            assert!(
+                (d1[i] - d2[i]).abs() < 1e-12,
+                "output mismatch at i={i}: fused={} separate={}",
+                d1[i],
+                d2[i]
+            );
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct BandKernelPerf {
     pub calc_ab_calls: usize,

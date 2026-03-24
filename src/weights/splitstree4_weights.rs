@@ -151,9 +151,13 @@ fn run_active_conjugate(n: usize, d: &[f64], w: Option<&[f64]>, x: &mut [f64]) -
     let mut kernel_perf = KernelPerf::default();
     let started = Instant::now();
     let mut progress = SolveProgress::new(started);
-    if x.len() != npairs {
-        panic!("Vectors d,x have different dimensions");
-    }
+    debug_assert_eq!(
+        x.len(),
+        npairs,
+        "Vectors d,x have different dimensions: d.len()={}, x.len()={}",
+        npairs,
+        x.len()
+    );
 
     // Unconstrained LS in row-major (uses row-major recurrence)
     run_unconstrained_ls(n, d, x);

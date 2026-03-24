@@ -80,14 +80,7 @@ mod lsq_tests {
     use super::*;
     use ndarray::{Array2, arr2};
 
-    fn bs_from(indices: &[usize], len: usize) -> FixedBitSet {
-        let mut bs = FixedBitSet::with_capacity(len + 1);
-        bs.grow(len + 1);
-        for &i in indices {
-            bs.set(i, true); // 1-based
-        }
-        bs
-    }
+    use crate::test_helpers::bs_from;
 
     /// Build a symmetric distance matrix from a set of splits (same logic as the evaluator).
     fn distances_from_splits(n: usize, splits: &[ASplit]) -> Array2<f64> {

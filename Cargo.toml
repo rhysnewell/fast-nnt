@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/rhysnewell/fast-nnt"
 license = "GPL-3.0"
 keywords = ["phylogenetics", "neighbor-net", "splits-tree", "trees", "networks"]
-default-run = "fast_nnt"
+default-run = "fastnnt"
 
 # [workspace]
 # members = ["fastnnt-py", "fastnntr"]
@@ -66,10 +66,6 @@ harness = false
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-
-[[bin]]
-name = "fast_nnt"
-path = "src/bin/fast_nnt.rs"
 
 [[bin]]
 name = "fastnnt"

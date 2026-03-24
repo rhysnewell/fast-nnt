@@ -27,6 +27,19 @@ use crate::weights::splitstree4_weights::{
     CGSolveStats, DEFAULT_CUTOFF, compute_splits as compute_cg_splits,
 };
 
+struct PipelineResult {
+    params: NNLSParams,
+    splits_block: SplitsBlock,
+    graph: PhyloSplitsGraph,
+    fit: f32,
+    st4_stats: Option<CGSolveStats>,
+    cycle_sec: f64,
+    nnls_sec: f64,
+    fit_sec: f64,
+    splits_sec: f64,
+    graph_sec: f64,
+}
+
 pub struct NeighbourNet {
     out_dir: String,
     args: NeighbourNetArgs,
@@ -74,85 +87,41 @@ impl NeighbourNet {
 
     pub fn run(&self) -> Result<()> {
         let t0 = Instant::now();
+        let pipeline = self.compute_pipeline()?;
 
-        // 1) Load distance matrix (+ labels + parse meta)
-        let n = self.distance_matrix.nrows();
-        info!("Loaded distance matrix: {}x{}", n, n);
-
-        // 2) Compute NeighborNet cycle (1-based with leading 0)
-        let t_cycle = Instant::now();
-        let cycle = self.get_ordering().context("computing cycle")?;
-        let cycle_sec = t_cycle.elapsed().as_secs_f64();
-        info!("Computed cycle in {:.3}s", cycle_sec);
-        debug!("Cycle (1-based): {:?}", &cycle[1..]);
-
-        // 3) Split weight inference
-        let t_nnls = Instant::now();
-        let (params, splits, st4_stats) = self.compute_asplits(&cycle).context("ASplits solved")?;
-        let nnls_sec = t_nnls.elapsed().as_secs_f64();
-        info!(
-            "Estimated {} splits (cutoff = {}) in {:.3}s",
-            splits.len(),
-            self.effective_cutoff(),
-            nnls_sec
-        );
-
-        // 4) Least-squares fit
-        let t_fit = Instant::now();
-        let fit = compute_least_squares_fit(&self.distance_matrix, &splits);
-        let fit_sec = t_fit.elapsed().as_secs_f64();
-        info!(
-            "Least-squares fit: {:.4} % (computed in {:.3}s)",
-            fit, fit_sec
-        );
-
-        // 5) Create splits blocks
-        let t_spl = Instant::now();
-        let splits_blocks = self.create_splits_block(splits, fit, cycle)?;
-        let splits_sec = t_spl.elapsed().as_secs_f64();
-        info!(
-            "Created splits block with {} splits in {:.3}s",
-            splits_blocks.nsplits(),
-            splits_sec
-        );
-
-        // 6) Create phylogenetic splits graph
-        let t_graph = Instant::now();
-        let graph = self.create_graph(&splits_blocks)?;
-        let graph_sec = t_graph.elapsed().as_secs_f64();
-        info!("Created phylogenetic splits graph in {:.3}s", graph_sec);
-
-        // 7) Outputs
+        // Outputs
         let t_out = Instant::now();
         self.output_results(
-            &splits_blocks.cycle().expect("cycle should be set"),
+            pipeline
+                .splits_block
+                .cycle()
+                .ok_or_else(|| anyhow!("cycle should be set after pipeline"))?,
             &self.labels,
-            &splits_blocks,
+            &pipeline.splits_block,
             &self.distance_matrix,
-            &graph,
-            fit,
+            &pipeline.graph,
+            pipeline.fit,
         )
         .context("writing outputs")?;
         let out_sec = t_out.elapsed().as_secs_f64();
         info!("Wrote outputs in {:.3}s", out_sec);
 
-        // 8) Build + write run log
+        // Build + write run log
         let run_log_path = Path::new(&self.out_dir).join("run_log.json");
-
         let stats = self.build_run_stats(
             &self.parse_meta,
             &self.labels,
-            &splits_blocks,
-            &params,
-            fit,
-            st4_stats,
+            &pipeline.splits_block,
+            &pipeline.params,
+            pipeline.fit,
+            pipeline.st4_stats,
             RunTimings {
                 load_sec: self.parse_meta.load_sec,
-                cycle_sec,
-                nnls_sec,
-                fit_sec,
-                splits_sec,
-                graph_sec,
+                cycle_sec: pipeline.cycle_sec,
+                nnls_sec: pipeline.nnls_sec,
+                fit_sec: pipeline.fit_sec,
+                splits_sec: pipeline.splits_sec,
+                graph_sec: pipeline.graph_sec,
                 output_sec: out_sec,
                 total_sec: t0.elapsed().as_secs_f64(),
             },
@@ -164,22 +133,43 @@ impl NeighbourNet {
         Ok(())
     }
 
+    /// Run the NeighbourNet pipeline and return a Nexus result.
+    /// Consumes self to move labels and distance matrix into the Nexus without cloning.
+    pub fn into_nexus(self) -> Result<Nexus> {
+        let pipeline = self.compute_pipeline()?;
+        Ok(Nexus::new(
+            self.labels,
+            self.distance_matrix,
+            pipeline.splits_block,
+            pipeline.graph,
+        ))
+    }
+
+    /// Convenience alias that borrows self (clones labels and distance matrix).
     pub fn generate_nexus(&self) -> Result<Nexus> {
-        // 1) Load distance matrix (+ labels + parse meta)
+        let pipeline = self.compute_pipeline()?;
+        Ok(Nexus::new(
+            self.labels.clone(),
+            self.distance_matrix.clone(),
+            pipeline.splits_block,
+            pipeline.graph,
+        ))
+    }
+
+    fn compute_pipeline(&self) -> Result<PipelineResult> {
         let n = self.distance_matrix.nrows();
         info!("Loaded distance matrix: {}x{}", n, n);
 
-        // 2) Compute NeighborNet cycle (1-based with leading 0)
+        // 1) Compute NeighborNet cycle (1-based with leading 0)
         let t_cycle = Instant::now();
         let cycle = self.get_ordering().context("computing cycle")?;
         let cycle_sec = t_cycle.elapsed().as_secs_f64();
         info!("Computed cycle in {:.3}s", cycle_sec);
         debug!("Cycle (1-based): {:?}", &cycle[1..]);
 
-        // 3) Split weight inference
+        // 2) Split weight inference
         let t_nnls = Instant::now();
-        let (_params, splits, _st4_stats) =
-            self.compute_asplits(&cycle).context("ASplits solved")?;
+        let (params, splits, st4_stats) = self.compute_asplits(&cycle).context("ASplits solved")?;
         let nnls_sec = t_nnls.elapsed().as_secs_f64();
         info!(
             "Estimated {} splits (cutoff = {}) in {:.3}s",
@@ -188,7 +178,7 @@ impl NeighbourNet {
             nnls_sec
         );
 
-        // 4) Least-squares fit
+        // 3) Least-squares fit
         let t_fit = Instant::now();
         let fit = compute_least_squares_fit(&self.distance_matrix, &splits);
         let fit_sec = t_fit.elapsed().as_secs_f64();
@@ -197,30 +187,34 @@ impl NeighbourNet {
             fit, fit_sec
         );
 
-        // 5) Create splits blocks
+        // 4) Create splits block
         let t_spl = Instant::now();
-        let splits_blocks = self.create_splits_block(splits, fit, cycle)?;
+        let splits_block = self.create_splits_block(splits, fit, cycle)?;
         let splits_sec = t_spl.elapsed().as_secs_f64();
         info!(
             "Created splits block with {} splits in {:.3}s",
-            splits_blocks.nsplits(),
+            splits_block.nsplits(),
             splits_sec
         );
 
-        // 6) Create phylogenetic splits graph
+        // 5) Create phylogenetic splits graph
         let t_graph = Instant::now();
-        let graph = self.create_graph(&splits_blocks)?;
-
+        let graph = self.create_graph(&splits_block)?;
         let graph_sec = t_graph.elapsed().as_secs_f64();
         info!("Created phylogenetic splits graph in {:.3}s", graph_sec);
 
-        let nexus = Nexus::new(
-            self.labels.clone(),
-            self.distance_matrix.clone(),
-            splits_blocks,
+        Ok(PipelineResult {
+            params,
+            splits_block,
             graph,
-        );
-        Ok(nexus)
+            fit,
+            st4_stats,
+            cycle_sec,
+            nnls_sec,
+            fit_sec,
+            splits_sec,
+            graph_sec,
+        })
     }
 
     pub fn get_ordering(&self) -> Result<Vec<usize>> {
@@ -304,66 +298,13 @@ impl NeighbourNet {
         let t_load = Instant::now();
         let text = fs::read_to_string(path).with_context(|| format!("reading '{}'", path))?;
 
-        // Detect delimiter
-        let lines = text.lines().filter(|l| !l.trim().is_empty());
-        let first_line = lines
-            .clone()
-            .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
-            .ok_or_else(|| anyhow!("no data lines found"))?
-            .to_string();
-        let delim = detect_delim(&first_line);
-        info!("Detected delimiter: {:?}", delim);
+        let (delim, rows) = Self::parse_delimited_text(&text)?;
 
-        let mut rdr = csv::ReaderBuilder::new()
-            .has_headers(false)
-            .flexible(true)
-            .delimiter(delim as u8)
-            .from_reader(text.as_bytes());
-
-        let mut rows: Vec<Vec<String>> = Vec::new();
-        for rec in rdr.records() {
-            let rec = rec?;
-            let row: Vec<String> = rec.iter().map(|s| s.trim().to_string()).collect();
-            if !row.is_empty() && row.iter().any(|t| !t.is_empty()) {
-                rows.push(row);
-            }
-        }
-        if rows.is_empty() {
-            return Err(anyhow!("empty table"));
-        }
-
-        // Common format: header row has N column labels, data rows have
-        // row_label + N values. Detect by field-count difference.
-        let misaligned_header = rows.len() >= 2 && rows[0].len() + 1 == rows[1].len();
-
-        let (has_header, has_index) = if misaligned_header {
-            (true, true)
-        } else {
-            sniff_header_index(&rows)?
-        };
+        let (has_header, has_index, misaligned_header) = Self::detect_header_index(&rows)?;
         info!("Header: {}, Index column: {}", has_header, has_index);
 
-        // Derive labels + numeric region
-        let (labels, start_row, start_col) = if misaligned_header {
-            // Header has N column labels; data rows have row_label + N values
-            let labels = rows[0].iter().map(|s| s.to_string()).collect();
-            (labels, 1usize, 1usize)
-        } else if has_header && has_index {
-            let header = &rows[0];
-            let labels = header[1..].iter().map(|s| s.to_string()).collect();
-            (labels, 1usize, 1usize)
-        } else if has_header && !has_index {
-            let header = &rows[0];
-            let labels = header.iter().map(|s| s.to_string()).collect();
-            (labels, 1usize, 0usize)
-        } else if !has_header && has_index {
-            let labels = rows.iter().map(|r| r[0].to_string()).collect::<Vec<_>>();
-            (labels, 0usize, 1usize)
-        } else {
-            let n = rows.len();
-            let labels = (1..=n).map(|i| format!("t{}", i)).collect::<Vec<_>>();
-            (labels, 0usize, 0usize)
-        };
+        let (labels, start_row, start_col) =
+            Self::extract_labels(&rows, has_header, has_index, misaligned_header);
 
         let n = rows.len() - start_row;
         let m = rows[start_row].len() - start_col;
@@ -375,44 +316,10 @@ impl NeighbourNet {
             ));
         }
 
-        // Parse numbers
-        let mut mat = Array2::<f64>::zeros((n, n));
-        for (ri, row) in rows[start_row..].iter().enumerate() {
-            for (ci, tok) in row[start_col..start_col + n].iter().enumerate() {
-                let val: f64 = tok.parse().with_context(|| {
-                    format!(
-                        "parsing number at row {}, col {}",
-                        ri + start_row + 1,
-                        ci + start_col + 1
-                    )
-                })?;
-                mat[[ri, ci]] = val;
-            }
-        }
+        let mut mat = Self::parse_numeric_region(&rows, start_row, start_col, n)?;
 
-        // Symmetrize (count repairs)
-        let mut symmetry_pairs_fixed = 0usize;
-        for i in 0..n {
-            mat[[i, i]] = 0.0;
-            for j in (i + 1)..n {
-                let a = mat[[i, j]];
-                let b = mat[[j, i]];
-                if (a - b).abs() > 1e-12 {
-                    let avg = 0.5 * (a + b);
-                    mat[[i, j]] = avg;
-                    mat[[j, i]] = avg;
-                    symmetry_pairs_fixed += 1;
-                }
-            }
-        }
-        if symmetry_pairs_fixed > 0 {
-            warn!(
-                "Distance matrix not perfectly symmetric; averaged {} off-diagonal pairs",
-                symmetry_pairs_fixed
-            );
-        }
+        let symmetry_pairs_fixed = Self::symmetrize(&mut mat, n);
 
-        // Validate labels.
         let labels = if labels.len() == n {
             labels
         } else {
@@ -433,6 +340,121 @@ impl NeighbourNet {
         };
 
         Ok((mat, labels, meta))
+    }
+
+    /// Detect delimiter and parse text into rows of string tokens.
+    fn parse_delimited_text(text: &str) -> Result<(char, Vec<Vec<String>>)> {
+        let first_line = text
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .find(|l| !l.trim_start().starts_with('#'))
+            .ok_or_else(|| anyhow!("no data lines found"))?;
+        let delim = detect_delim(first_line);
+        info!("Detected delimiter: {:?}", delim);
+
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .flexible(true)
+            .delimiter(delim as u8)
+            .from_reader(text.as_bytes());
+
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        for rec in rdr.records() {
+            let rec = rec?;
+            let row: Vec<String> = rec.iter().map(|s| s.trim().to_string()).collect();
+            if !row.is_empty() && row.iter().any(|t| !t.is_empty()) {
+                rows.push(row);
+            }
+        }
+        if rows.is_empty() {
+            return Err(anyhow!("empty table"));
+        }
+        Ok((delim, rows))
+    }
+
+    /// Detect whether the table has a header row and/or index column.
+    fn detect_header_index(rows: &[Vec<String>]) -> Result<(bool, bool, bool)> {
+        let misaligned_header = rows.len() >= 2 && rows[0].len() + 1 == rows[1].len();
+        let (has_header, has_index) = if misaligned_header {
+            (true, true)
+        } else {
+            sniff_header_index(rows)?
+        };
+        Ok((has_header, has_index, misaligned_header))
+    }
+
+    /// Extract labels and determine the start offsets for the numeric region.
+    fn extract_labels(
+        rows: &[Vec<String>],
+        has_header: bool,
+        has_index: bool,
+        misaligned_header: bool,
+    ) -> (Vec<String>, usize, usize) {
+        if misaligned_header {
+            let labels = rows[0].iter().map(|s| s.to_string()).collect();
+            (labels, 1, 1)
+        } else if has_header && has_index {
+            let labels = rows[0][1..].iter().map(|s| s.to_string()).collect();
+            (labels, 1, 1)
+        } else if has_header {
+            let labels = rows[0].iter().map(|s| s.to_string()).collect();
+            (labels, 1, 0)
+        } else if has_index {
+            let labels = rows.iter().map(|r| r[0].to_string()).collect();
+            (labels, 0, 1)
+        } else {
+            let n = rows.len();
+            let labels = (1..=n).map(|i| format!("t{}", i)).collect();
+            (labels, 0, 0)
+        }
+    }
+
+    /// Parse the numeric sub-region of the table into an n×n matrix.
+    fn parse_numeric_region(
+        rows: &[Vec<String>],
+        start_row: usize,
+        start_col: usize,
+        n: usize,
+    ) -> Result<Array2<f64>> {
+        let mut mat = Array2::<f64>::zeros((n, n));
+        for (ri, row) in rows[start_row..].iter().enumerate() {
+            for (ci, tok) in row[start_col..start_col + n].iter().enumerate() {
+                let val: f64 = tok.parse().with_context(|| {
+                    format!(
+                        "parsing number at row {}, col {}",
+                        ri + start_row + 1,
+                        ci + start_col + 1
+                    )
+                })?;
+                mat[[ri, ci]] = val;
+            }
+        }
+        Ok(mat)
+    }
+
+    /// Symmetrize the matrix by averaging off-diagonal pairs. Returns the number of pairs fixed.
+    fn symmetrize(mat: &mut Array2<f64>, n: usize) -> usize {
+        let mut fixed = 0usize;
+        for i in 0..n {
+            mat[[i, i]] = 0.0;
+            for j in (i + 1)..n {
+                let a = mat[[i, j]];
+                let b = mat[[j, i]];
+                if (a - b).abs() > 1e-12 {
+                    let avg = 0.5 * (a + b);
+                    mat[[i, j]] = avg;
+                    mat[[j, i]] = avg;
+                    fixed += 1;
+                }
+            }
+        }
+        if fixed > 0 {
+            warn!(
+                "Distance matrix not perfectly symmetric; averaged {} off-diagonal pairs",
+                fixed
+            );
+        }
+        fixed
     }
 
     fn output_results(
@@ -826,7 +848,6 @@ C,2,3,0
                 inference: InferenceMethod::ActiveSet,
                 nnls_params: NNLSParams::default(),
             };
-            // let nn = NeighbourNet::new("/tmp".to_string(), args);
             let (mat, labels, meta) = NeighbourNet::load_distance_matrix(&args.input).unwrap();
 
             assert_eq!(labels, vec!["A", "B", "C"]);

@@ -80,7 +80,3 @@ fn write_title_and_link<W: FmtWrite>(
     Ok(())
 }
 
-// fn fold_256(s: &str) -> String {
-//     const MAX: usize = 256;
-//     if s.len() <= MAX { s.to_string() } else { s[..MAX].to_string() }
-// }

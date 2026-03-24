@@ -1,3 +1,4 @@
+use anyhow::{Result, anyhow};
 use ndarray::{Array1, Array2, Axis, s};
 use rayon::prelude::*;
 
@@ -155,7 +156,7 @@ fn remove_e2(
 }
 
 /// The main ordering routine.
-pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
+pub fn get_ordering_nn(x: &Matrix) -> Result<Vec<usize>> {
     assert_eq!(x.nrows(), x.ncols(), "Distance matrix must be square");
     let n = x.nrows();
 
@@ -325,10 +326,13 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
                     }
                     _ => unreachable!(),
                 },
-                _ => panic!(
-                    "Unhandled cluster sizes in NeighborNet step: n1={}, n2={}",
-                    n1, n2
-                ),
+                _ => {
+                    return Err(anyhow!(
+                        "Unhandled cluster sizes in NeighborNet step: n1={}, n2={}",
+                        n1,
+                        n2
+                    ));
+                }
             };
 
             ord[e1] = new_ord;
@@ -340,7 +344,7 @@ pub fn get_ordering_nn(x: &Matrix) -> Vec<usize> {
         }
     }
 
-    ord.into_iter().next().unwrap_or_default()
+    Ok(ord.into_iter().next().unwrap_or_default())
 }
 
 fn mean_between_clusters_cached(cl: &[Vec<usize>], sums: &[Vec<f64>], i: usize, j: usize) -> f64 {
@@ -387,10 +391,10 @@ fn recompute_cluster_sum(d: &Matrix, cl: &[Vec<usize>], sums: &mut Vec<Vec<f64>>
     sums[idx] = out;
 }
 
-pub fn neighbor_net_ordering(x: &Matrix) -> NeighbourNetResult {
-    NeighbourNetResult {
-        ordering: get_ordering_nn(x),
-    }
+pub fn neighbor_net_ordering(x: &Matrix) -> Result<NeighbourNetResult> {
+    Ok(NeighbourNetResult {
+        ordering: get_ordering_nn(x)?,
+    })
 }
 
 // --- Example usage & quick test ---
@@ -409,7 +413,7 @@ mod tests {
             [9.0, 10.0, 8.0, 0.0, 3.0],
             [8.0, 9.0, 7.0, 3.0, 0.0],
         ];
-        let res = neighbor_net_ordering(&d);
+        let res = neighbor_net_ordering(&d).expect("ordering should succeed");
         assert_eq!(res.ordering.len(), 5);
     }
 }

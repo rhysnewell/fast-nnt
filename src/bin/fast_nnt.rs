@@ -1,4 +1,4 @@
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use clap::{Parser, crate_name, crate_version};
 
 use fastnnt::{
@@ -27,12 +27,6 @@ fn main() {
         ProgramSubcommand::NeighborNet(args) => NeighbourNet::new(app.output_directory, args)
             .context("creating NeighbourNet")
             .and_then(|runner| runner.run()),
-
-        #[allow(unreachable_patterns)]
-        other => {
-            error!("Subcommand not implemented: {:?}", other);
-            Err(anyhow!("unsupported subcommand"))
-        }
     };
 
     if let Err(err) = result {
