@@ -1,5 +1,5 @@
 [package]
-name = "fastnnt"
+name = "fast-nnt"
 version = "0.2.5"
 edition = "2024"
 authors = ["Rhys Newell <rhys.newell94@gmail.com>"]
@@ -69,4 +69,12 @@ codegen-units = 1
 
 [[bin]]
 name = "fastnnt"
+path = "src/bin/fast_nnt.rs"
+
+[[bin]]
+name = "fast_nnt"
+path = "src/bin/fast_nnt.rs"
+
+[[bin]]
+name = "fast-nnt"
 path = "src/bin/fast_nnt.rs"

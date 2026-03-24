@@ -322,7 +322,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fastnnt"
+name = "fast-nnt"
 version = "0.2.5"
 dependencies = [
  "anyhow",
