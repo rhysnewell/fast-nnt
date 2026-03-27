@@ -12,6 +12,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "anon-nnt"
+version = "0.2.5"
+dependencies = [
+ "anyhow",
+ "clap",
+ "csv",
+ "env_logger",
+ "fixedbitset",
+ "log",
+ "ndarray",
+ "num_cpus",
+ "petgraph",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sysinfo",
+]
+
+[[package]]
+name = "anonnntr"
+version = "0.2.5"
+dependencies = [
+ "anon-nnt",
+ "anyhow",
+ "extendr-api",
+ "ndarray",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -233,38 +262,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "fast-nnt"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eee34799fb6678e8be01eaeafdcbc2a65f317ee6afb5ddfae97181835de2b6c1"
-dependencies = [
- "anyhow",
- "clap",
- "csv",
- "env_logger",
- "fixedbitset",
- "libc",
- "log",
- "ndarray",
- "num_cpus",
- "petgraph",
- "rayon",
- "serde",
- "serde_json",
- "sysinfo",
-]
-
-[[package]]
-name = "fastnntr"
-version = "0.2.5"
-dependencies = [
- "anyhow",
- "extendr-api",
- "fast-nnt",
- "ndarray",
 ]
 
 [[package]]

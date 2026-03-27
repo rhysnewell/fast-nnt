@@ -1193,10 +1193,10 @@ mod integration_tests {
         }
     }
 
-    /// End-to-end: via the top-level run_fast_nnt_from_memory entry point
+    /// End-to-end: via the top-level run_anon_nnt_from_memory entry point
     /// (the same function Python/R bindings call).
     #[test]
-    fn e2e_via_run_fast_nnt_from_memory() {
+    fn e2e_via_run_anon_nnt_from_memory() {
         let dist = arr2(&[
             [0.0, 5.0, 9.0, 9.0, 8.0],
             [5.0, 0.0, 10.0, 10.0, 9.0],
@@ -1210,8 +1210,8 @@ mod integration_tests {
             .collect();
         let args = default_args();
 
-        let nexus = crate::run_fast_nnt_from_memory(dist, labels.clone(), args)
-            .expect("run_fast_nnt_from_memory should succeed");
+        let nexus = crate::run_anon_nnt_from_memory(dist, labels.clone(), args)
+            .expect("run_anon_nnt_from_memory should succeed");
 
         assert_eq!(nexus.num_labels(), 5);
         assert!(nexus.num_splits() >= 5);

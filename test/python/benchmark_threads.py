@@ -11,7 +11,7 @@ import time
 
 import pandas as pd
 
-import fastnntpy as fn
+import anon_nntpy as fn
 
 
 def max_rss_mib():
@@ -27,7 +27,7 @@ def run_once(threads, data, labels):
     cpu0 = time.process_time()
     rss0 = max_rss_mib()
 
-    fn.set_fastnnt_threads(threads)
+    fn.set_anon_nnt_threads(threads)
     fn.run_neighbour_net(
         data,
         max_iterations=5000,
@@ -74,7 +74,7 @@ def main():
 
     thread_counts = [1, 2, 4, 8]
     repeats = 3
-    out_path = "test/python/fastnnt_threads_benchmark.csv"
+    out_path = "test/python/anon_nnt_threads_benchmark.csv"
 
     results = []
     for threads in thread_counts:

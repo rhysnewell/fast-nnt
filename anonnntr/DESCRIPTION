@@ -1,8 +1,8 @@
-Package: fastnntr
-Title: Fast Rust-Based SplitsTree NeighbourNet Algorithm
+Package: anonnntr
+Title: Anonymous NeighborNet Algorithm
 Version: 0.2.5
 Authors@R: 
-    person("Rhys", "Newell", , "rhys.newell94@gmail.com", role = c("aut", "cre"))
+    person("Anonymous", , , "anonymous@example.invalid", role = c("aut", "cre"))
 Description: This package provides a Rust implementation of the SplitsTree NeighbourNet algorithm for phylogenetic analysis.
 License: `use_gpl3_license()`
 Encoding: UTF-8

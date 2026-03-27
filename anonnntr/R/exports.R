@@ -1,8 +1,8 @@
-#' Set the global thread count for fastnnt (call once per session).
+#' Set the global thread count for anon_nnt (call once per session).
 #'
 #' @export
-set_fastnnt_threads <- function(threads) {
-    .Call(wrap__set_fastnnt_threads, threads)
+set_anon_nnt_threads <- function(threads) {
+    .Call(wrap__set_anon_nnt_threads, threads)
 }
 
 #' Run NeighborNet and return a networkx-like list.

@@ -1,19 +1,19 @@
 [package]
-name = "fast-nnt"
+name = "anon-nnt"
 version = "0.2.5"
 edition = "2024"
-authors = ["Rhys Newell <rhys.newell94@gmail.com>"]
-description = "Rust implementation of the SplitsTree NeighborNet algorithm."
-documentation = "https://docs.rs/fast-nnt"
+authors = ["Anonymous"]
+description = "Anonymous implementation of a NeighborNet-style algorithm."
+documentation = "https://example.invalid"
 readme = "README.md"
-repository = "https://github.com/rhysnewell/fast-nnt"
+repository = "https://example.invalid"
 license = "GPL-3.0"
 keywords = ["phylogenetics", "neighbor-net", "splits-tree", "trees", "networks"]
-default-run = "fastnnt"
-exclude = ["test/plots/", "test/r/", "test/python/", "test/data/large/*.nex", "test/data/large/*.stree6", "fastnnt-py/", "fastnntr/"]
+default-run = "anon_nnt"
+exclude = ["test/plots/", "test/r/", "test/python/", "test/data/large/*.nex", "test/data/large/*.stree6", "anon-nnt-py/", "anonnntr/"]
 
 # [workspace]
-# members = ["fastnnt-py", "fastnntr"]
+# members = ["anon-nnt-py", "anonnntr"]
 
 resolver = "2"
 
@@ -69,13 +69,5 @@ lto = "fat"
 codegen-units = 1
 
 [[bin]]
-name = "fastnnt"
-path = "src/bin/fast_nnt.rs"
-
-[[bin]]
-name = "fast_nnt"
-path = "src/bin/fast_nnt.rs"
-
-[[bin]]
-name = "fast-nnt"
-path = "src/bin/fast_nnt.rs"
+name = "anon_nnt"
+path = "src/bin/anon_nnt.rs"

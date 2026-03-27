@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 
-import fastnntpy as fn
+import anon_nntpy as fn
 import pandas as pd
 import os
 import re
@@ -42,7 +42,7 @@ configs = [
 
 
 
-def plot_fast_nnt_networkx(nx_obj, out_path="test/plots/fast_nnt_nx.png",
+def plot_anon_nnt_networkx(nx_obj, out_path="test/plots/anon_nnt_nx.png",
                            shift=0, node_size=10, font_size=7,
                            scale_width_by_weight=False, dpi=300):
     # -- data from PyNexus --
@@ -89,7 +89,7 @@ def plot_fast_nnt_networkx(nx_obj, out_path="test/plots/fast_nnt_nx.png",
     return out_path
 
 def save_neighbornet_plot(nx_obj,
-                          out_path="test/plots/fast_nnt_neighbornet.png",
+                          out_path="test/plots/anon_nnt_neighbornet.png",
                           shift=0,
                           label_leaves=True,
                           scale_width_by_weight=True,
@@ -146,7 +146,7 @@ def save_neighbornet_plot(nx_obj,
                     fontsize=font_size, ha="center", va="center", zorder=4)
 
     ax.set_aspect("equal", adjustable="box")
-    ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_title("Fast-NNT NeighborNet")
+    ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_title("Anon-NNT NeighborNet")
     ax.autoscale(); ax.margins(0.02); ax.grid(True, alpha=0.15)
 
     fig.savefig(out_path, bbox_inches="tight", pad_inches=0.02)
@@ -155,7 +155,7 @@ def save_neighbornet_plot(nx_obj,
     return out_path
 
 def plot_nexus_matplotlib(nexus_obj,
-                          out_path="test/plots/fast_nnt_graph_matplotlib.png",
+                          out_path="test/plots/anon_nnt_graph_matplotlib.png",
                           shift=0,
                           label_leaves=True,
                           scale_width_by_weight=True,
@@ -210,7 +210,7 @@ def plot_nexus_matplotlib(nexus_obj,
     return out_path
 
 def plot_nexus_matplotlib_minimal(nexus_obj,
-                                  out_path="test/plots/fast_nnt_graph_matplotlib_minimal.png",
+                                  out_path="test/plots/anon_nnt_graph_matplotlib_minimal.png",
                                   dpi=300):
     """Minimal, paper-ready matplotlib example without extra options."""
     labels = {i: s for i, s in nexus_obj.get_node_translations()}
@@ -281,15 +281,15 @@ for idx, cfg in enumerate(configs):
     print("Graph Edges")
     print(len(n.get_graph_edges()))
 
-    plot_fast_nnt_networkx(
+    plot_anon_nnt_networkx(
         n,
-        out_path=f"test/plots/fast_nnt_graph_networkx_{cfg['title']}.png",
+        out_path=f"test/plots/anon_nnt_graph_networkx_{cfg['title']}.png",
     )
     plot_nexus_matplotlib(
         n,
-        out_path=f"test/plots/fast_nnt_graph_matplotlib_{cfg['title']}.png",
+        out_path=f"test/plots/anon_nnt_graph_matplotlib_{cfg['title']}.png",
     )
     plot_nexus_matplotlib_minimal(
         n,
-        out_path=f"test/plots/fast_nnt_graph_matplotlib_minimal_{cfg['title']}.png",
+        out_path=f"test/plots/anon_nnt_graph_matplotlib_minimal_{cfg['title']}.png",
     )

@@ -12,6 +12,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "anon-nnt"
+version = "0.2.5"
+dependencies = [
+ "anyhow",
+ "clap",
+ "csv",
+ "env_logger",
+ "fixedbitset",
+ "log",
+ "ndarray",
+ "num_cpus",
+ "petgraph",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sysinfo",
+]
+
+[[package]]
+name = "anon-nnt-py"
+version = "0.2.5"
+dependencies = [
+ "anon-nnt",
+ "anyhow",
+ "ndarray",
+ "numpy",
+ "pyo3",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -205,36 +235,6 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
-
-[[package]]
-name = "fast-nnt"
-version = "0.2.5"
-dependencies = [
- "anyhow",
- "clap",
- "csv",
- "env_logger",
- "fixedbitset",
- "log",
- "ndarray",
- "num_cpus",
- "petgraph",
- "rayon",
- "serde",
- "serde_json",
- "sysinfo",
-]
-
-[[package]]
-name = "fastnnt-py"
-version = "0.2.5"
-dependencies = [
- "anyhow",
- "fast-nnt",
- "ndarray",
- "numpy",
- "pyo3",
-]
 
 [[package]]
 name = "fixedbitset"

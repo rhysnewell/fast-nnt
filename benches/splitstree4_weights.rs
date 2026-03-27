@@ -3,7 +3,7 @@ use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use fast_nnt::weights::splitstree4_weights::compute_splits;
+use anon_nnt::weights::splitstree4_weights::compute_splits;
 
 fn make_distance_matrix(n: usize, seed: u64) -> Array2<f64> {
     let mut rng = StdRng::seed_from_u64(seed);

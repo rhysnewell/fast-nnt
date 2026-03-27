@@ -11,7 +11,7 @@ install_if_missing(c("data.table", "devtools", "ps", "peakRAM"))
 library(data.table)
 library(ps)
 library(peakRAM)
-devtools::load_all("fastnntr")
+devtools::load_all("anonnntr")
 
 data <- fread("test/data/large/large_dist_matrix.csv", header = TRUE)
 labels <- names(data)
@@ -23,7 +23,7 @@ run_once <- function(threads) {
   if (requireNamespace("peakRAM", quietly = TRUE)) {
     bench <- peakRAM::peakRAM(
       {
-        set_fastnnt_threads(threads)
+        set_anon_nnt_threads(threads)
         run_neighbornet_networkx(
           data,
           flip_y = TRUE,
@@ -58,7 +58,7 @@ run_once <- function(threads) {
     NA_real_
   }
 
-  set_fastnnt_threads(threads)
+  set_anon_nnt_threads(threads)
   t0 <- proc.time()
   rss_before <- get_rss_bytes()
   run_neighbornet_networkx(
@@ -109,4 +109,4 @@ results <- do.call(
 )
 
 print(results)
-write.csv(results, "test/r/fastnnt_threads_benchmark.csv", row.names = FALSE)
+write.csv(results, "test/r/anon_nnt_threads_benchmark.csv", row.names = FALSE)
