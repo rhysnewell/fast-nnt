@@ -5,7 +5,9 @@ fast-nnt (read Fast Ent) is a simple Rust implementation of the Neighbour Net al
 
 ### Introduction
 
-Fast-NNT is a Rust implementation of the NeighbourNet algorithm, designed for efficient phylogenetic analysis. It constructs split trees from distance matrices, providing a fast and reliable tool for researchers in evolutionary biology. R and Python bindings are provided so that users can easily integrate Fast-NNT into their existing workflows.
+Fast-NNT is a Rust implementation of the NeighbourNet algorithm (Bryant & Moulton, 2004), designed for efficient phylogenetic analysis. From a distance matrix it constructs a *split network* and computes a planar 2-D layout for it using the equal-angle algorithm, providing a fast and reliable tool for researchers in evolutionary biology. R and Python bindings are provided so that users can easily integrate Fast-NNT into their existing workflows.
+
+Note that NeighbourNet produces an **implicit** (split) network: a planar diagram that summarises conflicting signal in the data for exploratory analysis. Unlike **explicit** networks, the parallelogram "boxes" do not model specific reticulation events such as hybridisation or introgression (see [Kong et al. 2025](https://doi.org/10.1073/pnas.2410934122)).
 
 **Why does this exist when SplitsTree is available?**
 

@@ -1,3 +1,16 @@
+//! Fast Rust implementation of the NeighbourNet algorithm (Bryant & Moulton,
+//! 2004) for phylogenetic analysis.
+//!
+//! From a square, symmetric distance matrix, fast-nnt constructs an *implicit*
+//! split network — a planar diagram that summarises conflicting signal in the
+//! data for exploratory analysis. Unlike *explicit* networks, the parallelogram
+//! "boxes" do not model specific reticulation events such as hybridisation or
+//! introgression. A 2-D layout for the network is computed using the
+//! equal-angle algorithm and returned alongside the splits in a [`Nexus`].
+//!
+//! [`run_fast_nnt_from_memory`] is the single entry point shared by the CLI and
+//! the Python and R bindings.
+
 use std::{env, time::Instant};
 
 use anyhow::{Context, Result};
@@ -52,11 +65,15 @@ pub fn set_log_level(matches: &ProgramArgs, is_last: bool, program_name: &str, v
     }
 }
 
-/// The single entry point for bindings.
+/// Build a NeighbourNet split network from a distance matrix.
 ///
-/// - `dist`: square distance matrix (n x n)
-/// - `labels`: length n
-/// - `args`: algorithm params (bindings can construct this or you add a smaller ArgsLite)
+/// The single entry point shared by the CLI and the Python and R bindings. The
+/// returned [`Nexus`] holds the weighted splits and a 2-D equal-angle layout of
+/// the implicit split network.
+///
+/// - `dist`: square, symmetric distance matrix (n x n)
+/// - `labels`: taxon labels, length n
+/// - `args`: ordering, weight-inference, and NNLS parameters
 pub fn run_fast_nnt_from_memory(
     dist: Array2<f64>,
     labels: Vec<String>,

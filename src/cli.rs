@@ -48,7 +48,10 @@ pub struct ProgramArgs {
 pub enum ProgramSubcommand {
     #[clap(
         name = "neighbour_net",
-        about = "Run the SplitsTree NeighborNet algorithm"
+        about = "Build a NeighbourNet split network from a distance matrix",
+        long_about = "Build a NeighbourNet split network (Bryant & Moulton, 2004) from a \
+distance matrix. Produces an implicit split network with a 2-D equal-angle \
+layout, written to a Nexus file."
     )]
     NeighborNet(NeighbourNetArgs),
 }
