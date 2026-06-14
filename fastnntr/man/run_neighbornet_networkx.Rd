@@ -2,7 +2,8 @@
 % Please edit documentation in R/exports.R
 \name{run_neighbornet_networkx}
 \alias{run_neighbornet_networkx}
-\title{Run NeighborNet and return a networkx-like list.}
+\alias{run_neighbournet_networkx}
+\title{Compute a NeighbourNet split network}
 \usage{
 run_neighbornet_networkx(
   x,
@@ -12,7 +13,73 @@ run_neighbornet_networkx(
   ordering_method = NULL,
   inference_method = NULL
 )
+
+run_neighbournet_networkx(
+  x,
+  flip_y = TRUE,
+  labels = NULL,
+  max_iterations = 5000,
+  ordering_method = NULL,
+  inference_method = NULL
+)
+}
+\arguments{
+\item{x}{A distance matrix. May be a \code{dist} object, a numeric \code{matrix}, or a
+\code{data.frame}/\code{data.table} of distances; non-matrix inputs are coerced with
+\code{\link[=as.matrix]{as.matrix()}}. The matrix must be square and symmetric.}
+
+\item{flip_y}{Logical; if \code{TRUE} (default) the vertical axis of the computed
+layout is flipped, matching the orientation used by SplitsTree.}
+
+\item{labels}{Optional character vector of taxon labels. If \code{NULL} (default)
+the column names of \code{x} are used (and, for a \code{dist} object, its labels).}
+
+\item{max_iterations}{Integer; maximum NNLS iterations for split-weight
+estimation (default \code{5000}).}
+
+\item{ordering_method}{Split ordering algorithm: \code{"multiway"} (default) or
+\code{"closest-pair"}. \code{NULL} uses the default.}
+
+\item{inference_method}{Split-weight solver: \code{"active-set"} (default) or
+\code{"cg"}. \code{NULL} uses the default.}
+}
+\value{
+A list of class \code{c("networx", "phylo")} containing \code{edge},
+\code{tip.label}, \code{edge.length}, \code{Nnode}, \code{splitIndex}, \code{splits}, \code{translate},
+and a \code{.plot} sublist whose \code{vertices} matrix holds 2-D node coordinates
+from the equal-angle layout. The structure is compatible with
+\pkg{phangorn}'s \code{networx} objects and \pkg{tanggle}'s ggplot2 layers.
 }
 \description{
-Run NeighborNet and return a networkx-like list.
+Runs the NeighbourNet algorithm (Bryant & Moulton, 2004) on a distance
+matrix and returns the resulting split network in a \code{networx}-compatible
+list, ready to plot with \pkg{tanggle}/\pkg{ggplot2} or base \pkg{phangorn}.
+}
+\details{
+NeighbourNet produces an \emph{implicit} (split) network: a planar diagram that
+summarises conflicting signal in the data for exploratory analysis. Unlike
+\emph{explicit} networks, the boxes do not represent specific reticulation events
+such as hybridisation or introgression.
+
+\code{run_neighbournet_networkx()} is an identical spelling alias of
+\code{run_neighbornet_networkx()}.
+}
+\examples{
+\donttest{
+# A minimal workflow from raw distances to a plotted network.
+d <- dist(matrix(rnorm(50), nrow = 5, dimnames = list(LETTERS[1:5], NULL)))
+net <- run_neighbornet_networkx(d)
+str(net$tip.label)
+
+# Plot with tanggle/ggplot2 (if installed):
+if (requireNamespace("tanggle", quietly = TRUE)) {
+  library(tanggle)
+  ggplot2::ggplot(net) + geom_splitnet() + geom_tiplab2()
+}
+}
+
+}
+\seealso{
+\pkg{tanggle} and \pkg{phangorn} for plotting \code{networx} objects;
+\code{\link[stats:dist]{stats::dist()}} and \code{phangorn::dist.ml()} for computing distances.
 }

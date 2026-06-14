@@ -2,10 +2,24 @@
 % Please edit documentation in R/exports.R
 \name{set_fastnnt_threads}
 \alias{set_fastnnt_threads}
-\title{Set the global thread count for fastnnt (call once per session).}
+\title{Set the global thread count for fastnnt}
 \usage{
 set_fastnnt_threads(threads)
 }
+\arguments{
+\item{threads}{Integer (>= 1); number of worker threads to use.}
+}
+\value{
+Invisibly \code{NULL}; called for its side effect.
+}
 \description{
-Set the global thread count for fastnnt (call once per session).
+Configures the size of the internal Rayon thread pool used for split-weight
+estimation. The pool can only be initialised once per R session; subsequent
+calls emit a warning and leave the existing pool unchanged.
+}
+\examples{
+\donttest{
+set_fastnnt_threads(4)
+}
+
 }
