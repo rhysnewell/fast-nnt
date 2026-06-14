@@ -12,6 +12,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 
 
+/// In-memory NeighbourNet result.
+///
+/// Returned by :func:`run_neighbour_net`. The accessor methods expose the split
+/// network together with its 2-D equal-angle layout, using 0-based node indices.
 #[pyclass(name = "Nexus")]
 pub struct PyNexus {
     inner: Nexus,
@@ -107,6 +111,14 @@ fn infer_labels<'py>(obj: Bound<'py, PyAny>, n: usize) -> PyResult<Vec<String>> 
     Ok((1..=n).map(|i| format!("col_{i}")).collect())
 }
 // ---- public API ----
+/// Set the global thread count for fastnnt (call once per session).
+///
+/// Configures the internal Rayon thread pool used for split-weight estimation.
+/// The pool can only be initialised once per process; later calls emit a
+/// warning and leave the existing pool unchanged.
+///
+/// Args:
+///     threads (int): Number of worker threads to use (>= 1).
 #[pyfunction]
 #[pyo3(signature = (threads))]
 fn set_fastnnt_threads(py: Python<'_>, threads: usize) -> PyResult<()> {
@@ -135,6 +147,26 @@ fn set_fastnnt_threads(py: Python<'_>, threads: usize) -> PyResult<()> {
     }
 }
 
+/// Compute a NeighbourNet split network from a distance matrix.
+///
+/// NeighbourNet (Bryant & Moulton, 2004) produces an *implicit* split network:
+/// a planar diagram summarising conflicting signal for exploratory analysis,
+/// not an explicit model of reticulation events.
+///
+/// Args:
+///     x: Square, symmetric distance matrix as a 2-D numpy array or a
+///         DataFrame-like object (pandas/polars); DataFrame columns are used
+///         as taxon labels unless ``labels`` is given.
+///     max_iterations (int): Maximum NNLS iterations for split-weight
+///         estimation (default 5000).
+///     ordering_method (str | None): Split ordering, ``"multiway"`` (default)
+///         or ``"closest-pair"``; ``None`` uses the default.
+///     inference_method (str | None): Split-weight solver, ``"active-set"``
+///         (default) or ``"cg"``; ``None`` uses the default.
+///     labels (Sequence[str] | None): Optional taxon labels of length n.
+///
+/// Returns:
+///     Nexus: the split network and its 2-D equal-angle layout.
 #[pyfunction]
 #[pyo3(signature = (x, max_iterations=5000, ordering_method=None, inference_method=None, labels=None))]
 fn run_neighbour_net<'py>(
@@ -170,6 +202,7 @@ fn run_neighbour_net<'py>(
     Ok(PyNexus { inner: nexus })
 }
 
+/// Alias of :func:`run_neighbour_net` using US spelling.
 #[pyfunction]
 #[pyo3(signature = (x, max_iterations=5000, ordering_method=None, inference_method=None, labels=None))]
 fn run_neighbor_net<'py>(
