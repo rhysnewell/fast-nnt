@@ -21,13 +21,13 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "push" || "${{ inputs.only }}" == "all" ]]; then
-            echo 'matrix={"os":["ubuntu-latest","macos-latest","windows-latest"], "py":["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]}' >> "$GITHUB_OUTPUT"
+            echo 'matrix={"os":["ubuntu-latest","macos-latest","windows-latest"], "py":["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]}' >> "$GITHUB_OUTPUT"
           elif [[ "${{ inputs.only }}" == "linux" ]]; then
-            echo 'matrix={"os":["ubuntu-latest"], "py":["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]}' >> "$GITHUB_OUTPUT"
+            echo 'matrix={"os":["ubuntu-latest"], "py":["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]}' >> "$GITHUB_OUTPUT"
           elif [[ "${{ inputs.only }}" == "macos" ]]; then
-            echo 'matrix={"os":["macos-latest"], "py":["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]}' >> "$GITHUB_OUTPUT"
+            echo 'matrix={"os":["macos-latest"], "py":["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]}' >> "$GITHUB_OUTPUT"
           else
-            echo 'matrix={"os":["windows-latest"], "py":["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]}' >> "$GITHUB_OUTPUT"
+            echo 'matrix={"os":["windows-latest"], "py":["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]}' >> "$GITHUB_OUTPUT"
           fi
 
 

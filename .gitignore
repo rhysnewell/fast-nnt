@@ -30,3 +30,6 @@ scratch/
 /target
 output/
 .cargo/config.toml
+# macOS
+.DS_Store
+**/.DS_Store
