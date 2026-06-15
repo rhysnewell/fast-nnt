@@ -5,6 +5,11 @@ fast-nnt (read Fast Ent) is a simple Rust implementation of the Neighbour Net al
 
 ### Introduction
 
+Neighbour networks are a flexible, model-free method for visualising pairwise distance data. Because they operate directly on any distance matrix, the same approach applies across biological scales and data types, from SNP-based population genomics and whole-genome ANI distances, to discrete morphological characters. A single network can simultaneously reveal population structure, admixture, clonal relationships, and relative diversity, often capturing information that would otherwise require multiple complementary analyses.
+
+![Applications of neighbour networks across data types](images/fastnnt_fig3.png)
+*The figure above shows three examples: (a) population structure in the critically endangered conifer Pherosphaera fitzgeraldii inferred from SNP distances; (b) morphological relationships among pachycephalosaur dinosaurs from discrete character distances; and (d) phylogroup-level relationships among E. coli genomes from inverse ANI distances.*
+
 Fast-NNT is a Rust implementation of the NeighbourNet algorithm (Bryant & Moulton, 2004), designed for efficient phylogenetic analysis. From a distance matrix it constructs a *split network* and computes a planar 2-D layout for it using the equal-angle algorithm, providing a fast and reliable tool for researchers in evolutionary biology. R and Python bindings are provided so that users can easily integrate Fast-NNT into their existing workflows.
 
 Note that NeighbourNet produces an **implicit** (split) network: a planar diagram that summarises conflicting signal in the data for exploratory analysis. Unlike **explicit** networks, the parallelogram "boxes" do not model specific reticulation events such as hybridisation or introgression (see [Kong et al. 2025](https://doi.org/10.1073/pnas.2410934122)).

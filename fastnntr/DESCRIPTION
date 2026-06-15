@@ -12,8 +12,12 @@ License: GPL (>= 3)
 Encoding: UTF-8
 Suggests:
     tanggle,
+    ggtree,
     phangorn,
     ggplot2,
+    ggforce,
+    TreeSearch,
+    dplyr,
     knitr,
     rmarkdown,
     testthat (>= 3.0.0)

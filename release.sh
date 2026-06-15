@@ -29,6 +29,75 @@ warn()  { echo -e "${YELLOW}WARNING: $*${NC}"; }
 error() { echo -e "${RED}ERROR: $*${NC}" >&2; }
 fatal() { error "$@"; exit 1; }
 
+# ── Local path-patch management (dry-run only) ───────────────────────────────
+# The binding crates ship with a commented-out [patch.crates-io] block that
+# points fast-nnt at the local core. For a dry-run we temporarily uncomment it
+# so the bindings build against the unpublished local core, then restore the
+# original files (even on failure, via the EXIT trap).
+PATCH_FILES=(
+  "fastnnt-py/Cargo.toml"
+  "fastnntr/src/rust/Cargo.toml"
+)
+PATCH_ENABLED=false
+
+enable_local_patches() {
+  local rel_path file lock
+  for rel_path in "${PATCH_FILES[@]}"; do
+    file="${REPO_ROOT}/${rel_path}"
+    lock="${file%/Cargo.toml}/Cargo.lock"
+    cp "$file" "${file}.relbak"
+    [[ -f "$lock" ]] && cp "$lock" "${lock}.relbak"
+    # Uncomment "# [patch.crates-io]" and the "# fast-nnt = { path = ... }" line.
+    sed -i '' \
+      -e 's|^# \[patch.crates-io\]|[patch.crates-io]|' \
+      -e 's|^# \(fast-nnt = { path = .* }\)|\1|' \
+      "$file"
+    if ! grep -q '^\[patch.crates-io\]' "$file"; then
+      fatal "Failed to enable local path patch in $rel_path (expected a commented [patch.crates-io] block)"
+    fi
+    echo "  $rel_path: enabled local path patch"
+  done
+  PATCH_ENABLED=true
+}
+
+restore_local_patches() {
+  [[ "$PATCH_ENABLED" == true ]] || return 0
+  local rel_path file lock
+  for rel_path in "${PATCH_FILES[@]}"; do
+    file="${REPO_ROOT}/${rel_path}"
+    lock="${file%/Cargo.toml}/Cargo.lock"
+    [[ -f "${file}.relbak" ]] && mv "${file}.relbak" "$file"
+    [[ -f "${lock}.relbak" ]] && mv "${lock}.relbak" "$lock"
+  done
+  PATCH_ENABLED=false
+}
+
+# Build + smoke-test both bindings. cargo update re-locks each binding against
+# whichever fast-nnt the manifest now resolves to (local patch or published).
+build_and_test_bindings() {
+  info "Building Python bindings..."
+  (
+    cd "${REPO_ROOT}/fastnnt-py"
+    cargo update 2>&1
+    maturin develop 2>&1
+  )
+  info "Smoke-testing Python bindings..."
+  python3 -c "import fastnntpy; print('  fastnntpy import: OK ✓')"
+
+  if [[ "$HAS_R" == true ]]; then
+    info "Building R bindings..."
+    (
+      cd "${REPO_ROOT}/fastnntr/src/rust"
+      cargo update 2>&1
+    )
+    R CMD INSTALL "${REPO_ROOT}/fastnntr" 2>&1
+    info "Smoke-testing R bindings..."
+    Rscript -e "library(fastnntr); cat('  fastnntr import: OK ✓\n')"
+  else
+    warn "Skipping R bindings (Rscript not available)"
+  fi
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [--dry-run] <VERSION>
@@ -43,13 +112,21 @@ Options:
 
 Steps performed:
   1. Validate prerequisites (cargo, maturin, Rscript, git)
-  2. Bump version in all 5 package files
+  2. Bump version in all 5 package files + fast-nnt dep to >=VERSION
   3. Validate version consistency across all packages
   4. Run cargo test
-  5. cargo publish --dry-run
-  6. Build Python bindings locally (maturin develop)
-  7. Build R bindings locally (R CMD INSTALL)
-  8. [if not --dry-run] cargo publish, git commit + tag + push
+  5. cargo publish --dry-run (core)
+  6. Build + smoke-test the bindings against the new core:
+       --dry-run : via a temporary [patch.crates-io] -> local core
+       release   : publish core first, wait for crates.io, then build
+                   the bindings against the published crate
+  7. [release only] git commit + tag v<VERSION> + push (triggers PyPI CI)
+
+Ordering rationale: the binding crates depend on fast-nnt = ">=VERSION"
+from crates.io, so they cannot resolve the new version until core is
+published. A real release therefore publishes core *before* building the
+bindings; a dry-run substitutes a local path patch so it can validate the
+bindings without publishing anything.
 EOF
   exit 1
 }
@@ -245,63 +322,56 @@ cargo test 2>&1
 info "Running cargo publish --dry-run..."
 cargo publish --dry-run --allow-dirty 2>&1
 
-# ── Step 6: Build Python bindings locally ───────────────────────────────────
-info "Building Python bindings..."
-(
-  cd "${REPO_ROOT}/fastnnt-py"
-  cargo update 2>&1
-  maturin develop 2>&1
-)
-
-info "Smoke-testing Python bindings..."
-python3 -c "import fastnntpy; print('  fastnntpy import: OK ✓')"
-
-# ── Step 7: Build R bindings locally ────────────────────────────────────────
-if [[ "$HAS_R" == true ]]; then
-  info "Building R bindings..."
-  (
-    cd "${REPO_ROOT}/fastnntr/src/rust"
-    cargo update 2>&1
-  )
-  R CMD INSTALL "${REPO_ROOT}/fastnntr" 2>&1
-  info "Smoke-testing R bindings..."
-  Rscript -e "library(fastnntr); cat('  fastnntr import: OK ✓\n')"
-else
-  warn "Skipping R bindings (Rscript not available)"
-fi
-
-# ── Step 8: Publish or report ───────────────────────────────────────────────
-echo ""
+# ── Step 6: Build + smoke-test bindings against the new core ─────────────────
 if [[ "$DRY_RUN" == true ]]; then
+  # No 0.x.y on crates.io yet — patch the bindings to the local core so we can
+  # still validate that they build and import. Restored on EXIT.
+  info "Enabling temporary local path patch for binding builds..."
+  trap restore_local_patches EXIT
+  enable_local_patches
+  build_and_test_bindings
+  restore_local_patches
+  trap - EXIT
+
+  echo ""
   echo -e "${BOLD}═══ DRY RUN COMPLETE ═══${NC}"
   echo ""
-  echo "All checks passed. To perform the actual release, run:"
+  echo "All checks passed (bindings validated against local core)."
+  echo "To perform the actual release, run:"
   echo ""
   echo "  ./release.sh ${VERSION}"
   echo ""
   echo "This will:"
-  echo "  1. cargo publish            (publish fast-nnt ${VERSION} to crates.io)"
-  echo "  2. git commit + tag v${VERSION} + push  (triggers PyPI CI)"
+  echo "  1. cargo publish                         (publish fast-nnt ${VERSION})"
+  echo "  2. build + smoke-test bindings against published ${VERSION}"
+  echo "  3. git commit + tag v${VERSION} + push   (triggers PyPI CI)"
   echo ""
   exit 0
 fi
 
-# ── Actual release ──────────────────────────────────────────────────────────
+# ── Actual release: publish core BEFORE building the bindings ────────────────
 info "Publishing fast-nnt ${VERSION} to crates.io..."
 cargo publish --allow-dirty 2>&1
 
 info "Waiting for crate to appear on crates.io..."
-for i in $(seq 1 12); do
+PUBLISHED=false
+for i in $(seq 1 24); do
   if cargo search fast-nnt 2>/dev/null | grep -q "\"${VERSION}\""; then
     echo "  fast-nnt ${VERSION} found on crates.io ✓"
+    PUBLISHED=true
     break
-  fi
-  if [[ $i -eq 12 ]]; then
-    warn "Crate not yet visible after 60s. It may take a few more minutes."
-    warn "Proceeding with git commit and tag..."
   fi
   sleep 5
 done
+if [[ "$PUBLISHED" == false ]]; then
+  warn "Crate not visible after 120s; the crates.io index may lag."
+  warn "Binding builds below need the published crate and may fail until it"
+  warn "propagates. Re-run 'cd fastnnt-py && cargo update && maturin develop'"
+  warn "(and the R equivalent) once 'cargo search fast-nnt' shows ${VERSION}."
+fi
+
+# Now that core is published, the bindings can resolve fast-nnt = ">=${VERSION}".
+build_and_test_bindings
 
 info "Committing and tagging..."
 git add -A
