@@ -27,7 +27,7 @@ fn fb_set(bs: &mut fixedbitset::FixedBitSet, idx: usize, val: bool) {
     bs.set(idx, val);
 }
 
-/// Splits graph: extends PhyloGraph with per-edge split ids, angles, and a 1-based taxon→cycle map
+/// Splits graph: extends PhyloGraph with per-edge split ids and angles
 #[derive(Debug, Clone, Default)]
 pub struct PhyloSplitsGraph {
     pub base: PhyloGraph,
@@ -36,8 +36,6 @@ pub struct PhyloSplitsGraph {
     edge_split_map: Option<HashMap<EdgeIndex, i32>>,
     edge_angle_map: Option<HashMap<EdgeIndex, f64>>,
 
-    // 1-based taxon id → cycle position (1..=ntax); index 0 is unused
-    taxon_cycle_map: Option<Vec<usize>>,
     // rotation system (cyclic order of incident edges)
     rotation: HashMap<NodeIndex, Vec<EdgeIndex>>,
     pub node_ids: BTreeMap<NodeIndex, usize>,
@@ -54,7 +52,6 @@ impl PhyloSplitsGraph {
         self.base.clear();
         self.edge_split_map = None;
         self.edge_angle_map = None;
-        self.taxon_cycle_map = None;
         self.rotation.clear();
     }
 
@@ -187,11 +184,6 @@ impl PhyloSplitsGraph {
                 self.set_angle(f, ang);
             }
             old2new_edge.insert(e, f);
-        }
-
-        // Copy taxon->cycle map
-        if let Some(t2c) = &src.taxon_cycle_map {
-            self.taxon_cycle_map = Some(t2c.clone());
         }
 
         (old2new_node, old2new_edge)
@@ -552,47 +544,6 @@ impl PhyloSplitsGraph {
         }
     }
 
-    /* ---------------- cycle mapping ---------------- */
-
-    /// 1-based get: taxon id -> cycle index
-    pub fn get_taxon2_cycle(&self, tax_id: usize) -> i32 {
-        if let Some(vec) = &self.taxon_cycle_map {
-            if tax_id > 0 && tax_id <= vec.len() {
-                return vec[tax_id - 1] as i32;
-            }
-        }
-        // mirror Java: return -1 if absent
-        -1
-    }
-
-    /// Set (1-based) taxon → cycle index
-    pub fn set_taxon2_cycle(&mut self, tax_id: usize, cycle_index: usize) {
-        if self.taxon_cycle_map.is_none() {
-            self.taxon_cycle_map = Some(Vec::new());
-        }
-        let v = self
-            .taxon_cycle_map
-            .as_mut()
-            .expect("taxon_cycle_map just initialized above");
-        if tax_id > v.len() {
-            v.resize(tax_id, 0);
-        }
-        v[tax_id - 1] = cycle_index;
-    }
-
-    /// Build the cycle array [0, t1, t2, ..., tn] (1-based taxa)
-    pub fn get_cycle(&self) -> Vec<usize> {
-        let ntax = self.base.number_of_taxa();
-        let mut cycle = vec![0usize; ntax + 1];
-        for t in 1..=ntax {
-            let idx = self.get_taxon2_cycle(t);
-            if idx > 0 && (idx as usize) < cycle.len() {
-                cycle[idx as usize] = t;
-            }
-        }
-        cycle
-    }
-
     /* ---------------- counters ---------------- */
 
     pub fn count_splits(&self) -> usize {
@@ -828,27 +779,6 @@ mod phylo_splits_graph_tests {
     }
 
     #[test]
-    fn cycle_mapping_roundtrip() {
-        let (mut g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
-        // set cycle positions: 1→1, 2→3, 3→2
-        g.set_taxon2_cycle(1, 1);
-        g.set_taxon2_cycle(2, 3);
-        g.set_taxon2_cycle(3, 2);
-
-        assert_eq!(g.get_taxon2_cycle(1), 1);
-        assert_eq!(g.get_taxon2_cycle(2), 3);
-        assert_eq!(g.get_taxon2_cycle(3), 2);
-
-        // build cycle [0, t1, t2, t3]
-        let cycle = g.get_cycle();
-        // At index 1 we expect taxon 1; at 2 -> taxon 3; at 3 -> taxon 2
-        assert_eq!(cycle.len(), 4);
-        assert_eq!(cycle[1], 1);
-        assert_eq!(cycle[2], 3);
-        assert_eq!(cycle[3], 2);
-    }
-
-    #[test]
     fn label_nodes_by_sequences_basic() {
         let (g, a, b, c, _e_ab, _e_bc) = make_abc();
 
@@ -880,10 +810,7 @@ mod phylo_splits_graph_tests {
 
     #[test]
     fn deep_copy_preserves_structure_and_annotations() {
-        let (mut g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
-        g.set_taxon2_cycle(1, 1);
-        g.set_taxon2_cycle(2, 2);
-        g.set_taxon2_cycle(3, 3);
+        let (g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
 
         let cloned = g.clone_graph();
 
@@ -938,9 +865,6 @@ mod phylo_splits_graph_tests {
             .collect();
         labs_c.sort();
         assert_eq!(labs_g, labs_c);
-
-        // cycle mapping preserved
-        assert_eq!(g.get_cycle(), cloned.get_cycle());
     }
 
     // ============================================================
@@ -1498,60 +1422,6 @@ mod phylo_splits_graph_tests {
         assert_eq!(g.rot(v), &[e]);
     }
 
-    // ---- taxon2cycle / get_cycle ----
-
-    #[test]
-    fn get_taxon2_cycle_returns_neg1_for_absent() {
-        let g = PhyloSplitsGraph::new();
-        assert_eq!(g.get_taxon2_cycle(1), -1);
-        assert_eq!(g.get_taxon2_cycle(0), -1);
-        assert_eq!(g.get_taxon2_cycle(100), -1);
-    }
-
-    #[test]
-    fn set_taxon2_cycle_grows_vector() {
-        let mut g = PhyloSplitsGraph::new();
-        // Set taxon 5 to cycle position 3 (should grow the internal vec to size 5)
-        g.set_taxon2_cycle(5, 3);
-        assert_eq!(g.get_taxon2_cycle(5), 3);
-        // Intermediate taxa should be 0 (which get_taxon2_cycle returns as 0)
-        assert_eq!(g.get_taxon2_cycle(1), 0);
-        assert_eq!(g.get_taxon2_cycle(4), 0);
-    }
-
-    #[test]
-    fn set_taxon2_cycle_overwrites() {
-        let mut g = PhyloSplitsGraph::new();
-        g.set_taxon2_cycle(2, 10);
-        assert_eq!(g.get_taxon2_cycle(2), 10);
-        g.set_taxon2_cycle(2, 20);
-        assert_eq!(g.get_taxon2_cycle(2), 20);
-    }
-
-    #[test]
-    fn get_cycle_builds_correct_1based_array() {
-        let (mut g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
-        // cycle: taxon 1 at pos 3, taxon 2 at pos 1, taxon 3 at pos 2
-        g.set_taxon2_cycle(1, 3);
-        g.set_taxon2_cycle(2, 1);
-        g.set_taxon2_cycle(3, 2);
-
-        let cycle = g.get_cycle();
-        assert_eq!(cycle.len(), 4); // [0, t_at_pos1, t_at_pos2, t_at_pos3]
-        assert_eq!(cycle[0], 0); // index 0 unused
-        assert_eq!(cycle[1], 2); // position 1 -> taxon 2
-        assert_eq!(cycle[2], 3); // position 2 -> taxon 3
-        assert_eq!(cycle[3], 1); // position 3 -> taxon 1
-    }
-
-    #[test]
-    fn get_cycle_empty_graph() {
-        let g = PhyloSplitsGraph::new();
-        let cycle = g.get_cycle();
-        // no taxa => cycle is [0]
-        assert_eq!(cycle, vec![0]);
-    }
-
     // ---- count_splits / max_split_id ----
 
     #[test]
@@ -1828,7 +1698,6 @@ mod phylo_splits_graph_tests {
     fn clear_resets_everything() {
         let (mut g, _a, _b, _c, _e_ab, _e_bc) = make_abc();
         g.set_name("myname");
-        g.set_taxon2_cycle(1, 1);
 
         g.clear();
 
@@ -1836,7 +1705,6 @@ mod phylo_splits_graph_tests {
         assert_eq!(g.base.graph.edge_count(), 0);
         assert_eq!(g.count_splits(), 0);
         assert_eq!(g.max_split_id(), 0);
-        assert_eq!(g.get_taxon2_cycle(1), -1);
         assert!(g.rotation.is_empty());
     }
 

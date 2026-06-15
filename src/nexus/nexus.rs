@@ -52,10 +52,6 @@ impl Nexus {
         &self.graph
     }
 
-    pub fn get_cycle(&self) -> Vec<usize> {
-        self.graph.get_cycle()
-    }
-
     pub fn get_splits_records(&self) -> Vec<(String, f64, f64, Vec<usize>, Vec<usize>)> {
         self.splits
             .get_splits()
