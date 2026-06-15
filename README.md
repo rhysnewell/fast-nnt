@@ -40,11 +40,15 @@ pip install fastnntpy
 ```
 
 #### R
-You can install the R package via:
+The R package is distributed via [r-universe](https://rhysnewell.r-universe.dev).
+Installing from there ships a prebuilt binary (no Rust toolchain required):
 ```R
-install.packages("fastnntr")
+install.packages("fastnntr", repos = "https://rhysnewell.r-universe.dev")
+```
 
-# Or if CRAN is unavailable and you have Rust on your machine, i think this will work
+Alternatively, build from source directly from GitHub (requires a Rust toolchain
+via [rustup](https://rustup.rs/)):
+```R
 devtools::install_github("rhysnewell/fast-nnt", subdir = "fastnntr")
 ```
 
