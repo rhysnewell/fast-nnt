@@ -30,6 +30,13 @@ scratch/
 /target
 output/
 .cargo/config.toml
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
 # macOS
 .DS_Store
 **/.DS_Store

@@ -1,0 +1,68 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test
+        run: cargo test --locked
+
+  python:
+    name: Python bindings (py${{ matrix.py }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        py: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fastnnt-py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.py }}
+      - name: Install fastnntpy and test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ./fastnnt-py pytest numpy pandas
+      - name: pytest
+        run: python -m pytest fastnnt-py/tests -v
+
+  r:
+    name: R bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fastnntr/src/rust
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: fastnntr
+          dependencies: '"all"'
+          extra-packages: any::testthat
+      - name: Install fastnntr
+        run: R CMD INSTALL fastnntr
+      - name: Run testthat
+        run: |
+          Rscript -e 'library(testthat); library(fastnntr); test_dir("fastnntr/tests/testthat", stop_on_failure = TRUE)'

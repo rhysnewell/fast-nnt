@@ -15,5 +15,8 @@ ndarray = "0.16.1"
 anyhow = "1"
 fast-nnt = ">=0.2.5"
 
-[patch.crates-io]
-fast-nnt = { path = ".." }
+# Build against the published `fast-nnt` crate by default (matches fastnntr and
+# the release model: core is published first, then the bindings are updated).
+# Uncomment to test the bindings against unpublished local core changes.
+# [patch.crates-io]
+# fast-nnt = { path = ".." }
