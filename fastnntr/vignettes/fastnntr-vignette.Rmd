@@ -112,8 +112,9 @@ library(dplyr)
 for a diploid).
 
 ```{r}
-PherFitz_gt   <- read.csv("data/PherFitz_gt.csv.gz",  row.names = 1)
-PherFitz_meta <- read.csv("data/PherFitz_meta.csv.gz")
+PherFitz_gt   <- read.csv(system.file("extdata", "PherFitz_gt.csv.gz", package = "fastnntr"),
+                          row.names = 1)
+PherFitz_meta <- read.csv(system.file("extdata", "PherFitz_meta.csv.gz", package = "fastnntr"))
 
 knitr::kable(PherFitz_gt[c(1,20,40,80),c(1,100,200)], format="markdown")
 ```
@@ -216,16 +217,16 @@ before being passed to `run_neighbornet_networkx()`.
 ### Input data
 
 ```{r ani-load}
-ani_names_raw <- read.csv("data/ecoli_dist_for_fastnnt.labels.txt.gz",
+ani_names_raw <- read.csv(system.file("extdata", "ecoli_dist_for_fastnnt.labels.txt.gz", package = "fastnntr"),
                           header = FALSE)
 ani_names <- sub("_ASM.*", "", ani_names_raw[, 1])
 
-ani_mx <- read.csv("data/ecoli_dist_for_fastnnt.tsv.gz",
+ani_mx <- read.csv(system.file("extdata", "ecoli_dist_for_fastnnt.tsv.gz", package = "fastnntr"),
                    sep = "\t", header = FALSE)
 colnames(ani_mx) <- ani_names
 rownames(ani_mx) <- ani_names
 
-ani_meta <- read.csv("data/refseq_210120_mlst.tsv.gz", sep = "\t")
+ani_meta <- read.csv(system.file("extdata", "refseq_210120_mlst.tsv.gz", package = "fastnntr"), sep = "\t")
 ```
 
 ### Filter to samples with known phylogroup
