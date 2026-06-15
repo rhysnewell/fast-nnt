@@ -59,17 +59,6 @@ fn num_mat_vertices(max_id: usize, xy_by_id: &HashMap<usize, (f64, f64)>, flip_y
     robj
 }
 
-fn vecvec_usize_rows_to_rmatrix_i32(rows: &[Vec<usize>]) -> Robj {
-    let nrows = rows.len();
-    let ncols = rows.first().map_or(0, |v| v.len());
-    assert!(rows.iter().all(|v| v.len() == ncols), "ragged input");
-
-    let m: RMatrix<i32> = RMatrix::new_matrix(nrows, ncols, |r, c| {
-        rows[r][c] as i32
-    });
-    r!(m)
-}
-
 /// Convert your in-memory `Nexus` into a networkx-like R list.
 /// Returns a list with fields: edge, tip.label, edge.length, Nnode, splitIndex, splits, translate, and .plot$vertices.
 /// `flip_y` matches the example (`vert[,2] <- -vert[,2]`).
@@ -168,15 +157,29 @@ fn nexus_to_networkx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
     let edge_mat = int_mat2(&us, &vs)?;
     let vertices_mat = num_mat_vertices(max_node_in_edges.max(max_id), &xy_by_id, flip_y);
 
-    // 5) splits: convert to list<int> (indices of taxa on one side).
-    let mut splits_list = vec![vec![0; ntaxa]; nexus.splits.nsplits()];
-    for (i, split) in nexus.splits.get_splits().iter().enumerate() {
-        let split_vec = split.get_a().as_slice().to_vec();
-        splits_list[i] = split_vec;
+    // 5) splits: a phangorn "splits" object — a list of 1-based taxon indices
+    // (the A side of each split) carrying `labels`, `weights`, and `cycle`
+    // attributes. phangorn's writers/plotters expect this structure; a bare
+    // matrix makes `write.nexus.networx()` fail in `ONEwise()`. Split order
+    // matches `splitIndex` (1-based position into this list).
+    let records = nexus.get_splits_records();
+    let mut split_items: Vec<Robj> = Vec::with_capacity(records.len());
+    let mut split_weights: Vec<f64> = Vec::with_capacity(records.len());
+    for (_label, weight, _conf, a_side, _b_side) in &records {
+        let idx: Vec<i32> = a_side.iter().map(|&t| t as i32).collect();
+        split_items.push(r!(idx));
+        split_weights.push(*weight);
     }
-    // assert they are all the same length
-
-    let splits_mat = vecvec_usize_rows_to_rmatrix_i32(&splits_list);
+    let mut splits_obj: Robj = List::from_values(split_items).into();
+    splits_obj.set_attrib("labels", r!(tip_labels.clone()))?;
+    splits_obj.set_attrib("weights", r!(split_weights))?;
+    // The splits block holds the circular ordering as 1-based `[0, t1..tn]`;
+    // drop the leading 0 pad for the attribute.
+    if let Some(cycle) = nexus.splits.cycle() {
+        let cycle: Vec<i32> = cycle.iter().skip(1).map(|&t| t as i32).collect();
+        splits_obj.set_attrib("cycle", r!(cycle))?;
+    }
+    splits_obj.set_attrib("class", r!("splits"))?;
 
     // 6) Nnode (as in your example): max(edge) - ntaxa
     let max_edge_node = max_node_in_edges as i32;
@@ -197,7 +200,7 @@ fn nexus_to_networkx(nexus: &Nexus, flip_y: bool) -> extendr_api::Result<List> {
         edge_length = r!(edge_length),
         Nnode       = r!(nnode),
         splitIndex  = r!(split_index),
-        splits      = splits_mat,
+        splits      = splits_obj,
         translate   = translate_df,
         plot        = r!(plot_list)
     );
