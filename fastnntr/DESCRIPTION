@@ -1,6 +1,6 @@
 Package: fastnntr
 Title: Fast Rust-Based SplitsTree NeighbourNet Algorithm
-Version: 0.2.5
+Version: 0.3.0
 Authors@R: 
     person("Rhys", "Newell", , "rhys.newell94@gmail.com", role = c("aut", "cre"))
 Description: A fast Rust implementation of the NeighbourNet algorithm
