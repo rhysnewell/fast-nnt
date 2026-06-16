@@ -61,6 +61,12 @@ library(fastnntr)
 browseVignettes(package = "fastnntr")
 ```
 
+If you are developing locally and have changed the R bindings:
+```R
+rextendr::document()
+devtools::load_all()
+```
+
 #### CLI
 
 ```bash
