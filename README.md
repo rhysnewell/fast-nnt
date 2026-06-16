@@ -46,16 +46,19 @@ Installing from there ships a prebuilt binary (no Rust toolchain required):
 install.packages("fastnntr", repos = "https://rhysnewell.r-universe.dev")
 ```
 
-Alternatively, build from source directly from GitHub (requires a Rust toolchain
-via [rustup](https://rustup.rs/)):
+Alternatively, install from source directly from GitHub with `remotes`
+(requires a Rust toolchain via [rustup](https://rustup.rs/)):
 ```R
-devtools::install_github("rhysnewell/fast-nnt", subdir = "fastnntr")
-```
+remotes::install_git(
+  repo = "rhysnewell/fast-nnt",
+  subdir = "fastnntr",
+  url = "https://github.com/rhysnewell/fast-nnt",
+  build_vignettes = TRUE,
+  force = TRUE
+)
 
-If you are developing locally and have changed the R bindings:
-```R
-rextendr::document()
-devtools::load_all()
+library(fastnntr)
+browseVignettes(package = "fastnntr")
 ```
 
 #### CLI
